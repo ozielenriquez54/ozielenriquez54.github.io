@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aviso de Privacidad — Complex Training</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Instrument+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Syne+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --fire: #e8320a;
+    --amber: #f5a623;
+    --black: #0a0a0a;
+    --dark: #141210;
+    --ink: #1e1a16;
+    --body: #3a3028;
+    --muted: #7a6e62;
+    --border: #d8d0c4;
+    --light: #f0ece4;
+    --bg: #faf7f3;
+    --white: #fffcf8;
+  }
+
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--body);
+    font-family: 'Instrument Sans', sans-serif;
+    font-weight: 300;
+    line-height: 1.7;
+    font-size: 16px;
+  }
+
+  /* ── HEADER ── */
+  .site-header {
+    background: var(--dark);
+    padding: 0 48px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    height: 64px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .site-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-decoration: none;
+  }
+  .logo-mark {
+    width: 36px; height: 36px;
+    background: var(--fire);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Syne Mono', monospace;
+    font-size: 13px; color: white; letter-spacing: 1px;
+    flex-shrink: 0;
+  }
+  .logo-name {
+    font-family: 'Syne Mono', monospace;
+    font-size: 11px; letter-spacing: 3px;
+    text-transform: uppercase; color: rgba(255,255,255,.4);
+  }
+  .header-doc {
+    font-family: 'Syne Mono', monospace;
+    font-size: 10px; letter-spacing: 3px;
+    text-transform: uppercase; color: rgba(255,255,255,.2);
+  }
+
+  /* ── HERO ── */
+  .hero {
+    background: var(--dark);
+    padding: 80px 48px 72px;
+    border-bottom: 3px solid var(--fire);
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(
+      0deg, rgba(232,50,10,.03) 0, rgba(232,50,10,.03) 1px,
+      transparent 1px, transparent 48px
+    ), repeating-linear-gradient(
+      90deg, rgba(232,50,10,.03) 0, rgba(232,50,10,.03) 1px,
+      transparent 1px, transparent 48px
+    );
+  }
+  .hero-inner { max-width: 900px; margin: 0 auto; position: relative; }
+  .hero-eyebrow {
+    font-family: 'Syne Mono', monospace;
+    font-size: 10px; letter-spacing: 5px;
+    text-transform: uppercase; color: var(--fire);
+    margin-bottom: 20px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .hero-eyebrow::before { content: ''; width: 28px; height: 2px; background: var(--fire); }
+  .hero h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(36px, 5vw, 64px);
+    font-weight: 800; color: white;
+    line-height: 1.0; letter-spacing: -1.5px;
+    margin-bottom: 24px;
+  }
+  .hero h1 em { font-style: normal; color: var(--fire); }
+  .hero-sub {
+    font-size: 15px; color: rgba(255,255,255,.4);
+    max-width: 580px; line-height: 1.75;
+    font-style: italic;
+  }
+  .hero-meta {
+    margin-top: 40px;
+    display: flex; gap: 32px; flex-wrap: wrap;
+  }
+  .meta-item { }
+  .meta-label {
+    font-family: 'Syne Mono', monospace;
+    font-size: 9px; letter-spacing: 3px;
+    text-transform: uppercase; color: rgba(255,255,255,.25);
+    margin-bottom: 4px;
+  }
+  .meta-value {
+    font-size: 13px; color: rgba(255,255,255,.6);
+    font-weight: 400;
+  }
+
+  /* ── LAYOUT ── */
+  .layout {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 48px 100px;
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 0 60px;
+    align-items: start;
+  }
+
+  /* ── TOC ── */
+  .toc {
+    position: sticky;
+    top: 84px;
+    padding: 36px 0;
+    border-right: 1px solid var(--border);
+    padding-right: 32px;
+  }
+  .toc-label {
+    font-family: 'Syne Mono', monospace;
+    font-size: 9px; letter-spacing: 4px;
+    text-transform: uppercase; color: var(--muted);
+    margin-bottom: 16px;
+  }
+  .toc-list { list-style: none; }
+  .toc-list li { margin-bottom: 2px; }
+  .toc-list a {
+    display: flex; align-items: center; gap: 10px;
+    text-decoration: none; padding: 6px 0;
+    font-size: 12px; color: var(--muted);
+    transition: color .15s;
+    border-left: 2px solid transparent;
+    padding-left: 10px;
+    margin-left: -10px;
+    line-height: 1.4;
+  }
+  .toc-list a:hover { color: var(--fire); border-left-color: var(--fire); }
+  .toc-num {
+    font-family: 'Syne Mono', monospace;
+    font-size: 9px; color: var(--fire);
+    flex-shrink: 0; width: 18px;
+  }
+
+  /* ── CONTENT ── */
+  .content { padding: 48px 0 0; }
+
+  /* Responsable card */
+  .resp-card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--fire);
+    padding: 28px 32px;
+    margin-bottom: 48px;
+  }
+  .resp-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+  .resp-row {
+    display: contents;
+  }
+  .resp-row > * {
+    padding: 10px 16px 10px 0;
+    border-bottom: 1px solid var(--light);
+    font-size: 13px;
+  }
+  .resp-key {
+    font-weight: 600; color: var(--ink);
+    font-family: 'Instrument Sans', sans-serif;
+  }
+  .resp-val { color: var(--body); }
+
+  /* Section */
+  .section { margin-bottom: 64px; }
+  .section:last-child { margin-bottom: 0; }
+
+  .section-anchor { display: block; height: 84px; margin-top: -84px; visibility: hidden; }
+
+  .section-header {
+    display: flex; align-items: baseline; gap: 16px;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-num {
+    font-family: 'Syne Mono', monospace;
+    font-size: 11px; color: var(--fire);
+    flex-shrink: 0;
+  }
+  .section-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 20px; font-weight: 700;
+    color: var(--ink); letter-spacing: -.3px;
+  }
+
+  h3 {
+    font-family: 'Instrument Sans', sans-serif;
+    font-size: 14px; font-weight: 600;
+    color: var(--ink);
+    margin: 28px 0 10px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+  h3.sensitive {
+    color: var(--fire);
+    display: flex; align-items: center; gap: 8px;
+  }
+  h3.sensitive::before { content: '⚠'; font-size: 13px; }
+
+  p { margin-bottom: 14px; font-size: 15px; }
+  p:last-child { margin-bottom: 0; }
+
+  ul { list-style: none; margin: 10px 0 16px; }
+  ul li {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--light);
+    font-size: 14px; line-height: 1.55;
+    color: var(--body);
+  }
+  ul li:last-child { border-bottom: none; }
+  ul li::before {
+    content: '';
+    width: 6px; height: 6px;
+    background: var(--fire);
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 7px;
+  }
+
+  /* Alert */
+  .alert {
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 14px; line-height: 1.65;
+  }
+  .alert.fire {
+    background: rgba(232,50,10,.05);
+    border-left: 3px solid var(--fire);
+    color: #7a1a08;
+  }
+  .alert.amber {
+    background: rgba(245,166,35,.07);
+    border-left: 3px solid var(--amber);
+    color: #6a4200;
+  }
+  .alert.dark {
+    background: var(--ink);
+    color: rgba(255,255,255,.6);
+    border-left: 3px solid var(--amber);
+    font-size: 13px;
+  }
+
+  /* ARCO table */
+  .arco-grid {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    border: 1px solid var(--border);
+    margin: 16px 0;
+    overflow: hidden;
+  }
+  .arco-row { display: contents; }
+  .arco-key {
+    background: var(--ink); color: white;
+    padding: 16px 18px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700; font-size: 16px;
+    display: flex; align-items: center;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+  .arco-val {
+    padding: 16px 20px;
+    font-size: 14px; color: var(--body);
+    border-bottom: 1px solid var(--border);
+    background: var(--white);
+    line-height: 1.6;
+  }
+  .arco-row:last-child .arco-key,
+  .arco-row:last-child .arco-val { border-bottom: none; }
+
+  /* Transfer table */
+  .transfer-table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  .transfer-table th {
+    font-family: 'Syne Mono', monospace;
+    font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
+    color: var(--muted); padding: 10px 16px;
+    text-align: left; border-bottom: 2px solid var(--border);
+    background: var(--bg);
+  }
+  .transfer-table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--light);
+    vertical-align: top; line-height: 1.55;
+  }
+  .transfer-table tr:last-child td { border-bottom: none; }
+  .transfer-table td:first-child { font-weight: 600; color: var(--ink); width: 180px; }
+
+  /* Contact card */
+  .contact-card {
+    background: var(--dark);
+    padding: 32px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+  .contact-row { display: contents; }
+  .contact-row > * {
+    padding: 10px 16px 10px 0;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+    font-size: 13px;
+  }
+  .contact-key { color: rgba(255,255,255,.35); font-family: 'Syne Mono', monospace; font-size: 11px; letter-spacing: 1px; }
+  .contact-val { color: rgba(255,255,255,.7); }
+  .contact-val a { color: var(--fire); text-decoration: none; }
+  .contact-val a:hover { text-decoration: underline; }
+
+  /* Print link */
+  .print-bar {
+    background: var(--light);
+    border-top: 1px solid var(--border);
+    padding: 12px 48px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .print-bar p { font-size: 13px; color: var(--muted); margin: 0; }
+  .btn-print {
+    background: var(--fire); color: white; border: none;
+    padding: 8px 20px; font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: 'Instrument Sans', sans-serif;
+    transition: background .15s;
+  }
+  .btn-print:hover { background: #c42808; }
+
+  /* Footer */
+  footer {
+    background: var(--black);
+    padding: 24px 48px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .footer-left {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800; font-size: 16px; color: white;
+  }
+  .footer-left span { color: var(--fire); }
+  .footer-right {
+    font-family: 'Syne Mono', monospace;
+    font-size: 10px; letter-spacing: 2px;
+    text-transform: uppercase; color: rgba(255,255,255,.2);
+    text-align: right; line-height: 1.8;
+  }
+
+  @media print {
+    .site-header, .toc, .print-bar { display: none; }
+    .layout { grid-template-columns: 1fr; padding: 0 24px; }
+    .hero { padding: 40px 24px; }
+    .section { break-inside: avoid; }
+  }
+
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; padding: 0 24px 80px; }
+    .toc { display: none; }
+    .hero, .site-header, .print-bar, footer { padding-left: 24px; padding-right: 24px; }
+    .resp-grid, .contact-card { grid-template-columns: 1fr; }
+    .arco-grid { grid-template-columns: 1fr; }
+    .arco-key { border-bottom: none; padding-bottom: 4px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="site-header">
+  <a href="https://complextraining.mx" class="site-logo">
+    <div class="logo-mark">CT</div>
+    <div class="logo-name">Complex Training</div>
+  </a>
+  <div class="header-doc">Aviso de Privacidad · Marzo 2025</div>
+</header>
+
+<!-- PRINT BAR -->
+<div class="print-bar">
+  <p>Puede imprimir o guardar este aviso como PDF desde su navegador.</p>
+  <button class="btn-print" onclick="window.print()">Imprimir / Guardar PDF</button>
+</div>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-eyebrow">Documento legal · Privacidad</div>
+    <h1>Aviso de<br><em>Privacidad</em><br>Integral.</h1>
+    <p class="hero-sub">Conforme a la Ley Federal de Protección de Datos Personales en Posesión de los Particulares, publicada en el Diario Oficial de la Federación el 20 de marzo de 2025.</p>
+    <div class="hero-meta">
+      <div class="meta-item">
+        <div class="meta-label">Responsable</div>
+        <div class="meta-value">Oziel Enriquez Martinez</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Fecha de emisión</div>
+        <div class="meta-value">Marzo 2025</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Versión</div>
+        <div class="meta-value">1.0</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Ley aplicable</div>
+        <div class="meta-value">LFPDPPP vigente desde 21·03·2025</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- LAYOUT -->
+<div class="layout">
+
+  <!-- TOC -->
+  <nav class="toc">
+    <div class="toc-label">Contenido</div>
+    <ul class="toc-list">
+      <li><a href="#s1"><span class="toc-num">I.</span> Responsable</a></li>
+      <li><a href="#s2"><span class="toc-num">II.</span> Datos que recabamos</a></li>
+      <li><a href="#s3"><span class="toc-num">III.</span> Finalidades</a></li>
+      <li><a href="#s4"><span class="toc-num">IV.</span> Limitación de uso</a></li>
+      <li><a href="#s5"><span class="toc-num">V.</span> Derechos ARCO</a></li>
+      <li><a href="#s6"><span class="toc-num">VI.</span> Datos sensibles</a></li>
+      <li><a href="#s7"><span class="toc-num">VII.</span> Medidas de seguridad</a></li>
+      <li><a href="#s8"><span class="toc-num">VIII.</span> Transferencias</a></li>
+      <li><a href="#s9"><span class="toc-num">IX.</span> Revocación</a></li>
+      <li><a href="#s10"><span class="toc-num">X.</span> Cookies</a></li>
+      <li><a href="#s11"><span class="toc-num">XI.</span> Cambios al aviso</a></li>
+      <li><a href="#s12"><span class="toc-num">XII.</span> Autoridad competente</a></li>
+      <li><a href="#s13"><span class="toc-num">XIII.</span> Contacto</a></li>
+    </ul>
+  </nav>
+
+  <!-- CONTENT -->
+  <main class="content">
+
+    <!-- RESPONSABLE CARD -->
+    <div class="resp-card">
+      <div class="resp-grid">
+        <div class="resp-row"><div class="resp-key">Responsable</div><div class="resp-val">Oziel Enriquez Martinez</div></div>
+        <div class="resp-row"><div class="resp-key">Nombre comercial</div><div class="resp-val">Complex Training</div></div>
+        <div class="resp-row"><div class="resp-key">Domicilio</div><div class="resp-val">Av. de la Cantera 10200, Local 103 y 104, C.P. 31216, Chihuahua, Chihuahua, México</div></div>
+        <div class="resp-row"><div class="resp-key">Correo</div><div class="resp-val">oziel.enriquez@complextraining.mx</div></div>
+        <div class="resp-row"><div class="resp-key">WhatsApp</div><div class="resp-val">614-255-4674</div></div>
+        <div class="resp-row"><div class="resp-key">Sitio web</div><div class="resp-val">complextraining.mx</div></div>
+      </div>
+    </div>
+
+    <!-- I -->
+    <div class="section">
+      <span class="section-anchor" id="s1"></span>
+      <div class="section-header">
+        <span class="section-num">I.</span>
+        <h2 class="section-title">Identidad y domicilio del responsable</h2>
+      </div>
+      <p>Oziel Enriquez Martinez, persona física con actividad empresarial, identificado comercialmente como <strong>Complex Training</strong>, con domicilio en Av. de la Cantera 10200, Local 103 y 104, C.P. 31216, Chihuahua, Chihuahua, México, es el Responsable del tratamiento de sus datos personales conforme a la Ley Federal de Protección de Datos Personales en Posesión de los Particulares (LFPDPPP), publicada en el Diario Oficial de la Federación el 20 de marzo de 2025 y vigente a partir del 21 de marzo de 2025.</p>
+    </div>
+
+    <!-- II -->
+    <div class="section">
+      <span class="section-anchor" id="s2"></span>
+      <div class="section-header">
+        <span class="section-num">II.</span>
+        <h2 class="section-title">Datos personales que se recaban</h2>
+      </div>
+
+      <h3>A) Datos de identificación</h3>
+      <ul>
+        <li>Nombre completo</li>
+        <li>Fecha de nacimiento</li>
+        <li>Género</li>
+        <li>Fotografía</li>
+      </ul>
+
+      <h3>B) Datos de contacto</h3>
+      <ul>
+        <li>Número de teléfono celular (incluyendo WhatsApp)</li>
+        <li>Correo electrónico</li>
+        <li>Perfil en redes sociales (Instagram, Facebook)</li>
+      </ul>
+
+      <h3 class="sensitive">C) Datos de salud — Datos Personales Sensibles</h3>
+      <div class="alert fire">
+        Los datos de salud son considerados datos personales sensibles conforme al artículo 3, fracción VI de la LFPDPPP. Para su tratamiento se requiere su <strong>consentimiento expreso y por escrito</strong>.
+      </div>
+      <ul>
+        <li>Estado de salud general y condición física</li>
+        <li>Historial de lesiones o padecimientos musculoesqueléticos relevantes para la actividad física</li>
+        <li>Medidas corporales (peso, estatura, porcentaje de grasa corporal, masa muscular)</li>
+        <li>Fotografías de progreso corporal (antes y después)</li>
+        <li>Restricciones médicas para la práctica de ejercicio</li>
+      </ul>
+
+      <h3>D) Datos financieros</h3>
+      <ul>
+        <li>Información de pago (procesada a través de plataformas seguras: PushPress, Hotmart, MercadoPago)</li>
+      </ul>
+      <p>Complex Training no almacena directamente datos de tarjetas de crédito o débito. Estos son procesados exclusivamente por las plataformas de pago certificadas.</p>
+
+      <h3>E) Datos de navegación y comunicación digital</h3>
+      <ul>
+        <li>Mensajes enviados a través de Instagram DM, Facebook Messenger y WhatsApp Business</li>
+        <li>Datos de interacción con anuncios en Meta Ads (Facebook e Instagram)</li>
+        <li>Identificadores de usuario en plataformas de automatización (ManyChat)</li>
+      </ul>
+    </div>
+
+    <!-- III -->
+    <div class="section">
+      <span class="section-anchor" id="s3"></span>
+      <div class="section-header">
+        <span class="section-num">III.</span>
+        <h2 class="section-title">Finalidades del tratamiento</h2>
+      </div>
+
+      <h3>A) Finalidades necesarias — no requieren consentimiento adicional</h3>
+      <p>Estas finalidades son indispensables para la prestación del servicio contratado o para dar cumplimiento a obligaciones legales:</p>
+      <ul>
+        <li>Identificarlo e inscribirlo en los programas y membresías de Complex Training</li>
+        <li>Diseñar y personalizar su programa de entrenamiento y nutrición</li>
+        <li>Dar seguimiento semanal a su progreso físico y cumplimiento del programa</li>
+        <li>Gestionar el cobro y facturación de los servicios contratados</li>
+        <li>Comunicarle información relevante sobre su programa (ajustes, horarios, instrucciones)</li>
+        <li>Cumplir con obligaciones legales y fiscales aplicables</li>
+        <li>Atender solicitudes, quejas o aclaraciones relacionadas con el servicio</li>
+        <li>Garantizar la seguridad física de los participantes durante las sesiones de entrenamiento</li>
+      </ul>
+
+      <h3>B) Finalidades secundarias — requieren su consentimiento</h3>
+      <p>Estas finalidades son adicionales al servicio principal. Usted puede oponerse a su tratamiento sin que ello afecte la prestación del servicio:</p>
+      <ul>
+        <li>Enviarle contenido educativo, promocional o informativo sobre programas, eventos y novedades de Complex Training</li>
+        <li>Publicar sus fotografías de progreso, testimonios o resultados en redes sociales, sitio web o materiales de marketing</li>
+        <li>Incluir su información en campañas de retargeting en Meta Ads (Facebook e Instagram)</li>
+        <li>Integrar su perfil en sistemas de automatización de marketing (ManyChat) para comunicaciones personalizadas</li>
+        <li>Realizar encuestas de satisfacción y estudios estadísticos internos</li>
+      </ul>
+      <div class="alert amber">
+        Si no desea que sus datos sean tratados para finalidades secundarias, puede comunicarlo en cualquier momento a <strong>oziel.enriquez@complextraining.mx</strong> o vía WhatsApp al <strong>614-255-4674</strong>, sin que ello implique consecuencias para el servicio principal.
+      </div>
+    </div>
+
+    <!-- IV -->
+    <div class="section">
+      <span class="section-anchor" id="s4"></span>
+      <div class="section-header">
+        <span class="section-num">IV.</span>
+        <h2 class="section-title">Mecanismos para limitar el uso o divulgación de sus datos</h2>
+      </div>
+      <p>Usted puede limitar el uso o divulgación de sus datos personales mediante los siguientes mecanismos:</p>
+      <ul>
+        <li>Correo electrónico a <strong>oziel.enriquez@complextraining.mx</strong> — Asunto: "LIMITACIÓN DE DATOS"</li>
+        <li>WhatsApp Business al número <strong>614-255-4674</strong></li>
+        <li>Personalmente en Av. de la Cantera 10200, Local 103 y 104, C.P. 31216, Chihuahua, Chihuahua</li>
+      </ul>
+      <p>Complex Training responderá a su solicitud en un plazo máximo de <strong>20 días hábiles</strong>.</p>
+    </div>
+
+    <!-- V -->
+    <div class="section">
+      <span class="section-anchor" id="s5"></span>
+      <div class="section-header">
+        <span class="section-num">V.</span>
+        <h2 class="section-title">Derechos ARCO</h2>
+      </div>
+      <p>Conforme a la LFPDPPP, usted tiene los siguientes derechos respecto de sus datos personales:</p>
+
+      <div class="arco-grid">
+        <div class="arco-row">
+          <div class="arco-key">A<br><small style="font-size:10px;opacity:.5;font-family:'Syne Mono',monospace">Acceso</small></div>
+          <div class="arco-val">Conocer qué datos personales tenemos de usted, para qué los utilizamos y las condiciones del uso que les damos.</div>
+        </div>
+        <div class="arco-row">
+          <div class="arco-key">R<br><small style="font-size:10px;opacity:.5;font-family:'Syne Mono',monospace">Rectificación</small></div>
+          <div class="arco-val">Solicitar la corrección de su información personal en caso de que esté desactualizada, sea inexacta o incompleta.</div>
+        </div>
+        <div class="arco-row">
+          <div class="arco-key">C<br><small style="font-size:10px;opacity:.5;font-family:'Syne Mono',monospace">Cancelación</small></div>
+          <div class="arco-val">Solicitar la eliminación de sus datos de nuestros registros cuando considere que no están siendo utilizados conforme a los principios de la LFPDPPP.</div>
+        </div>
+        <div class="arco-row">
+          <div class="arco-key">O<br><small style="font-size:10px;opacity:.5;font-family:'Syne Mono',monospace">Oposición</small></div>
+          <div class="arco-val">Oponerse al uso de sus datos personales para finalidades específicas, en particular las de carácter secundario o comercial.</div>
+        </div>
+      </div>
+
+      <h3>¿Cómo ejercer sus derechos ARCO?</h3>
+      <p>Su solicitud debe incluir:</p>
+      <ul>
+        <li>Nombre completo y correo electrónico o domicilio para recibir notificaciones</li>
+        <li>Descripción clara y precisa de los datos respecto de los cuales ejerce algún derecho ARCO</li>
+        <li>Cualquier documento o información que facilite la localización de sus datos</li>
+        <li>En caso de rectificación: indicar las modificaciones a realizar y aportar documentación de soporte</li>
+      </ul>
+      <p>Medios para presentar su solicitud:</p>
+      <ul>
+        <li>Correo electrónico: <strong>oziel.enriquez@complextraining.mx</strong> — Asunto: "DERECHOS ARCO"</li>
+        <li>WhatsApp Business: <strong>614-255-4674</strong></li>
+        <li>Personalmente en Av. de la Cantera 10200, Local 103 y 104, C.P. 31216, Chihuahua, Chihuahua</li>
+      </ul>
+      <div class="alert dark">
+        Complex Training dará respuesta en un plazo máximo de <strong style="color:var(--amber)">20 días hábiles</strong> contados a partir de la fecha de recepción. Este plazo puede prorrogarse una sola vez por el mismo período cuando lo justifiquen las circunstancias.
+      </div>
+    </div>
+
+    <!-- VI -->
+    <div class="section">
+      <span class="section-anchor" id="s6"></span>
+      <div class="section-header">
+        <span class="section-num">VI.</span>
+        <h2 class="section-title">Consentimiento para datos personales sensibles</h2>
+      </div>
+      <p>En caso de que usted nos proporcione datos personales sensibles (datos de salud, medidas corporales, fotografías de progreso), su inscripción al programa y la firma del contrato de servicios o formato de alta constituirán su <strong>consentimiento expreso y por escrito</strong> para el tratamiento de dichos datos, conforme al artículo 8 de la LFPDPPP, exclusivamente para las finalidades necesarias descritas en el apartado III-A.</p>
+      <p>Para las finalidades secundarias que impliquen datos sensibles (como la publicación de fotografías de progreso), se recabará su consentimiento de forma independiente y específica, mediante un formato escrito o electrónico.</p>
+    </div>
+
+    <!-- VII -->
+    <div class="section">
+      <span class="section-anchor" id="s7"></span>
+      <div class="section-header">
+        <span class="section-num">VII.</span>
+        <h2 class="section-title">Medidas de seguridad</h2>
+      </div>
+      <p>Complex Training ha implementado medidas de seguridad administrativas, técnicas y físicas para proteger sus datos personales:</p>
+
+      <h3>Administrativas</h3>
+      <ul>
+        <li>Políticas internas de manejo y acceso a datos personales</li>
+        <li>Capacitación al personal sobre protección de datos</li>
+        <li>Confidencialidad obligatoria para toda persona que intervenga en el tratamiento</li>
+      </ul>
+
+      <h3>Técnicas</h3>
+      <ul>
+        <li>Plataformas certificadas para procesamiento de pagos (PushPress, Hotmart, MercadoPago)</li>
+        <li>Comunicaciones cifradas vía WhatsApp Business y correo con protocolos de seguridad</li>
+        <li>Acceso restringido a bases de datos de clientes</li>
+        <li>Plataformas con estándares de seguridad reconocidos (ManyChat)</li>
+      </ul>
+
+      <h3>Físicas</h3>
+      <ul>
+        <li>Archivos físicos en instalaciones de acceso restringido en Av. de la Cantera 10200, Local 103 y 104</li>
+        <li>Destrucción segura de documentos con datos personales</li>
+      </ul>
+    </div>
+
+    <!-- VIII -->
+    <div class="section">
+      <span class="section-anchor" id="s8"></span>
+      <div class="section-header">
+        <span class="section-num">VIII.</span>
+        <h2 class="section-title">Transferencia de datos a terceros</h2>
+      </div>
+      <p>Para la prestación de los servicios, Complex Training puede compartir sus datos personales con los siguientes encargados, quienes actúan bajo instrucciones de Complex Training y están obligados a guardar confidencialidad:</p>
+
+      <table class="transfer-table">
+        <thead>
+          <tr>
+            <th>Encargado</th>
+            <th>Finalidad</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>PushPress / Hotmart / MercadoPago</td><td>Procesamiento seguro de cobros y suscripciones</td></tr>
+          <tr><td>ManyChat</td><td>Gestión de comunicaciones y calificación de prospectos</td></tr>
+          <tr><td>Meta Platforms (Facebook / Instagram)</td><td>Publicación de anuncios y comunicaciones en redes sociales</td></tr>
+          <tr><td>Google (Drive / Gmail)</td><td>Almacenamiento y comunicación interna</td></tr>
+          <tr><td>Training For Warriors (TFW)</td><td>Cumplimiento de requisitos de afiliación internacional</td></tr>
+        </tbody>
+      </table>
+
+      <p>En ningún caso Complex Training vende, cede o transfiere sus datos personales a terceros con fines comerciales propios de dichos terceros sin su consentimiento expreso.</p>
+    </div>
+
+    <!-- IX -->
+    <div class="section">
+      <span class="section-anchor" id="s9"></span>
+      <div class="section-header">
+        <span class="section-num">IX.</span>
+        <h2 class="section-title">Revocación del consentimiento</h2>
+      </div>
+      <p>Usted puede revocar el consentimiento que haya otorgado para el tratamiento de sus datos personales en cualquier momento, siempre y cuando no lo impida una disposición legal. Para ello, utilice los medios indicados en el apartado V.</p>
+      <p>La revocación del consentimiento para finalidades necesarias podría implicar la imposibilidad de continuar con la prestación del servicio contratado.</p>
+    </div>
+
+    <!-- X -->
+    <div class="section">
+      <span class="section-anchor" id="s10"></span>
+      <div class="section-header">
+        <span class="section-num">X.</span>
+        <h2 class="section-title">Cookies y tecnologías de rastreo</h2>
+      </div>
+      <p>El sitio web <strong>complextraining.mx</strong> y las plataformas digitales utilizadas por Complex Training pueden emplear cookies, balizas web y el Píxel de Meta para mejorar la experiencia del usuario y con fines estadísticos y de marketing digital (incluyendo campañas en Facebook e Instagram).</p>
+      <p>Puede deshabilitar estas tecnologías desde la configuración de su navegador o dispositivo, aunque esto podría afectar la experiencia de navegación.</p>
+    </div>
+
+    <!-- XI -->
+    <div class="section">
+      <span class="section-anchor" id="s11"></span>
+      <div class="section-header">
+        <span class="section-num">XI.</span>
+        <h2 class="section-title">Cambios al aviso de privacidad</h2>
+      </div>
+      <p>Complex Training se reserva el derecho de efectuar modificaciones o actualizaciones al presente Aviso de Privacidad en cualquier momento, para atender novedades legislativas, políticas internas o nuevas exigencias para la prestación de servicios.</p>
+      <p>Cualquier modificación será notificada a través de:</p>
+      <ul>
+        <li>Publicación en el sitio web <strong>complextraining.mx</strong></li>
+        <li>Comunicación directa por correo electrónico o WhatsApp a los clientes activos</li>
+      </ul>
+    </div>
+
+    <!-- XII -->
+    <div class="section">
+      <span class="section-anchor" id="s12"></span>
+      <div class="section-header">
+        <span class="section-num">XII.</span>
+        <h2 class="section-title">Autoridad competente</h2>
+      </div>
+      <p>Si considera que su derecho a la protección de datos personales ha sido vulnerado, o no ha obtenido respuesta satisfactoria a su solicitud de derechos ARCO, puede presentar una queja ante la <strong>Secretaría Anticorrupción y Buen Gobierno</strong>, autoridad competente en materia de protección de datos personales en posesión de los particulares conforme a la LFPDPPP vigente desde el 21 de marzo de 2025.</p>
+      <p>Sitio web: <a href="https://www.anticorrupcion.gob.mx" target="_blank" style="color:var(--fire);">www.anticorrupcion.gob.mx</a></p>
+    </div>
+
+    <!-- XIII -->
+    <div class="section">
+      <span class="section-anchor" id="s13"></span>
+      <div class="section-header">
+        <span class="section-num">XIII.</span>
+        <h2 class="section-title">Contacto y datos del responsable</h2>
+      </div>
+
+      <div class="contact-card">
+        <div class="contact-row"><div class="contact-key">Responsable</div><div class="contact-val">Oziel Enriquez Martinez</div></div>
+        <div class="contact-row"><div class="contact-key">Nombre comercial</div><div class="contact-val">Complex Training</div></div>
+        <div class="contact-row"><div class="contact-key">Domicilio</div><div class="contact-val">Av. de la Cantera 10200, Local 103 y 104, C.P. 31216, Chihuahua, Chihuahua, México</div></div>
+        <div class="contact-row"><div class="contact-key">Correo</div><div class="contact-val"><a href="mailto:oziel.enriquez@complextraining.mx">oziel.enriquez@complextraining.mx</a></div></div>
+        <div class="contact-row"><div class="contact-key">WhatsApp</div><div class="contact-val"><a href="https://wa.me/526142554674">614-255-4674</a></div></div>
+        <div class="contact-row"><div class="contact-key">Sitio web</div><div class="contact-val"><a href="https://complextraining.mx">complextraining.mx</a></div></div>
+        <div class="contact-row"><div class="contact-key">Instagram</div><div class="contact-val"><a href="https://instagram.com/complextraining.chih">@complextraining.chih</a></div></div>
+        <div class="contact-row"><div class="contact-key">Afiliación</div><div class="contact-val">Training For Warriors (TFW) — licencia activa</div></div>
+      </div>
+
+      <p style="margin-top:24px;font-size:13px;color:var(--muted);font-style:italic;text-align:center;">
+        Fecha de emisión: Marzo 2025 · Versión 1.0<br>
+        Este Aviso de Privacidad se emite en cumplimiento de la LFPDPPP publicada en el DOF el 20 de marzo de 2025.
+      </p>
+    </div>
+
+  </main>
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-left">COMPLEX <span>TRAINING</span></div>
+  <div class="footer-right">
+    Aviso de Privacidad · Versión 1.0<br>
+    Marzo 2025 · Chihuahua, México
+  </div>
+</footer>
+
+<script>
+  // Highlight active TOC item on scroll
+  const anchors = document.querySelectorAll('.section-anchor');
+  const links = document.querySelectorAll('.toc-list a');
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.style.color = '');
+        const id = e.target.id;
+        const active = document.querySelector(`.toc-list a[href="#${id}"]`);
+        if (active) {
+          active.style.color = 'var(--fire)';
+          active.style.borderLeftColor = 'var(--fire)';
+        }
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  anchors.forEach(a => obs.observe(a));
+</script>
+</body>
+</html>
