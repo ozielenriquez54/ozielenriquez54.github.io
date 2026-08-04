@@ -48,19 +48,7 @@
     border-bottom: 3px solid var(--gold);
   }
   .site-logo { display: flex; align-items: center; gap: 12px; text-decoration: none; }
-  .logo-mark {
-    width: 36px; height: 36px;
-    background: var(--gold);
-    display: flex; align-items: center; justify-content: center;
-    font-family: 'Syne Mono', monospace;
-    font-size: 13px; color: white; letter-spacing: 1px;
-    flex-shrink: 0;
-  }
-  .logo-name {
-    font-family: 'Syne Mono', monospace;
-    font-size: 11px; letter-spacing: 3px;
-    text-transform: uppercase; color: rgba(255,255,255,.4);
-  }
+  .logo-img { height: 46px; width: auto; display: block; flex-shrink: 0; }
   .header-doc {
     font-family: 'Syne Mono', monospace;
     font-size: 10px; letter-spacing: 2px;
@@ -273,8 +261,7 @@
 
 <header class="site-header">
   <a href="#" class="site-logo">
-    <div class="logo-mark">CT</div>
-    <div class="logo-name">Complex&nbsp;Training</div>
+    <img src="assets/logo.jpg" alt="Complex Training" class="logo-img">
   </a>
   <div class="header-doc">Generador de Comidas</div>
 </header>
