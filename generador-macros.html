@@ -224,6 +224,53 @@
   .summary-picks { font-size: 13.5px; color: var(--muted); margin-bottom: 18px; }
   .summary-picks span { color: var(--ink); font-weight: 500; }
 
+  /* PLAN DE ACCIÓN */
+  .sub-label {
+    font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--muted); margin: 24px 0 12px;
+  }
+  .phase-card { border: 1px solid var(--border); border-radius: 4px; padding: 16px 18px; background: var(--bg); margin-bottom: 14px; }
+  .phase-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .phase-head h4 { font-family: 'Syne', sans-serif; font-size: 16px; color: var(--ink); }
+  .phase-weeks { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); }
+  .phase-kcal { font-family: 'Syne Mono', monospace; font-size: 13px; color: var(--fire); margin: 4px 0 8px; }
+  .phase-card p { font-size: 14px; color: var(--body); }
+
+  .timeline-scroll { overflow-x: auto; margin-bottom: 10px; }
+  .timeline-table { border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+  .timeline-table th, .timeline-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: center; }
+  .timeline-table th { background: var(--dark); color: white; font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; }
+
+  .workout-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px,1fr)); gap: 16px; }
+  .workout-card { border: 1px solid var(--border); border-radius: 4px; padding: 16px; background: var(--bg); }
+  .workout-card h4 { font-family: 'Syne', sans-serif; font-size: 16px; color: var(--ink); margin-bottom: 6px; }
+  .workout-card h5 { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--fire); margin: 10px 0 4px; }
+  .workout-card ul { padding-left: 18px; font-size: 13.5px; color: var(--body); }
+  .workout-card li { margin-bottom: 3px; }
+  .exercise-list { list-style: none; padding-left: 0 !important; }
+  .exercise-list li { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px dashed var(--border); padding: 4px 0; }
+  .exercise-list .sets { font-family: 'Syne Mono', monospace; color: var(--muted); flex-shrink: 0; }
+  .circuit-format { font-size: 12.5px; color: var(--muted); font-style: italic; margin-bottom: 6px; }
+
+  /* REGISTRO DIARIO */
+  .check-row, .check-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+  .check-grid { margin-bottom: 6px; }
+  .check-item { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 20px; padding: 8px 14px; font-size: 13.5px; background: var(--bg); cursor: pointer; }
+  .check-item input { accent-color: var(--fire); width: 16px; height: 16px; flex-shrink: 0; }
+
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 12px; margin-bottom: 18px; }
+  .stat-card { background: var(--light); border-radius: 4px; padding: 12px 14px; }
+  .stat-card .v { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 20px; color: var(--ink); }
+  .stat-card .l { font-family: 'Syne Mono', monospace; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+
+  .sparkline-wrap { margin-bottom: 18px; }
+
+  .log-table-wrap { overflow-x: auto; margin-top: 10px; }
+  .log-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .log-table th, .log-table td { border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; white-space: nowrap; }
+  .log-table th { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+  .del-btn { background: none; border: none; color: var(--fire); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
+
   footer { text-align: center; padding: 30px 24px; font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
 </style>
 </head>
@@ -298,9 +345,22 @@
           <option value="1.9">Muy activo (entrenamiento intenso o trabajo físico)</option>
         </select>
       </div>
+      <div class="field">
+        <label for="weeksGoal">¿En cuántas semanas quieres tu meta?</label>
+        <input type="number" id="weeksGoal" min="2" max="52" value="8">
+      </div>
+      <div class="field">
+        <label for="diasEntreno">Días de entrenamiento/semana</label>
+        <select id="diasEntreno">
+          <option value="3">3 días</option>
+          <option value="4" selected>4 días</option>
+          <option value="5">5 días</option>
+          <option value="6">6 días</option>
+        </select>
+      </div>
     </div>
 
-    <button class="btn" id="calcMacrosBtn">Calcular mis macros</button>
+    <button class="btn" id="calcMacrosBtn">Calcular mis macros y mi plan</button>
     <div class="error-msg" id="profileError">Revisa que edad, peso y estatura sean valores válidos.</div>
 
     <div class="macro-result" id="macroResult">
@@ -312,6 +372,17 @@
       </div>
       <div class="strategy-box" id="strategyBox"></div>
     </div>
+  </section>
+
+  <!-- STEP 1B: ACTION PLAN -->
+  <section class="card" id="planSection" style="display:none;">
+    <div class="card-label">Plan de acción</div>
+    <h2>Tu plan de acción</h2>
+    <p class="hint">Fases hacia tu meta con reverse dieting incluido (subir calorías poco a poco después de un déficit, para proteger tu metabolismo), más una rutina de entrenamiento funcional por circuitos según tus días disponibles. Al volver a calcular, la fecha de inicio de este plan se reinicia.</p>
+    <div id="planPhases"></div>
+    <div id="planTimeline"></div>
+    <h4 class="sub-label">Rutina sugerida</h4>
+    <div id="planTraining"></div>
   </section>
 
   <!-- STEP 2: FOOD LIST -->
@@ -349,6 +420,52 @@
     <h2>Tu día vs. tu meta</h2>
     <div class="summary-picks" id="summaryPicks"></div>
     <div id="summaryBars"></div>
+  </section>
+
+  <!-- STEP 5: DAILY LOG -->
+  <section class="card" id="logSection">
+    <div class="card-label">Paso 5</div>
+    <h2>Registro diario</h2>
+    <p class="hint">Registra tu peso, si entrenaste y qué tan apegado estuviste a tu plan hoy. Esto se guarda solo en este navegador/celular — nadie más lo ve, y si borras los datos del navegador se pierde.</p>
+
+    <div id="logWeekBanner" class="strategy-box" style="display:none; margin-bottom:20px;"></div>
+
+    <div class="grid">
+      <div class="field">
+        <label for="logFecha">Fecha</label>
+        <input type="date" id="logFecha">
+      </div>
+      <div class="field">
+        <label for="logPeso">Peso hoy (kg)</label>
+        <input type="number" id="logPeso" step="0.1" min="20" max="300" placeholder="70.0">
+      </div>
+    </div>
+
+    <div class="check-row" style="margin-top:18px;">
+      <label class="check-item"><input type="checkbox" id="logEntreno"> Entrené hoy</label>
+    </div>
+
+    <h4 class="sub-label">Hábitos de hoy</h4>
+    <div class="check-grid" id="logHabits">
+      <label class="check-item"><input type="checkbox" value="macros"> Cumplí mis calorías/macros</label>
+      <label class="check-item"><input type="checkbox" value="agua"> Tomé suficiente agua</label>
+      <label class="check-item"><input type="checkbox" value="verduras"> Comí suficientes verduras</label>
+      <label class="check-item"><input type="checkbox" value="sueno"> Dormí 7+ horas</label>
+      <label class="check-item"><input type="checkbox" value="alcohol"> Sin alcohol</label>
+    </div>
+
+    <h4 class="sub-label">¿Qué comiste de tu plan hoy?</h4>
+    <div class="check-grid" id="logMeals"><p class="empty-note">Genera y elige tus comidas en el Paso 3 para poder marcarlas aquí.</p></div>
+
+    <div class="field" style="margin-top:18px;">
+      <label for="logNotas">Notas (opcional)</label>
+      <textarea id="logNotas" placeholder="¿Cómo te sentiste hoy? ¿Algo que ajustar?"></textarea>
+    </div>
+
+    <button class="btn" id="saveLogBtn">Guardar registro de hoy</button>
+
+    <div id="logSummary" style="margin-top:28px;"></div>
+    <div id="logHistory"></div>
   </section>
 
 </main>
@@ -730,6 +847,65 @@
     }
   ];
 
+  /* ============ TRAINING TEMPLATES (functional / circuit style) ============ */
+  var WARMUP_ITEMS = [
+    '5 minutos de cardio suave (cuerda, trote en el lugar o burpees suaves)',
+    'Movilidad de cadera y hombro: círculos, zancada con giro de tronco',
+    '1-2 series ligeras del primer ejercicio principal para activar'
+  ];
+  var COOLDOWN_ITEMS = [
+    '3-5 minutos de caminata para bajar el pulso',
+    'Estiramiento de los músculos trabajados, 20-30 segundos por zona'
+  ];
+  var CIRCUIT_FORMAT = '4 rondas · 40 s de trabajo / 20 s de descanso, 1-2 min de descanso entre rondas';
+
+  var TRAINING_TEMPLATES = {
+    3: [
+      { name:'Día 1 · Full body A', main:[['Sentadilla goblet','4x10'],['Press militar con mancuerna','3x10'],['Remo con mancuerna a una mano','3x10 por lado']],
+        circuit:['Burpees','Zancadas alternas','Plancha con toque de hombro','Escaladores (mountain climbers)'] },
+      { name:'Día 2 · Full body B', main:[['Peso muerto rumano con mancuernas','4x10'],['Press de pecho con mancuernas','3x10'],['Remo invertido o jalón con banda','3x10']],
+        circuit:['Kettlebell swing o sentadilla con salto','Escaladores','Plancha lateral por lado','Saltos de tijera'] },
+      { name:'Día 3 · Full body C', main:[['Zancadas caminando','3x12 por pierna'],['Press Arnold o militar','3x10'],['Remo con banda o polea','3x12']],
+        circuit:['Burpees','Sentadilla con salto','Plancha','Escaladores rápidos'] }
+    ],
+    4: [
+      { name:'Día 1 · Tren superior A (empuje)', main:[['Press de banca o pecho con mancuernas','4x8-10'],['Press militar con mancuerna','3x10'],['Fondos en banco o flexiones','3x12']],
+        circuit:['Flexiones estilo guerrero (rodillas si hace falta)','Plancha con toque de hombro','Saltos de tijera','Escaladores'] },
+      { name:'Día 2 · Tren inferior A', main:[['Sentadilla goblet','4x10'],['Zancadas caminando','3x12 por pierna'],['Puente de glúteo a una pierna','3x12 por lado']],
+        circuit:['Sentadilla con salto','Zancada con salto','Escaladores','Plancha'] },
+      { name:'Día 3 · Tren superior B (jalón)', main:[['Remo con mancuerna a una mano','4x10 por lado'],['Jalón con banda o polea','3x10'],['Curl de bíceps con mancuernas','3x12']],
+        circuit:['Remo invertido','Superman','Plancha lateral por lado','Burpees'] },
+      { name:'Día 4 · Tren inferior B + core', main:[['Peso muerto rumano con mancuernas','4x10'],['Elevación de cadera (hip thrust)','3x12'],['Elevación de talones','3x15']],
+        circuit:['Kettlebell swing','Escaladores','Plancha con elevación de pierna','Sentadilla con salto'] }
+    ],
+    5: [
+      { name:'Día 1 · Empuje', main:[['Press de banca o pecho con mancuernas','4x8-10'],['Press militar con mancuerna','3x10'],['Fondos en banco','3x12']],
+        circuit:['Flexiones estilo guerrero','Plancha con toque de hombro','Saltos de tijera','Escaladores'] },
+      { name:'Día 2 · Jalón', main:[['Remo con mancuerna a una mano','4x10 por lado'],['Jalón con banda o polea','3x10'],['Curl de bíceps','3x12']],
+        circuit:['Remo invertido','Superman','Plancha lateral','Burpees'] },
+      { name:'Día 3 · Piernas', main:[['Sentadilla goblet','4x10'],['Peso muerto rumano','4x10'],['Zancadas caminando','3x12 por pierna']],
+        circuit:['Sentadilla con salto','Zancada con salto','Escaladores','Plancha'] },
+      { name:'Día 4 · Tren superior mixto', main:[['Press Arnold','3x10'],['Remo con banda','3x12'],['Elevaciones laterales','3x15']],
+        circuit:['Burpees','Plancha con toque de hombro','Escaladores','Saltos de tijera'] },
+      { name:'Día 5 · Acondicionamiento + core', main:[['Peso muerto rumano ligero','3x12'],['Puente de glúteo','3x15'],['Plancha con elevación de pierna','3x30s por lado']],
+        circuit:['Kettlebell swing','Burpees','Escaladores','Sentadilla con salto','Plancha'] }
+    ],
+    6: [
+      { name:'Día 1 · Empuje A', main:[['Press de banca o pecho con mancuernas','4x8-10'],['Press militar con mancuerna','3x10'],['Fondos en banco o flexiones','3x12']],
+        circuit:['Flexiones estilo guerrero','Plancha con toque de hombro','Saltos de tijera','Escaladores'] },
+      { name:'Día 2 · Jalón A', main:[['Remo con mancuerna a una mano','4x10 por lado'],['Jalón con banda o polea','3x10'],['Curl de bíceps','3x12']],
+        circuit:['Remo invertido','Superman','Plancha lateral','Burpees'] },
+      { name:'Día 3 · Piernas A', main:[['Sentadilla goblet','4x10'],['Peso muerto rumano','4x10'],['Zancadas caminando','3x12 por pierna']],
+        circuit:['Sentadilla con salto','Zancada con salto','Escaladores','Plancha'] },
+      { name:'Día 4 · Empuje B', main:[['Press inclinado con mancuernas','4x10'],['Press militar sentado','3x10'],['Extensión de tríceps con mancuerna','3x12']],
+        circuit:['Burpees','Plancha con toque de hombro','Saltos de tijera','Escaladores'] },
+      { name:'Día 5 · Jalón B', main:[['Peso muerto con mancuernas','4x8'],['Remo con torso inclinado','3x10'],['Face pull con banda','3x15']],
+        circuit:['Remo invertido','Plancha lateral por lado','Superman','Escaladores'] },
+      { name:'Día 6 · Piernas B + core', main:[['Zancada búlgara','3x10 por pierna'],['Hip thrust','3x12'],['Elevación de talones','3x15']],
+        circuit:['Sentadilla con salto','Kettlebell swing','Plancha con elevación de pierna','Escaladores'] }
+    ]
+  };
+
   var GOAL_MULT = {
     bajar_grasa: {protein:1.05, carb:0.85, fat:0.85, veg:1.1, fruit:1, dairy:1},
     ganar_musculo: {protein:1.1, carb:1.2, fat:1.05, veg:1, fruit:1.1, dairy:1.05},
@@ -933,13 +1109,103 @@
       p: round(proteinG),
       c: round(carbG),
       f: round(fatG),
+      tdee: round(tdee),
       text: strat.text
     };
+  }
+
+  /* ============ ACTION PLAN (reverse dieting + training) ============ */
+  function calcPlan(targets, weeksGoal, peso){
+    var goal = targets.goal;
+    var tdee = targets.tdee;
+    var phases = [];
+    var weeklyTimeline = null;
+
+    if(goal === 'bajar_grasa'){
+      phases.push({
+        name: 'Fase 1 · Déficit controlado',
+        weeks: weeksGoal,
+        kcal: targets.kcal,
+        desc: 'Déficit del 20% sobre tu gasto energético total ('+tdee+' kcal de mantenimiento). Ritmo esperado de pérdida: 0.5–0.7% de tu peso corporal por semana (~'+(peso*0.005).toFixed(1)+'–'+(peso*0.007).toFixed(1)+' kg/semana), cuidando tu masa muscular con proteína alta y entrenamiento de fuerza.'
+      });
+      var reverseWeeks = Math.max(4, Math.ceil(weeksGoal/2));
+      var stepKcal = Math.max(25, Math.round((tdee - targets.kcal) / reverseWeeks));
+      var timeline = [];
+      var current = targets.kcal;
+      for(var w=1; w<=reverseWeeks; w++){
+        current = Math.min(tdee, current + stepKcal);
+        timeline.push({week:w, kcal: current});
+        if(current >= tdee) break;
+      }
+      phases.push({
+        name: 'Fase 2 · Reverse diet',
+        weeks: timeline.length,
+        kcal: tdee,
+        desc: 'Sube tus calorías poco a poco (sobre todo carbohidratos) hasta volver a tu mantenimiento ('+tdee+' kcal). Esto protege tu metabolismo y tus hormonas después del déficit y evita el efecto rebote. Súbele solo si tu peso se mantiene estable o baja esa semana; si subes de peso de golpe, quédate una semana más antes de aumentar de nuevo.'
+      });
+      weeklyTimeline = timeline;
+    } else if(goal === 'ganar_musculo'){
+      var breakEvery = 7;
+      phases.push({
+        name: 'Fase 1 · Superávit magro',
+        weeks: weeksGoal,
+        kcal: targets.kcal,
+        desc: 'Superávit del 10% sobre tu gasto energético ('+tdee+' kcal de mantenimiento). Ritmo esperado de ganancia: 0.25–0.5% de tu peso corporal por semana. Si subes más rápido, probablemente sea sobre todo grasa — vale la pena bajar el superávit.'
+      });
+      phases.push({
+        name: 'Fase 2 · Pausas de mantenimiento',
+        weeks: null,
+        kcal: tdee,
+        desc: 'Cada '+breakEvery+' semanas de superávit, toma 1-2 semanas a mantenimiento ('+tdee+' kcal). Te da un respiro mental y hormonal, y evita acumular grasa innecesaria en bulks largos. Con tu meta de '+weeksGoal+' semanas, planea tu primera pausa alrededor de la semana '+Math.min(breakEvery, weeksGoal)+'.'
+      });
+    } else {
+      phases.push({
+        name: 'Fase única · Consolidación de hábitos',
+        weeks: weeksGoal,
+        kcal: targets.kcal,
+        desc: 'Mantente en tus calorías de mantenimiento ('+tdee+' kcal) y enfócate en la consistencia: cumplir tus macros, entrenar tus días planeados y dormir bien. Revisa tu progreso cada 2 semanas y ajusta solo si tu peso se mueve de forma sostenida en una dirección.'
+      });
+    }
+
+    return { phases: phases, weeklyTimeline: weeklyTimeline };
+  }
+
+  function getCurrentWeekTarget(planMeta){
+    var start = new Date(planMeta.startDate+'T00:00:00');
+    var now = new Date();
+    var diffDays = Math.floor((now-start)/(1000*60*60*24));
+    var weekNum = Math.max(1, Math.floor(diffDays/7)+1);
+    var kcalTarget = planMeta.targets.kcal;
+    if(planMeta.goal === 'bajar_grasa' && planMeta.weeklyTimeline && planMeta.weeklyTimeline.length){
+      if(weekNum > planMeta.weeksGoal){
+        var idx = Math.min(planMeta.weeklyTimeline.length, weekNum - planMeta.weeksGoal) - 1;
+        kcalTarget = planMeta.weeklyTimeline[idx].kcal;
+      }
+    }
+    return { weekNum: weekNum, kcal: kcalTarget };
+  }
+
+  /* ============ LOCAL STORAGE ============ */
+  var LOG_KEY = 'ctMacroLog_v1';
+  var PLAN_KEY = 'ctPlanMeta_v1';
+
+  function loadLog(){
+    try{ return JSON.parse(localStorage.getItem(LOG_KEY)) || []; }catch(e){ return []; }
+  }
+  function saveLogEntries(entries){
+    try{ localStorage.setItem(LOG_KEY, JSON.stringify(entries)); }catch(e){}
+  }
+  function loadPlanMeta(){
+    try{ return JSON.parse(localStorage.getItem(PLAN_KEY)) || null; }catch(e){ return null; }
+  }
+  function savePlanMeta(meta){
+    try{ localStorage.setItem(PLAN_KEY, JSON.stringify(meta)); }catch(e){}
   }
 
   /* ============ STATE ============ */
   var state = {
     targets: null,
+    planMeta: null,
     recipes: { desayuno: [], comida: [], cena: [], postre: [] },
     selected: { desayuno: null, comida: null, cena: null, postre: null }
   };
@@ -952,6 +1218,42 @@
     document.getElementById('tFat').textContent = t.f + 'g';
     document.getElementById('strategyBox').innerHTML = '<strong>Estrategia: </strong>' + t.text;
     document.getElementById('macroResult').style.display = 'block';
+  }
+
+  function renderPlan(plan, days){
+    var phasesHTML = plan.phases.map(function(p){
+      return '<div class="phase-card">' +
+        '<div class="phase-head"><h4>'+p.name+'</h4>'+(p.weeks?'<span class="phase-weeks">'+p.weeks+' semanas</span>':'')+'</div>' +
+        '<div class="phase-kcal">'+round(p.kcal)+' kcal/día</div>' +
+        '<p>'+p.desc+'</p>' +
+      '</div>';
+    }).join('');
+
+    var timelineHTML = '';
+    if(plan.weeklyTimeline && plan.weeklyTimeline.length){
+      timelineHTML = '<h4 class="sub-label">Semana a semana (reverse diet)</h4>' +
+        '<div class="timeline-scroll"><table class="timeline-table"><thead><tr><th>Semana</th>' +
+        plan.weeklyTimeline.map(function(w){ return '<th>S'+w.week+'</th>'; }).join('') +
+        '</tr></thead><tbody><tr><td>Kcal</td>' +
+        plan.weeklyTimeline.map(function(w){ return '<td>'+w.kcal+'</td>'; }).join('') +
+        '</tr></tbody></table></div>';
+    }
+
+    var trainingDays = TRAINING_TEMPLATES[days] || TRAINING_TEMPLATES[4];
+    var trainingHTML = '<div class="workout-grid">' + trainingDays.map(function(d){
+      return '<div class="workout-card">' +
+        '<h4>'+d.name+'</h4>' +
+        '<h5>Calentamiento</h5><ul>'+WARMUP_ITEMS.map(function(i){return '<li>'+i+'</li>';}).join('')+'</ul>' +
+        '<h5>Fuerza</h5><ul class="exercise-list">'+d.main.map(function(e){return '<li><span>'+e[0]+'</span><span class="sets">'+e[1]+'</span></li>';}).join('')+'</ul>' +
+        '<h5>Circuito metabólico</h5><p class="circuit-format">'+CIRCUIT_FORMAT+'</p><ul>'+d.circuit.map(function(e){return '<li>'+e+'</li>';}).join('')+'</ul>' +
+        '<h5>Enfriamiento</h5><ul>'+COOLDOWN_ITEMS.map(function(i){return '<li>'+i+'</li>';}).join('')+'</ul>' +
+      '</div>';
+    }).join('') + '</div>';
+
+    document.getElementById('planPhases').innerHTML = phasesHTML;
+    document.getElementById('planTimeline').innerHTML = timelineHTML;
+    document.getElementById('planTraining').innerHTML = trainingHTML;
+    document.getElementById('planSection').style.display = 'block';
   }
 
   function recipeCardHTML(mealType, recipe, isSelected){
@@ -998,6 +1300,7 @@
         state.selected[meal] = id;
         renderRecipes();
         renderSummary();
+        renderLogSection();
       });
     });
   }
@@ -1052,14 +1355,157 @@
     document.getElementById('summaryBars').innerHTML = html;
   }
 
+  function buildSparkline(weightEntries){
+    var w = 600, h = 100, pad = 10;
+    var vals = weightEntries.map(function(e){ return e.peso; });
+    var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+    if(min === max){ min -= 1; max += 1; }
+    var pts = weightEntries.map(function(e,i){
+      var x = pad + (weightEntries.length>1 ? (i/(weightEntries.length-1)) : 0) * (w-2*pad);
+      var y = h - pad - ((e.peso-min)/(max-min)) * (h-2*pad);
+      return x.toFixed(1)+','+y.toFixed(1);
+    }).join(' ');
+    return '<div class="sparkline-wrap"><h4 class="sub-label">Tendencia de peso</h4>' +
+      '<svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'" preserveAspectRatio="none" style="overflow:visible;">' +
+      '<polyline points="'+pts+'" fill="none" stroke="#e8320a" stroke-width="2.5" vector-effect="non-scaling-stroke"/>' +
+      '</svg></div>';
+  }
+
+  function renderLogSection(){
+    var mealsHTML = '';
+    ['desayuno','comida','cena','postre'].forEach(function(m){
+      var r = findSelectedRecipe(m);
+      if(r){
+        mealsHTML += '<label class="check-item"><input type="checkbox" data-meal="'+m+'"> '+cap(m)+': '+r.title+' ('+r.totals.kcal+' kcal)</label>';
+      }
+    });
+    document.getElementById('logMeals').innerHTML = mealsHTML || '<p class="empty-note">Genera y elige tus comidas en el Paso 3 para poder marcarlas aquí.</p>';
+
+    var banner = document.getElementById('logWeekBanner');
+    if(state.planMeta){
+      var wk = getCurrentWeekTarget(state.planMeta);
+      banner.style.display = 'block';
+      banner.innerHTML = '<strong>Semana '+wk.weekNum+' de tu plan.</strong> Objetivo de esta semana: ~'+wk.kcal+' kcal/día.';
+    } else {
+      banner.style.display = 'none';
+    }
+
+    var entries = loadLog().slice().sort(function(a,b){ return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+    var summaryEl = document.getElementById('logSummary');
+    var histEl = document.getElementById('logHistory');
+
+    if(!entries.length){
+      summaryEl.innerHTML = '';
+      histEl.innerHTML = '<p class="empty-note">Aún no tienes registros. Guarda tu primer día arriba.</p>';
+      return;
+    }
+
+    var weightEntries = entries.filter(function(e){ return e.peso; });
+    var firstW = weightEntries.length ? weightEntries[0].peso : null;
+    var lastW = weightEntries.length ? weightEntries[weightEntries.length-1].peso : null;
+    var deltaW = (firstW != null && lastW != null) ? (lastW - firstW) : null;
+
+    var last7 = entries.slice(-7);
+    var trainedCount = last7.filter(function(e){ return e.entreno; }).length;
+
+    var totalHabitsPossible = entries.length * 5;
+    var totalHabitsDone = entries.reduce(function(sum,e){ return sum + (e.habits ? e.habits.length : 0); }, 0);
+    var adherencePct = totalHabitsPossible ? round(totalHabitsDone/totalHabitsPossible*100) : 0;
+
+    var statsHTML = '<div class="stat-grid">' +
+      '<div class="stat-card"><div class="v">'+entries.length+'</div><div class="l">Días registrados</div></div>' +
+      '<div class="stat-card"><div class="v">'+(deltaW != null ? (deltaW>0?'+':'')+deltaW.toFixed(1)+' kg' : '–')+'</div><div class="l">Cambio de peso total</div></div>' +
+      '<div class="stat-card"><div class="v">'+trainedCount+'/'+last7.length+'</div><div class="l">Entrenos (últimos '+last7.length+' días)</div></div>' +
+      '<div class="stat-card"><div class="v">'+adherencePct+'%</div><div class="l">Adherencia a hábitos</div></div>' +
+    '</div>';
+
+    var sparkHTML = weightEntries.length >= 2 ? buildSparkline(weightEntries) : '';
+    summaryEl.innerHTML = statsHTML + sparkHTML;
+
+    var rows = entries.slice().reverse().map(function(e){
+      return '<tr>' +
+        '<td>'+e.date+'</td>' +
+        '<td>'+(e.peso != null ? e.peso+' kg' : '–')+'</td>' +
+        '<td>'+(e.kcal || 0)+' kcal</td>' +
+        '<td>'+(e.entreno ? '✓' : '–')+'</td>' +
+        '<td>'+(e.habits ? e.habits.length : 0)+'/5</td>' +
+        '<td><button class="del-btn" data-date="'+e.date+'">Eliminar</button></td>' +
+      '</tr>';
+    }).join('');
+    histEl.innerHTML = '<div class="log-table-wrap"><table class="log-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Kcal</th><th>Entrenó</th><th>Hábitos</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }
+
   /* ============ EVENTS ============ */
   document.getElementById('calcMacrosBtn').addEventListener('click', function(){
     var t = calcTargets();
     if(t){
       state.targets = t;
       renderMacroResult(t);
+
+      var weeksGoal = Math.max(2, Math.min(52, parseInt(document.getElementById('weeksGoal').value, 10) || 8));
+      var diasEntreno = parseInt(document.getElementById('diasEntreno').value, 10) || 4;
+      var peso = parseFloat(document.getElementById('peso').value) || 70;
+      var planComputed = calcPlan(t, weeksGoal, peso);
+      renderPlan(planComputed, diasEntreno);
+
+      var planMeta = {
+        startDate: new Date().toISOString().slice(0,10),
+        goal: t.goal, weeksGoal: weeksGoal, diasEntreno: diasEntreno,
+        targets: t, weeklyTimeline: planComputed.weeklyTimeline, phases: planComputed.phases
+      };
+      savePlanMeta(planMeta);
+      state.planMeta = planMeta;
+
       renderSummary();
+      renderLogSection();
     }
+  });
+
+  document.getElementById('saveLogBtn').addEventListener('click', function(){
+    var fecha = document.getElementById('logFecha').value || new Date().toISOString().slice(0,10);
+    var pesoVal = parseFloat(document.getElementById('logPeso').value);
+    var peso = isNaN(pesoVal) ? null : pesoVal;
+    var entreno = document.getElementById('logEntreno').checked;
+    var habits = Array.prototype.map.call(document.querySelectorAll('#logHabits input[type=checkbox]:checked'), function(cb){ return cb.value; });
+    var notas = document.getElementById('logNotas').value.trim();
+
+    var meals = {};
+    var kcalTotal = 0, pTotal = 0, cTotal = 0, fTotal = 0;
+    document.querySelectorAll('#logMeals input[type=checkbox]:checked').forEach(function(cb){
+      var meal = cb.getAttribute('data-meal');
+      var r = findSelectedRecipe(meal);
+      if(r){
+        meals[meal] = { title: r.title, kcal: r.totals.kcal, p: r.totals.p, c: r.totals.c, f: r.totals.f };
+        kcalTotal += r.totals.kcal; pTotal += r.totals.p; cTotal += r.totals.c; fTotal += r.totals.f;
+      }
+    });
+
+    var entry = {
+      date: fecha, peso: peso, entreno: entreno, habits: habits, notas: notas, meals: meals,
+      kcal: round(kcalTotal), p: round(pTotal), c: round(cTotal), f: round(fTotal)
+    };
+
+    var entries = loadLog();
+    var idx = entries.findIndex(function(e){ return e.date === fecha; });
+    if(idx >= 0) entries[idx] = entry; else entries.push(entry);
+    saveLogEntries(entries);
+
+    document.getElementById('logPeso').value = '';
+    document.getElementById('logEntreno').checked = false;
+    document.querySelectorAll('#logHabits input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
+    document.querySelectorAll('#logMeals input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
+    document.getElementById('logNotas').value = '';
+
+    renderLogSection();
+  });
+
+  document.getElementById('logHistory').addEventListener('click', function(e){
+    var btn = e.target.closest ? e.target.closest('.del-btn') : null;
+    if(!btn) return;
+    var date = btn.getAttribute('data-date');
+    var entries = loadLog().filter(function(en){ return en.date !== date; });
+    saveLogEntries(entries);
+    renderLogSection();
   });
 
   document.getElementById('generateBtn').addEventListener('click', function(){
@@ -1102,6 +1548,21 @@
       document.getElementById('panel-'+btn.getAttribute('data-tab')).classList.add('active');
     });
   });
+
+  /* ============ INIT ============ */
+  (function init(){
+    var todayInput = document.getElementById('logFecha');
+    if(todayInput) todayInput.value = new Date().toISOString().slice(0,10);
+
+    var savedPlan = loadPlanMeta();
+    if(savedPlan && savedPlan.targets){
+      state.targets = savedPlan.targets;
+      state.planMeta = savedPlan;
+      renderMacroResult(savedPlan.targets);
+      renderPlan({ phases: savedPlan.phases, weeklyTimeline: savedPlan.weeklyTimeline }, savedPlan.diasEntreno);
+    }
+    renderLogSection();
+  })();
 
 })();
 </script>
