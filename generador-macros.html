@@ -241,16 +241,10 @@
   .timeline-table th, .timeline-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: center; }
   .timeline-table th { background: var(--dark); color: white; font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; }
 
-  .workout-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px,1fr)); gap: 16px; }
-  .workout-card { border: 1px solid var(--border); border-radius: 4px; padding: 16px; background: var(--bg); }
-  .workout-card h4 { font-family: 'Syne', sans-serif; font-size: 16px; color: var(--ink); margin-bottom: 6px; }
-  .workout-card h5 { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--fire); margin: 10px 0 4px; }
-  .workout-card ul { padding-left: 18px; font-size: 13.5px; color: var(--body); }
-  .workout-card li { margin-bottom: 3px; }
-  .exercise-list { list-style: none; padding-left: 0 !important; }
-  .exercise-list li { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px dashed var(--border); padding: 4px 0; }
-  .exercise-list .sets { font-family: 'Syne Mono', monospace; color: var(--muted); flex-shrink: 0; }
-  .circuit-format { font-size: 12.5px; color: var(--muted); font-style: italic; margin-bottom: 6px; }
+  .goal-estimate { border: 1px solid var(--border); border-radius: 4px; padding: 16px 18px; background: var(--light); margin-bottom: 18px; }
+  .goal-estimate h4 { font-family: 'Syne', sans-serif; font-size: 15px; color: var(--ink); margin-bottom: 6px; }
+  .goal-estimate p { font-size: 14px; color: var(--body); }
+  .goal-estimate .warn { color: var(--fire); }
 
   /* REGISTRO DIARIO */
   .check-row, .check-grid { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -350,15 +344,19 @@
         <input type="number" id="weeksGoal" min="2" max="52" value="8">
       </div>
       <div class="field">
-        <label for="diasEntreno">Días de entrenamiento/semana</label>
-        <select id="diasEntreno">
-          <option value="3">3 días</option>
-          <option value="4" selected>4 días</option>
-          <option value="5">5 días</option>
-          <option value="6">6 días</option>
-        </select>
+        <label for="pesoObjetivo">Peso objetivo (kg)</label>
+        <input type="number" id="pesoObjetivo" step="0.1" min="20" max="300" placeholder="ej. 80">
+      </div>
+      <div class="field">
+        <label for="grasaActual">% grasa corporal actual</label>
+        <input type="number" id="grasaActual" step="0.1" min="3" max="60" placeholder="ej. 24">
+      </div>
+      <div class="field">
+        <label for="grasaObjetivo">% grasa corporal objetivo</label>
+        <input type="number" id="grasaObjetivo" step="0.1" min="3" max="60" placeholder="ej. 20">
       </div>
     </div>
+    <p class="hint" style="margin:10px 0 0;">Llena tu peso objetivo, o tu % de grasa actual y objetivo si lo sabes (no necesitas ambos) — con eso calculamos cuántas semanas te tomaría llegar de forma realista.</p>
 
     <button class="btn" id="calcMacrosBtn">Calcular mis macros y mi plan</button>
     <div class="error-msg" id="profileError">Revisa que edad, peso y estatura sean valores válidos.</div>
@@ -378,11 +376,10 @@
   <section class="card" id="planSection" style="display:none;">
     <div class="card-label">Plan de acción</div>
     <h2>Tu plan de acción</h2>
-    <p class="hint">Fases hacia tu meta con reverse dieting incluido (subir calorías poco a poco después de un déficit, para proteger tu metabolismo), más una rutina de entrenamiento funcional por circuitos según tus días disponibles. Al volver a calcular, la fecha de inicio de este plan se reinicia.</p>
+    <p class="hint">Fases hacia tu meta con reverse dieting incluido (subir calorías poco a poco después de un déficit, para proteger tu metabolismo). Al volver a calcular, la fecha de inicio de este plan se reinicia.</p>
+    <div id="planGoalEstimate"></div>
     <div id="planPhases"></div>
     <div id="planTimeline"></div>
-    <h4 class="sub-label">Rutina sugerida</h4>
-    <div id="planTraining"></div>
   </section>
 
   <!-- STEP 2: FOOD LIST -->
@@ -847,65 +844,6 @@
     }
   ];
 
-  /* ============ TRAINING TEMPLATES (functional / circuit style) ============ */
-  var WARMUP_ITEMS = [
-    '5 minutos de cardio suave (cuerda, trote en el lugar o burpees suaves)',
-    'Movilidad de cadera y hombro: círculos, zancada con giro de tronco',
-    '1-2 series ligeras del primer ejercicio principal para activar'
-  ];
-  var COOLDOWN_ITEMS = [
-    '3-5 minutos de caminata para bajar el pulso',
-    'Estiramiento de los músculos trabajados, 20-30 segundos por zona'
-  ];
-  var CIRCUIT_FORMAT = '4 rondas · 40 s de trabajo / 20 s de descanso, 1-2 min de descanso entre rondas';
-
-  var TRAINING_TEMPLATES = {
-    3: [
-      { name:'Día 1 · Full body A', main:[['Sentadilla goblet','4x10'],['Press militar con mancuerna','3x10'],['Remo con mancuerna a una mano','3x10 por lado']],
-        circuit:['Burpees','Zancadas alternas','Plancha con toque de hombro','Escaladores (mountain climbers)'] },
-      { name:'Día 2 · Full body B', main:[['Peso muerto rumano con mancuernas','4x10'],['Press de pecho con mancuernas','3x10'],['Remo invertido o jalón con banda','3x10']],
-        circuit:['Kettlebell swing o sentadilla con salto','Escaladores','Plancha lateral por lado','Saltos de tijera'] },
-      { name:'Día 3 · Full body C', main:[['Zancadas caminando','3x12 por pierna'],['Press Arnold o militar','3x10'],['Remo con banda o polea','3x12']],
-        circuit:['Burpees','Sentadilla con salto','Plancha','Escaladores rápidos'] }
-    ],
-    4: [
-      { name:'Día 1 · Tren superior A (empuje)', main:[['Press de banca o pecho con mancuernas','4x8-10'],['Press militar con mancuerna','3x10'],['Fondos en banco o flexiones','3x12']],
-        circuit:['Flexiones estilo guerrero (rodillas si hace falta)','Plancha con toque de hombro','Saltos de tijera','Escaladores'] },
-      { name:'Día 2 · Tren inferior A', main:[['Sentadilla goblet','4x10'],['Zancadas caminando','3x12 por pierna'],['Puente de glúteo a una pierna','3x12 por lado']],
-        circuit:['Sentadilla con salto','Zancada con salto','Escaladores','Plancha'] },
-      { name:'Día 3 · Tren superior B (jalón)', main:[['Remo con mancuerna a una mano','4x10 por lado'],['Jalón con banda o polea','3x10'],['Curl de bíceps con mancuernas','3x12']],
-        circuit:['Remo invertido','Superman','Plancha lateral por lado','Burpees'] },
-      { name:'Día 4 · Tren inferior B + core', main:[['Peso muerto rumano con mancuernas','4x10'],['Elevación de cadera (hip thrust)','3x12'],['Elevación de talones','3x15']],
-        circuit:['Kettlebell swing','Escaladores','Plancha con elevación de pierna','Sentadilla con salto'] }
-    ],
-    5: [
-      { name:'Día 1 · Empuje', main:[['Press de banca o pecho con mancuernas','4x8-10'],['Press militar con mancuerna','3x10'],['Fondos en banco','3x12']],
-        circuit:['Flexiones estilo guerrero','Plancha con toque de hombro','Saltos de tijera','Escaladores'] },
-      { name:'Día 2 · Jalón', main:[['Remo con mancuerna a una mano','4x10 por lado'],['Jalón con banda o polea','3x10'],['Curl de bíceps','3x12']],
-        circuit:['Remo invertido','Superman','Plancha lateral','Burpees'] },
-      { name:'Día 3 · Piernas', main:[['Sentadilla goblet','4x10'],['Peso muerto rumano','4x10'],['Zancadas caminando','3x12 por pierna']],
-        circuit:['Sentadilla con salto','Zancada con salto','Escaladores','Plancha'] },
-      { name:'Día 4 · Tren superior mixto', main:[['Press Arnold','3x10'],['Remo con banda','3x12'],['Elevaciones laterales','3x15']],
-        circuit:['Burpees','Plancha con toque de hombro','Escaladores','Saltos de tijera'] },
-      { name:'Día 5 · Acondicionamiento + core', main:[['Peso muerto rumano ligero','3x12'],['Puente de glúteo','3x15'],['Plancha con elevación de pierna','3x30s por lado']],
-        circuit:['Kettlebell swing','Burpees','Escaladores','Sentadilla con salto','Plancha'] }
-    ],
-    6: [
-      { name:'Día 1 · Empuje A', main:[['Press de banca o pecho con mancuernas','4x8-10'],['Press militar con mancuerna','3x10'],['Fondos en banco o flexiones','3x12']],
-        circuit:['Flexiones estilo guerrero','Plancha con toque de hombro','Saltos de tijera','Escaladores'] },
-      { name:'Día 2 · Jalón A', main:[['Remo con mancuerna a una mano','4x10 por lado'],['Jalón con banda o polea','3x10'],['Curl de bíceps','3x12']],
-        circuit:['Remo invertido','Superman','Plancha lateral','Burpees'] },
-      { name:'Día 3 · Piernas A', main:[['Sentadilla goblet','4x10'],['Peso muerto rumano','4x10'],['Zancadas caminando','3x12 por pierna']],
-        circuit:['Sentadilla con salto','Zancada con salto','Escaladores','Plancha'] },
-      { name:'Día 4 · Empuje B', main:[['Press inclinado con mancuernas','4x10'],['Press militar sentado','3x10'],['Extensión de tríceps con mancuerna','3x12']],
-        circuit:['Burpees','Plancha con toque de hombro','Saltos de tijera','Escaladores'] },
-      { name:'Día 5 · Jalón B', main:[['Peso muerto con mancuernas','4x8'],['Remo con torso inclinado','3x10'],['Face pull con banda','3x15']],
-        circuit:['Remo invertido','Plancha lateral por lado','Superman','Escaladores'] },
-      { name:'Día 6 · Piernas B + core', main:[['Zancada búlgara','3x10 por pierna'],['Hip thrust','3x12'],['Elevación de talones','3x15']],
-        circuit:['Sentadilla con salto','Kettlebell swing','Plancha con elevación de pierna','Escaladores'] }
-    ]
-  };
-
   var GOAL_MULT = {
     bajar_grasa: {protein:1.05, carb:0.85, fat:0.85, veg:1.1, fruit:1, dairy:1},
     ganar_musculo: {protein:1.1, carb:1.2, fat:1.05, veg:1, fruit:1.1, dairy:1.05},
@@ -1170,6 +1108,37 @@
     return { phases: phases, weeklyTimeline: weeklyTimeline };
   }
 
+  function calcGoalTimeline(goal, peso, pesoObjetivo, grasaActual, grasaObjetivo){
+    var targetWeight = null;
+    if(pesoObjetivo && pesoObjetivo > 0){
+      targetWeight = pesoObjetivo;
+    } else if(grasaActual > 0 && grasaObjetivo > 0 && grasaActual < 70 && grasaObjetivo < 70){
+      var leanMass = peso * (1 - grasaActual/100);
+      targetWeight = leanMass / (1 - grasaObjetivo/100);
+    }
+    if(!targetWeight) return null;
+
+    var diff = targetWeight - peso;
+    if(Math.abs(diff) < 0.1){
+      return { targetWeight: Math.round(targetWeight*10)/10, diffKg: 0, weeksLow: 0, weeksHigh: 0, sameWeight: true };
+    }
+
+    var rateLow, rateHigh;
+    if(goal === 'bajar_grasa'){ rateLow = 0.005; rateHigh = 0.007; }
+    else if(goal === 'ganar_musculo'){ rateLow = 0.0025; rateHigh = 0.005; }
+    else { rateLow = 0.003; rateHigh = 0.005; }
+
+    var weeksFast = Math.abs(diff) / (peso * rateHigh);
+    var weeksSlow = Math.abs(diff) / (peso * rateLow);
+
+    return {
+      targetWeight: Math.round(targetWeight*10)/10,
+      diffKg: Math.round(diff*10)/10,
+      weeksLow: Math.ceil(weeksFast),
+      weeksHigh: Math.ceil(weeksSlow)
+    };
+  }
+
   function getCurrentWeekTarget(planMeta){
     var start = new Date(planMeta.startDate+'T00:00:00');
     var now = new Date();
@@ -1220,7 +1189,22 @@
     document.getElementById('macroResult').style.display = 'block';
   }
 
-  function renderPlan(plan, days){
+  function renderPlan(plan, goalEstimate, weeksGoal, peso){
+    var goalHTML = '';
+    if(goalEstimate && !goalEstimate.sameWeight){
+      var msg;
+      if(weeksGoal < goalEstimate.weeksLow){
+        msg = '<span class="warn">Tu meta de '+weeksGoal+' semanas es más agresiva que lo recomendado</span> para hacerlo de forma segura — a un ritmo saludable te tomaría entre '+goalEstimate.weeksLow+' y '+goalEstimate.weeksHigh+' semanas. Considera ampliar tu plazo.';
+      } else if(weeksGoal > goalEstimate.weeksHigh){
+        msg = 'Tu meta de '+weeksGoal+' semanas es holgada — a tu ritmo esperado podrías llegar en '+goalEstimate.weeksLow+' a '+goalEstimate.weeksHigh+' semanas. Tienes margen para ir todavía más gradual si prefieres.';
+      } else {
+        msg = 'Tu meta de '+weeksGoal+' semanas está dentro de un ritmo realista y saludable ('+goalEstimate.weeksLow+'-'+goalEstimate.weeksHigh+' semanas estimadas).';
+      }
+      goalHTML = '<div class="goal-estimate"><h4>Tu meta en números</h4><p>De <strong>'+peso+' kg</strong> a <strong>'+goalEstimate.targetWeight+' kg</strong> ('+(goalEstimate.diffKg>0?'+':'')+goalEstimate.diffKg+' kg). '+msg+'</p></div>';
+    } else if(goalEstimate && goalEstimate.sameWeight){
+      goalHTML = '<div class="goal-estimate"><h4>Tu meta en números</h4><p>Tu peso objetivo ('+goalEstimate.targetWeight+' kg) está prácticamente en tu peso actual — tu plan es más de recomposición/mantenimiento que de cambio de peso.</p></div>';
+    }
+
     var phasesHTML = plan.phases.map(function(p){
       return '<div class="phase-card">' +
         '<div class="phase-head"><h4>'+p.name+'</h4>'+(p.weeks?'<span class="phase-weeks">'+p.weeks+' semanas</span>':'')+'</div>' +
@@ -1239,20 +1223,9 @@
         '</tr></tbody></table></div>';
     }
 
-    var trainingDays = TRAINING_TEMPLATES[days] || TRAINING_TEMPLATES[4];
-    var trainingHTML = '<div class="workout-grid">' + trainingDays.map(function(d){
-      return '<div class="workout-card">' +
-        '<h4>'+d.name+'</h4>' +
-        '<h5>Calentamiento</h5><ul>'+WARMUP_ITEMS.map(function(i){return '<li>'+i+'</li>';}).join('')+'</ul>' +
-        '<h5>Fuerza</h5><ul class="exercise-list">'+d.main.map(function(e){return '<li><span>'+e[0]+'</span><span class="sets">'+e[1]+'</span></li>';}).join('')+'</ul>' +
-        '<h5>Circuito metabólico</h5><p class="circuit-format">'+CIRCUIT_FORMAT+'</p><ul>'+d.circuit.map(function(e){return '<li>'+e+'</li>';}).join('')+'</ul>' +
-        '<h5>Enfriamiento</h5><ul>'+COOLDOWN_ITEMS.map(function(i){return '<li>'+i+'</li>';}).join('')+'</ul>' +
-      '</div>';
-    }).join('') + '</div>';
-
+    document.getElementById('planGoalEstimate').innerHTML = goalHTML;
     document.getElementById('planPhases').innerHTML = phasesHTML;
     document.getElementById('planTimeline').innerHTML = timelineHTML;
-    document.getElementById('planTraining').innerHTML = trainingHTML;
     document.getElementById('planSection').style.display = 'block';
   }
 
@@ -1443,15 +1416,20 @@
       renderMacroResult(t);
 
       var weeksGoal = Math.max(2, Math.min(52, parseInt(document.getElementById('weeksGoal').value, 10) || 8));
-      var diasEntreno = parseInt(document.getElementById('diasEntreno').value, 10) || 4;
       var peso = parseFloat(document.getElementById('peso').value) || 70;
+      var pesoObjetivo = parseFloat(document.getElementById('pesoObjetivo').value);
+      var grasaActual = parseFloat(document.getElementById('grasaActual').value);
+      var grasaObjetivo = parseFloat(document.getElementById('grasaObjetivo').value);
+
       var planComputed = calcPlan(t, weeksGoal, peso);
-      renderPlan(planComputed, diasEntreno);
+      var goalEstimate = calcGoalTimeline(t.goal, peso, pesoObjetivo, grasaActual, grasaObjetivo);
+      renderPlan(planComputed, goalEstimate, weeksGoal, peso);
 
       var planMeta = {
         startDate: new Date().toISOString().slice(0,10),
-        goal: t.goal, weeksGoal: weeksGoal, diasEntreno: diasEntreno,
-        targets: t, weeklyTimeline: planComputed.weeklyTimeline, phases: planComputed.phases
+        goal: t.goal, weeksGoal: weeksGoal, peso: peso,
+        targets: t, weeklyTimeline: planComputed.weeklyTimeline, phases: planComputed.phases,
+        goalEstimate: goalEstimate
       };
       savePlanMeta(planMeta);
       state.planMeta = planMeta;
@@ -1559,7 +1537,7 @@
       state.targets = savedPlan.targets;
       state.planMeta = savedPlan;
       renderMacroResult(savedPlan.targets);
-      renderPlan({ phases: savedPlan.phases, weeklyTimeline: savedPlan.weeklyTimeline }, savedPlan.diasEntreno);
+      renderPlan({ phases: savedPlan.phases, weeklyTimeline: savedPlan.weeklyTimeline }, savedPlan.goalEstimate, savedPlan.weeksGoal, savedPlan.peso);
     }
     renderLogSection();
   })();
