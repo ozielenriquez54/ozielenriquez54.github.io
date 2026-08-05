@@ -215,6 +215,9 @@
 
   .empty-note { color: var(--muted); font-size: 14px; font-style: italic; padding: 10px 0; }
   .unmatched-note { font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .meal-targets-info { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .meal-targets-info .mt-pill { background: var(--light); border-radius: 20px; padding: 8px 14px; font-size: 12px; color: var(--body); }
+  .meal-targets-info .mt-pill strong { color: var(--ink); font-family: 'Syne Mono', monospace; text-transform: uppercase; letter-spacing: .5px; }
 
   /* SUMMARY */
   .bar-row { margin-bottom: 16px; }
@@ -429,7 +432,8 @@
   <section class="card" id="resultsSection" style="display:none;">
     <div class="card-label">Paso 3</div>
     <h2>Tu plan de comidas</h2>
-    <p class="hint">Recetas de máximo 20 minutos. Pulsa "Usar en mi resumen" en la que prefieras de cada categoría para ver cómo se acumulan tus macros del día.</p>
+    <p class="hint">Recetas de máximo 20 minutos, con porciones calculadas para cubrir tu objetivo de macros de cada comida. Pulsa "Usar en mi resumen" en la que prefieras de cada categoría para ver cómo se acumulan tus macros del día.</p>
+    <div id="mealTargetsInfo" class="meal-targets-info"></div>
     <div class="tabs">
       <button class="tab-btn active" data-tab="desayuno">Desayunos</button>
       <button class="tab-btn" data-tab="comida">Comidas</button>
@@ -947,11 +951,28 @@
     }
   ];
 
+  // Solo aplica a guarniciones de porción fija (verdura/fruta/lácteo). Proteína,
+  // carbohidrato y grasa ya NO se escalan con esto — se calculan directo desde la
+  // meta de macros de cada comida, así que aplicar un multiplicador aquí también
+  // los desviaría del objetivo por partida doble.
   var GOAL_MULT = {
-    bajar_grasa: {protein:1.05, carb:0.85, fat:0.85, veg:1.1, fruit:1, dairy:1},
-    ganar_musculo: {protein:1.1, carb:1.2, fat:1.05, veg:1, fruit:1.1, dairy:1.05},
-    mantenimiento: {protein:1, carb:1, fat:1, veg:1, fruit:1, dairy:1}
+    bajar_grasa: {veg:1.1, fruit:1, dairy:1},
+    ganar_musculo: {veg:1, fruit:1.1, dairy:1.05},
+    mantenimiento: {veg:1, fruit:1, dairy:1}
   };
+
+  // Reparto del día entre comidas (usado para calcular cuánto debe aportar cada una)
+  var MEAL_SPLIT = { desayuno: 0.25, comida: 0.35, cena: 0.30, postre: 0.10 };
+  var DEFAULT_DAILY_TARGET = { kcal: 2000, p: 150, c: 200, f: 65 };
+
+  function computeMealTarget(dailyTarget, fraction){
+    return {
+      kcal: dailyTarget.kcal * fraction,
+      p: dailyTarget.p * fraction,
+      c: dailyTarget.c * fraction,
+      f: dailyTarget.f * fraction
+    };
+  }
 
   /* ============ MATCHING ============ */
   function parseUserFoods(text){
@@ -1014,18 +1035,80 @@
       return chosen;
     }
 
-    function buildRecipe(tpl){
-      var filled = {};
+    // Cuántos gramos de este alimento hacen falta para aportar targetGrams del
+    // macro indicado. Se acota entre 0.35x y 2.6x la porción base del rol para
+    // no terminar con una receta absurda (5g o 900g de algo) en metas extremas,
+    // pero dejando espacio suficiente para metas altas (más peso, superávit).
+    function solveQtyForMacro(food, macroKey, targetGrams, baseQty){
+      var perHundred = food[macroKey];
+      if(!perHundred || perHundred <= 0) return baseQty;
+      var qty = (targetGrams * 100) / perHundred;
+      return Math.min(baseQty * 2.6, Math.max(baseQty * 0.35, qty));
+    }
+
+    var MACRO_KEY_BY_TAG = { protein: 'p', carb: 'c', fat: 'f' };
+
+    function buildRecipe(tpl, mealTarget){
+      mealTarget = mealTarget || DEFAULT_DAILY_TARGET;
+
+      var roleFoods = {};
       for(var i=0;i<tpl.roles.length;i++){
         var r = tpl.roles[i];
         var food = getFoodForRole(r);
-        if(food){
-          var m = mult[r.tags[0]] || 1;
-          filled[r.key] = { food: food, qty: r.baseQty * m };
-        } else if(r.required){
-          return null;
-        }
+        if(!food && r.required) return null;
+        roleFoods[r.key] = food;
       }
+
+      // Guarniciones de porción fija (verdura/fruta/lácteo): cantidad ya definida.
+      var qty = {};
+      tpl.roles.forEach(function(r){
+        var food = roleFoods[r.key];
+        if(!food) return;
+        var tag = r.tags[0];
+        if(tag === 'veg' || tag === 'fruit' || tag === 'dairy'){
+          qty[r.key] = r.baseQty * (mult[tag]||1);
+        } else {
+          qty[r.key] = r.baseQty; // arranque para proteína/carbo/grasa, se ajusta abajo
+        }
+      });
+
+      // Proteína, carbohidrato y grasa se resuelven contra lo que falte de la
+      // meta de esta comida. Como ningún alimento real aporta un solo macro
+      // (el huevo trae proteína Y grasa, el pan trae carbos Y bastante
+      // proteína), se itera varias veces: cada ronda recalcula cuánto ya
+      // están aportando LOS DEMÁS roles y ajusta este para cubrir el resto,
+      // hasta que las cantidades convergen.
+      var macroRoles = tpl.roles.filter(function(r){
+        var t = r.tags[0];
+        return roleFoods[r.key] && MACRO_KEY_BY_TAG[t];
+      });
+
+      function contributionOfOthers(excludeKey, macroKey){
+        var sum = 0;
+        tpl.roles.forEach(function(r){
+          var food = roleFoods[r.key];
+          if(!food || r.key === excludeKey || qty[r.key] == null) return;
+          sum += food[macroKey] * qty[r.key] / 100;
+        });
+        return sum;
+      }
+
+      for(var iter=0; iter<4; iter++){
+        macroRoles.forEach(function(r){
+          var food = roleFoods[r.key];
+          var macroKey = MACRO_KEY_BY_TAG[r.tags[0]];
+          var already = contributionOfOthers(r.key, macroKey);
+          var remaining = Math.max(0, mealTarget[macroKey] - already);
+          qty[r.key] = solveQtyForMacro(food, macroKey, remaining, r.baseQty);
+        });
+      }
+
+      var filled = {};
+      tpl.roles.forEach(function(r){
+        var food = roleFoods[r.key];
+        if(food) filled[r.key] = { food: food, qty: qty[r.key] };
+      });
+
       // merge duplicate foods across roles
       var byKey = {};
       Object.keys(filled).forEach(function(k){
@@ -1085,13 +1168,13 @@
     return { buildRecipe: buildRecipe };
   }
 
-  function generateSet(templates, engine, count, excludeIds){
+  function generateSet(templates, engine, count, excludeIds, mealTarget){
     var results = [];
     var used = excludeIds ? excludeIds.slice() : [];
     for(var i=0;i<templates.length && results.length<count;i++){
       var tpl = templates[i];
       if(used.indexOf(tpl.id) !== -1) continue;
-      var r = engine.buildRecipe(tpl);
+      var r = engine.buildRecipe(tpl, mealTarget);
       if(r){ results.push(r); used.push(tpl.id); }
     }
     return {results: results, usedIds: used};
@@ -1354,7 +1437,8 @@
     planMeta: null,
     recipes: { desayuno: [], comida: [], cena: [], postre: [] },
     selected: { desayuno: null, comida: null, cena: null, postre: null },
-    pendingExtras: []
+    pendingExtras: [],
+    mealTargets: null
   };
 
   /* ============ RENDER ============ */
@@ -1483,7 +1567,19 @@
     '</div>';
   }
 
+  function renderMealTargetsInfo(){
+    var el = document.getElementById('mealTargetsInfo');
+    if(!el) return;
+    if(!state.mealTargets){ el.innerHTML = ''; return; }
+    var labels = { desayuno: 'Desayuno', comida: 'Comida', cena: 'Cena', postre: 'Postre' };
+    el.innerHTML = ['desayuno','comida','cena','postre'].map(function(m){
+      var t = state.mealTargets[m];
+      return '<span class="mt-pill"><strong>'+labels[m]+':</strong> ~'+round(t.kcal)+' kcal · P '+round(t.p)+'g · C '+round(t.c)+'g · G '+round(t.f)+'g</span>';
+    }).join('');
+  }
+
   function renderRecipes(){
+    renderMealTargetsInfo();
     ['desayuno','comida','cena','postre'].forEach(function(mealType){
       var panel = document.getElementById('panel-'+mealType);
       var list = state.recipes[mealType];
@@ -1954,11 +2050,18 @@
 
     var goal = document.querySelector('input[name="goal"]:checked').value;
     var engine = buildEngine(parsed.matched, goal);
+    var dailyTarget = state.targets || DEFAULT_DAILY_TARGET;
+    state.mealTargets = {
+      desayuno: computeMealTarget(dailyTarget, MEAL_SPLIT.desayuno),
+      comida: computeMealTarget(dailyTarget, MEAL_SPLIT.comida),
+      cena: computeMealTarget(dailyTarget, MEAL_SPLIT.cena),
+      postre: computeMealTarget(dailyTarget, MEAL_SPLIT.postre)
+    };
 
-    var d = generateSet(DESAYUNOS, engine, 3, []);
-    var comidaSet = generateSet(PRINCIPALES, engine, 3, []);
-    var cenaSet = generateSet(PRINCIPALES, engine, 3, comidaSet.usedIds);
-    var postreSet = generateSet(POSTRES, engine, 2, []);
+    var d = generateSet(DESAYUNOS, engine, 3, [], state.mealTargets.desayuno);
+    var comidaSet = generateSet(PRINCIPALES, engine, 3, [], state.mealTargets.comida);
+    var cenaSet = generateSet(PRINCIPALES, engine, 3, comidaSet.usedIds, state.mealTargets.cena);
+    var postreSet = generateSet(POSTRES, engine, 2, [], state.mealTargets.postre);
 
     state.recipes = { desayuno: d.results, comida: comidaSet.results, cena: cenaSet.results, postre: postreSet.results };
     state.selected = {
