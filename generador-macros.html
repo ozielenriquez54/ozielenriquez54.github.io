@@ -267,6 +267,12 @@
   .log-table th { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
   .del-btn { background: none; border: none; color: var(--gold); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
 
+  .extra-food-list { margin: 12px 0 4px; }
+  .extra-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 10px 14px; margin-bottom: 8px; font-size: 13.5px; }
+  .extra-item .macros { color: var(--muted); font-family: 'Syne Mono', monospace; font-size: 11px; flex-shrink: 0; }
+  .extra-item .desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .extra-subtotal { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
+
   footer { text-align: center; padding: 30px 24px; font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
 </style>
 </head>
@@ -458,6 +464,37 @@
 
     <h4 class="sub-label">¿Qué comiste de tu plan hoy?</h4>
     <div class="check-grid" id="logMeals"><p class="empty-note">Genera y elige tus comidas en el Paso 3 para poder marcarlas aquí.</p></div>
+
+    <h4 class="sub-label">¿Comiste algo fuera del plan? (restaurante, evento, empaquetado)</h4>
+    <p class="hint" style="margin-bottom:10px;">Para comida de restaurante o evento social: estima el total y deja porciones en 1. Para algo empaquetado: copia los datos de la etiqueta (son "por porción") y pon cuántas porciones te comiste.</p>
+    <div class="grid">
+      <div class="field" style="grid-column: 1 / -1;">
+        <label for="extraDesc">Descripción</label>
+        <input type="text" id="extraDesc" placeholder="ej. Tacos al pastor con amigos, Barra Quest chocolate">
+      </div>
+      <div class="field">
+        <label for="extraKcal">Kcal (por porción)</label>
+        <input type="number" id="extraKcal" min="0" step="1" placeholder="0">
+      </div>
+      <div class="field">
+        <label for="extraProt">Proteína g (por porción)</label>
+        <input type="number" id="extraProt" min="0" step="0.1" placeholder="0">
+      </div>
+      <div class="field">
+        <label for="extraCarb">Carbos g (por porción)</label>
+        <input type="number" id="extraCarb" min="0" step="0.1" placeholder="0">
+      </div>
+      <div class="field">
+        <label for="extraFat">Grasas g (por porción)</label>
+        <input type="number" id="extraFat" min="0" step="0.1" placeholder="0">
+      </div>
+      <div class="field">
+        <label for="extraPortions">Porciones</label>
+        <input type="number" id="extraPortions" min="0.25" step="0.25" value="1">
+      </div>
+    </div>
+    <button type="button" class="use-btn" id="addExtraBtn">+ Agregar a mi día</button>
+    <div id="extraFoodList"></div>
 
     <div class="field" style="margin-top:18px;">
       <label for="logNotas">Notas (opcional)</label>
@@ -1276,7 +1313,8 @@
     originalTargets: null,
     planMeta: null,
     recipes: { desayuno: [], comida: [], cena: [], postre: [] },
-    selected: { desayuno: null, comida: null, cena: null, postre: null }
+    selected: { desayuno: null, comida: null, cena: null, postre: null },
+    pendingExtras: []
   };
 
   /* ============ RENDER ============ */
@@ -1514,6 +1552,27 @@
       '</svg></div>';
   }
 
+  function renderExtraList(){
+    var listEl = document.getElementById('extraFoodList');
+    if(!listEl) return;
+    if(!state.pendingExtras.length){
+      listEl.innerHTML = '';
+      return;
+    }
+    var rows = state.pendingExtras.map(function(e, i){
+      return '<div class="extra-item">' +
+        '<span class="desc">'+e.desc+(e.portions !== 1 ? ' · '+e.portions+' porciones' : '')+'</span>' +
+        '<span class="macros">'+e.kcal+' kcal · P '+e.p+'g · C '+e.c+'g · G '+e.f+'g</span>' +
+        '<button type="button" class="del-btn" data-extra-index="'+i+'">Quitar</button>' +
+      '</div>';
+    }).join('');
+    var subtotal = state.pendingExtras.reduce(function(acc, e){
+      acc.kcal += e.kcal; acc.p += e.p; acc.c += e.c; acc.f += e.f; return acc;
+    }, {kcal:0, p:0, c:0, f:0});
+    rows += '<div class="extra-subtotal">Subtotal fuera del plan: '+round(subtotal.kcal)+' kcal · P '+round(subtotal.p)+'g · C '+round(subtotal.c)+'g · G '+round(subtotal.f)+'g</div>';
+    listEl.innerHTML = '<div class="extra-food-list">' + rows + '</div>';
+  }
+
   function renderLogSection(){
     var mealsHTML = '';
     ['desayuno','comida','cena','postre'].forEach(function(m){
@@ -1523,6 +1582,7 @@
       }
     });
     document.getElementById('logMeals').innerHTML = mealsHTML || '<p class="empty-note">Genera y elige tus comidas en el Paso 3 para poder marcarlas aquí.</p>';
+    renderExtraList();
 
     var banner = document.getElementById('logWeekBanner');
     if(state.planMeta){
@@ -1586,10 +1646,11 @@
     summaryEl.innerHTML = statsHTML + sparkHTML;
 
     var rows = entries.slice().reverse().map(function(e){
+      var extrasNote = (e.extras && e.extras.length) ? ' <span title="'+e.extras.map(function(x){return x.desc;}).join(', ').replace(/"/g,'&quot;')+'">(+'+e.extras.length+' fuera del plan)</span>' : '';
       return '<tr>' +
         '<td>'+e.date+'</td>' +
         '<td>'+(e.peso != null ? e.peso+' kg' : '–')+'</td>' +
-        '<td>'+(e.kcal || 0)+' kcal</td>' +
+        '<td>'+(e.kcal || 0)+' kcal'+extrasNote+'</td>' +
         '<td>'+(e.entreno ? '✓' : '–')+'</td>' +
         '<td>'+(e.habits ? e.habits.length : 0)+'/5</td>' +
         '<td><button class="del-btn" data-date="'+e.date+'">Eliminar</button></td>' +
@@ -1669,8 +1730,13 @@
       }
     });
 
+    var extras = state.pendingExtras.slice();
+    extras.forEach(function(ex){
+      kcalTotal += ex.kcal; pTotal += ex.p; cTotal += ex.c; fTotal += ex.f;
+    });
+
     var entry = {
-      date: fecha, peso: peso, entreno: entreno, habits: habits, notas: notas, meals: meals,
+      date: fecha, peso: peso, entreno: entreno, habits: habits, notas: notas, meals: meals, extras: extras,
       kcal: round(kcalTotal), p: round(pTotal), c: round(cTotal), f: round(fTotal)
     };
 
@@ -1684,12 +1750,47 @@
     document.querySelectorAll('#logHabits input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
     document.querySelectorAll('#logMeals input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
     document.getElementById('logNotas').value = '';
+    state.pendingExtras = [];
 
     renderLogSection();
   });
 
+  document.getElementById('addExtraBtn').addEventListener('click', function(){
+    var desc = document.getElementById('extraDesc').value.trim();
+    if(!desc){ document.getElementById('extraDesc').focus(); return; }
+    var kcalPer = Math.max(0, parseFloat(document.getElementById('extraKcal').value) || 0);
+    var pPer = Math.max(0, parseFloat(document.getElementById('extraProt').value) || 0);
+    var cPer = Math.max(0, parseFloat(document.getElementById('extraCarb').value) || 0);
+    var fPer = Math.max(0, parseFloat(document.getElementById('extraFat').value) || 0);
+    var portionsVal = parseFloat(document.getElementById('extraPortions').value);
+    var portions = (!portionsVal || portionsVal <= 0) ? 1 : portionsVal;
+
+    state.pendingExtras.push({
+      desc: desc, portions: portions,
+      kcal: round(kcalPer * portions), p: round(pPer * portions), c: round(cPer * portions), f: round(fPer * portions)
+    });
+
+    document.getElementById('extraDesc').value = '';
+    document.getElementById('extraKcal').value = '';
+    document.getElementById('extraProt').value = '';
+    document.getElementById('extraCarb').value = '';
+    document.getElementById('extraFat').value = '';
+    document.getElementById('extraPortions').value = '1';
+    document.getElementById('extraDesc').focus();
+
+    renderExtraList();
+  });
+
+  document.getElementById('extraFoodList').addEventListener('click', function(e){
+    var btn = e.target.closest ? e.target.closest('.del-btn[data-extra-index]') : null;
+    if(!btn) return;
+    var idx = parseInt(btn.getAttribute('data-extra-index'), 10);
+    state.pendingExtras.splice(idx, 1);
+    renderExtraList();
+  });
+
   document.getElementById('logHistory').addEventListener('click', function(e){
-    var btn = e.target.closest ? e.target.closest('.del-btn') : null;
+    var btn = e.target.closest ? e.target.closest('.del-btn[data-date]') : null;
     if(!btn) return;
     var date = btn.getAttribute('data-date');
     var entries = loadLog().filter(function(en){ return en.date !== date; });
