@@ -163,6 +163,19 @@
   }
   .macro-stat .val { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 26px; color: var(--white); }
   .macro-stat .lbl { font-family: 'Syne Mono', monospace; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--gold-light); margin-top: 4px; }
+  .macro-stat.editable { position: relative; }
+  .macro-stat.auto .val { color: var(--gold-light); }
+  .macro-stat .val-input {
+    width: 100%; background: transparent; border: none; border-bottom: 1px dashed rgba(255,255,255,.3);
+    font-family: 'Syne', sans-serif; font-weight: 800; font-size: 26px; color: var(--white);
+    text-align: center; padding: 0 0 2px; -moz-appearance: textfield;
+  }
+  .macro-stat .val-input::-webkit-outer-spin-button, .macro-stat .val-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .macro-stat .val-input:focus { outline: none; border-bottom-color: var(--gold); }
+  .macro-edit-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; font-size: 12.5px; color: var(--muted); }
+  .macro-edit-row button { background: none; border: 1px solid var(--border); color: var(--body); font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 6px 12px; border-radius: 16px; cursor: pointer; }
+  .macro-edit-row button:hover { border-color: var(--gold); color: var(--gold-dark); }
+  .macro-edit-warn { color: var(--gold-dark); font-weight: 600; }
   .strategy-box { background: var(--light); border-left: 3px solid var(--gold); padding: 14px 16px; font-size: 14px; color: var(--body); border-radius: 0 3px 3px 0; }
   .strategy-box strong { color: var(--ink); }
 
@@ -351,10 +364,14 @@
 
     <div class="macro-result" id="macroResult">
       <div class="macro-target-grid">
-        <div class="macro-stat"><div class="val" id="tKcal">–</div><div class="lbl">Kcal / día</div></div>
-        <div class="macro-stat"><div class="val" id="tProt">–</div><div class="lbl">Proteína (g)</div></div>
-        <div class="macro-stat"><div class="val" id="tCarb">–</div><div class="lbl">Carbos (g)</div></div>
-        <div class="macro-stat"><div class="val" id="tFat">–</div><div class="lbl">Grasas (g)</div></div>
+        <div class="macro-stat"><div class="val" id="tKcal">–</div><div class="lbl">Kcal / día (fijo)</div></div>
+        <div class="macro-stat editable"><input type="number" class="val-input" id="tProtInput" min="0" max="500" step="1"><div class="lbl">Proteína (g)</div></div>
+        <div class="macro-stat auto"><div class="val" id="tCarb">–</div><div class="lbl">Carbos (g) · auto</div></div>
+        <div class="macro-stat editable"><input type="number" class="val-input" id="tFatInput" min="0" max="400" step="1"><div class="lbl">Grasas (g)</div></div>
+      </div>
+      <div class="macro-edit-row">
+        <span id="macroEditNote">Ajusta proteína o grasa a mano — los carbohidratos se recalculan solos para no salirte de tus kcal.</span>
+        <button type="button" id="resetMacrosBtn">Restablecer sugeridos</button>
       </div>
       <div class="strategy-box" id="strategyBox"></div>
     </div>
@@ -1256,19 +1273,63 @@
   /* ============ STATE ============ */
   var state = {
     targets: null,
+    originalTargets: null,
     planMeta: null,
     recipes: { desayuno: [], comida: [], cena: [], postre: [] },
     selected: { desayuno: null, comida: null, cena: null, postre: null }
   };
 
   /* ============ RENDER ============ */
+  function updateMacroEditNote(kcal, overBudget){
+    var note = document.getElementById('macroEditNote');
+    if(overBudget){
+      note.innerHTML = '<span class="macro-edit-warn">Proteína + grasa ya superan tus '+kcal+' kcal — los carbos se quedan en 0g. Baja alguno de los dos.</span>';
+    } else {
+      note.textContent = 'Ajusta proteína o grasa a mano — los carbohidratos se recalculan solos para no salirte de tus '+kcal+' kcal.';
+    }
+  }
+
   function renderMacroResult(t){
     document.getElementById('tKcal').textContent = t.kcal;
-    document.getElementById('tProt').textContent = t.p + 'g';
+    document.getElementById('tProtInput').value = t.p;
     document.getElementById('tCarb').textContent = t.c + 'g';
-    document.getElementById('tFat').textContent = t.f + 'g';
+    document.getElementById('tFatInput').value = t.f;
+    updateMacroEditNote(t.kcal, false);
     document.getElementById('strategyBox').innerHTML = '<strong>Estrategia: </strong>' + t.text;
     document.getElementById('macroResult').style.display = 'block';
+  }
+
+  // El coach ajusta proteína/grasa a mano; los carbohidratos absorben la diferencia
+  // para que las calorías totales nunca se muevan del objetivo calculado.
+  function applyMacroEdit(){
+    if(!state.targets) return;
+    var kcal = state.targets.kcal;
+    var pInput = document.getElementById('tProtInput');
+    var fInput = document.getElementById('tFatInput');
+    var p = Math.max(0, parseFloat(pInput.value) || 0);
+    var f = Math.max(0, parseFloat(fInput.value) || 0);
+
+    var rawCarbKcal = kcal - p*4 - f*9;
+    var overBudget = rawCarbKcal < 0;
+    var c = Math.max(0, round(rawCarbKcal / 4));
+
+    document.getElementById('tCarb').textContent = c + 'g';
+    updateMacroEditNote(kcal, overBudget);
+
+    state.targets = { goal: state.targets.goal, kcal: kcal, tdee: state.targets.tdee, p: p, c: c, f: f, text: state.targets.text };
+
+    renderSummary();
+    renderLogSection();
+
+    if(state.planMeta){
+      var planComputed = calcPlan(state.targets, state.planMeta.weeksGoal, state.planMeta.peso);
+      renderPlan(planComputed, state.planMeta.goalEstimate, state.planMeta.weeksGoal, state.planMeta.peso);
+      state.planMeta.targets = state.targets;
+      state.planMeta.phases = planComputed.phases;
+      state.planMeta.weeklyTimeline = planComputed.weeklyTimeline;
+      state.planMeta.phase1Timeline = planComputed.phase1Timeline;
+      savePlanMeta(state.planMeta);
+    }
   }
 
   function renderPlan(plan, goalEstimate, weeksGoal, peso){
@@ -1542,6 +1603,7 @@
     var t = calcTargets();
     if(t){
       state.targets = t;
+      state.originalTargets = { goal: t.goal, kcal: t.kcal, tdee: t.tdee, p: t.p, c: t.c, f: t.f, text: t.text };
       renderMacroResult(t);
 
       var weeksGoal = Math.max(2, Math.min(52, parseInt(document.getElementById('weeksGoal').value, 10) || 8));
@@ -1557,7 +1619,8 @@
       var planMeta = {
         startDate: new Date().toISOString().slice(0,10),
         goal: t.goal, weeksGoal: weeksGoal, peso: peso,
-        targets: t, weeklyTimeline: planComputed.weeklyTimeline, phase1Timeline: planComputed.phase1Timeline,
+        targets: t, originalTargets: state.originalTargets,
+        weeklyTimeline: planComputed.weeklyTimeline, phase1Timeline: planComputed.phase1Timeline,
         phases: planComputed.phases, goalEstimate: goalEstimate
       };
       savePlanMeta(planMeta);
@@ -1565,6 +1628,25 @@
 
       renderSummary();
       renderLogSection();
+    }
+  });
+
+  document.getElementById('tProtInput').addEventListener('input', applyMacroEdit);
+  document.getElementById('tFatInput').addEventListener('input', applyMacroEdit);
+  document.getElementById('resetMacrosBtn').addEventListener('click', function(){
+    if(!state.originalTargets) return;
+    state.targets = { goal: state.originalTargets.goal, kcal: state.originalTargets.kcal, tdee: state.originalTargets.tdee, p: state.originalTargets.p, c: state.originalTargets.c, f: state.originalTargets.f, text: state.originalTargets.text };
+    renderMacroResult(state.targets);
+    renderSummary();
+    renderLogSection();
+    if(state.planMeta){
+      var planComputed = calcPlan(state.targets, state.planMeta.weeksGoal, state.planMeta.peso);
+      renderPlan(planComputed, state.planMeta.goalEstimate, state.planMeta.weeksGoal, state.planMeta.peso);
+      state.planMeta.targets = state.targets;
+      state.planMeta.phases = planComputed.phases;
+      state.planMeta.weeklyTimeline = planComputed.weeklyTimeline;
+      state.planMeta.phase1Timeline = planComputed.phase1Timeline;
+      savePlanMeta(state.planMeta);
     }
   });
 
@@ -1664,6 +1746,7 @@
     var savedPlan = loadPlanMeta();
     if(savedPlan && savedPlan.targets){
       state.targets = savedPlan.targets;
+      state.originalTargets = savedPlan.originalTargets || savedPlan.targets;
       state.planMeta = savedPlan;
       renderMacroResult(savedPlan.targets);
       renderPlan({ phases: savedPlan.phases, weeklyTimeline: savedPlan.weeklyTimeline, phase1Timeline: savedPlan.phase1Timeline }, savedPlan.goalEstimate, savedPlan.weeksGoal, savedPlan.peso);
