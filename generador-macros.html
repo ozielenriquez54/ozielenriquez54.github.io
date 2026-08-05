@@ -6,6 +6,7 @@
 <title>Generador de Comidas y Macros — Complex Training</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Instrument+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Syne+Mono&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
 <style>
   :root {
     --gold: #c9a13b;
@@ -273,6 +274,22 @@
   .extra-item .desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .extra-subtotal { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
 
+  .scan-btn { margin-bottom: 14px; }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(10,10,10,.85);
+    z-index: 500; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-card { background: var(--white); border-radius: 6px; padding: 20px; max-width: 420px; width: 100%; max-height: 90vh; overflow-y: auto; }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .modal-head h4 { font-family: 'Syne', sans-serif; font-size: 17px; color: var(--ink); }
+  .modal-close { background: none; border: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); padding: 0 4px; }
+  .modal-close:hover { color: var(--gold-dark); }
+  #barcodeReader { width: 100%; min-height: 220px; border-radius: 4px; overflow: hidden; background: #000; }
+  .barcode-status { margin-top: 12px; font-size: 13.5px; color: var(--muted); text-align: center; }
+  .barcode-status.error { color: var(--gold-dark); font-weight: 600; }
+
   footer { text-align: center; padding: 30px 24px; font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
 </style>
 </head>
@@ -466,7 +483,8 @@
     <div class="check-grid" id="logMeals"><p class="empty-note">Genera y elige tus comidas en el Paso 3 para poder marcarlas aquí.</p></div>
 
     <h4 class="sub-label">¿Comiste algo fuera del plan? (restaurante, evento, empaquetado)</h4>
-    <p class="hint" style="margin-bottom:10px;">Para comida de restaurante o evento social: estima el total y deja porciones en 1. Para algo empaquetado: copia los datos de la etiqueta (son "por porción") y pon cuántas porciones te comiste.</p>
+    <p class="hint" style="margin-bottom:10px;">Para comida de restaurante o evento social: estima el total y deja porciones en 1. Para algo empaquetado: escanea el código de barras o copia los datos de la etiqueta (son "por porción") y pon cuántas porciones te comiste.</p>
+    <button type="button" class="use-btn scan-btn" id="scanBarcodeBtn">📷 Escanear código de barras</button>
     <div class="grid">
       <div class="field" style="grid-column: 1 / -1;">
         <label for="extraDesc">Descripción</label>
@@ -508,6 +526,17 @@
   </section>
 
 </main>
+
+<div class="modal-overlay" id="barcodeModal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h4>Escanear código de barras</h4>
+      <button type="button" class="modal-close" id="closeBarcodeBtn" aria-label="Cerrar">✕</button>
+    </div>
+    <div id="barcodeReader"></div>
+    <p class="barcode-status" id="barcodeStatus">Apunta la cámara al código de barras del empaque.</p>
+  </div>
+</div>
 
 <footer>Complex Training · Generador de comidas y macros</footer>
 
@@ -1779,6 +1808,108 @@
     document.getElementById('extraDesc').focus();
 
     renderExtraList();
+  });
+
+  /* ============ BARCODE SCANNER ============ */
+  var barcodeScannerInstance = null;
+
+  function setBarcodeStatus(text, isError){
+    var statusEl = document.getElementById('barcodeStatus');
+    statusEl.textContent = text;
+    statusEl.className = 'barcode-status' + (isError ? ' error' : '');
+  }
+
+  function openBarcodeScanner(){
+    document.getElementById('barcodeModal').classList.add('open');
+    setBarcodeStatus('Apunta la cámara al código de barras del empaque.', false);
+
+    if(typeof Html5Qrcode === 'undefined'){
+      setBarcodeStatus('No se pudo cargar el lector de códigos (revisa tu conexión a internet). Puedes ingresar el alimento manualmente abajo.', true);
+      return;
+    }
+
+    barcodeScannerInstance = new Html5Qrcode('barcodeReader');
+    var config = {
+      fps: 10,
+      qrbox: { width: 260, height: 150 },
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128
+      ]
+    };
+
+    barcodeScannerInstance.start({ facingMode: 'environment' }, config, onBarcodeDetected, function(){ /* ignora fallos de escaneo cuadro a cuadro */ })
+      .catch(function(){
+        setBarcodeStatus('No pudimos acceder a tu cámara. Revisa los permisos del navegador o ingresa el alimento manualmente.', true);
+      });
+  }
+
+  function stopBarcodeCamera(){
+    if(!barcodeScannerInstance) return;
+    var scannerRef = barcodeScannerInstance;
+    barcodeScannerInstance = null;
+    scannerRef.stop().then(function(){ scannerRef.clear(); }).catch(function(){});
+  }
+
+  function closeBarcodeScanner(){
+    document.getElementById('barcodeModal').classList.remove('open');
+    stopBarcodeCamera();
+  }
+
+  function onBarcodeDetected(decodedText){
+    if(!barcodeScannerInstance) return;
+    setBarcodeStatus('Código detectado: ' + decodedText + ' — buscando producto...', false);
+    stopBarcodeCamera();
+
+    fetch('https://world.openfoodfacts.org/api/v2/product/' + encodeURIComponent(decodedText) + '.json')
+      .then(function(res){ return res.json(); })
+      .then(function(data){
+        if(!data || data.status !== 1 || !data.product){
+          setBarcodeStatus('No encontramos el código ' + decodedText + ' en la base de datos. Ingresa los datos manualmente.', true);
+          return;
+        }
+        fillExtraFormFromProduct(data.product, decodedText);
+        closeBarcodeScanner();
+      })
+      .catch(function(){
+        setBarcodeStatus('No pudimos consultar la base de datos de productos. Ingresa los datos manualmente.', true);
+      });
+  }
+
+  function fillExtraFormFromProduct(product, code){
+    var n = product.nutriments || {};
+    var name = product.product_name_es || product.product_name || ('Producto ' + code);
+    var hasServing = n['energy-kcal_serving'] != null || n['proteins_serving'] != null;
+    var kcal, p, c, f, suffix;
+    if(hasServing){
+      kcal = n['energy-kcal_serving'] || 0;
+      p = n['proteins_serving'] || 0;
+      c = n['carbohydrates_serving'] || 0;
+      f = n['fat_serving'] || 0;
+      suffix = product.serving_size ? ' (' + product.serving_size + ')' : '';
+    } else {
+      kcal = n['energy-kcal_100g'] || 0;
+      p = n['proteins_100g'] || 0;
+      c = n['carbohydrates_100g'] || 0;
+      f = n['fat_100g'] || 0;
+      suffix = ' (por 100 g — ajusta "porciones" a lo que realmente comiste)';
+    }
+    document.getElementById('extraDesc').value = name + suffix;
+    document.getElementById('extraKcal').value = round(kcal);
+    document.getElementById('extraProt').value = Math.round(p*10)/10;
+    document.getElementById('extraCarb').value = Math.round(c*10)/10;
+    document.getElementById('extraFat').value = Math.round(f*10)/10;
+    document.getElementById('extraPortions').value = '1';
+    document.getElementById('extraDesc').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  document.getElementById('scanBarcodeBtn').addEventListener('click', openBarcodeScanner);
+  document.getElementById('closeBarcodeBtn').addEventListener('click', closeBarcodeScanner);
+  document.getElementById('barcodeModal').addEventListener('click', function(e){
+    if(e.target.id === 'barcodeModal') closeBarcodeScanner();
   });
 
   document.getElementById('extraFoodList').addEventListener('click', function(e){
