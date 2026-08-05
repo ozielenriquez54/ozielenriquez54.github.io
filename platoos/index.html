@@ -291,6 +291,9 @@
   .barcode-status.error { color: var(--gold-dark); font-weight: 600; }
 
   footer { text-align: center; padding: 30px 24px; font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
+  footer a { color: var(--gold-dark); text-decoration: underline; }
+  .off-attribution { margin-top: 8px; font-size: 11.5px; color: var(--muted); text-align: center; }
+  .off-attribution a { color: var(--gold-dark); }
 </style>
 </head>
 <body>
@@ -535,10 +538,11 @@
     </div>
     <div id="barcodeReader"></div>
     <p class="barcode-status" id="barcodeStatus">Apunta la cámara al código de barras del empaque.</p>
+    <p class="off-attribution">Datos de productos: <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a> (ODbL)</p>
   </div>
 </div>
 
-<footer>Complex Training · Generador de comidas y macros</footer>
+<footer>Complex Training · Generador de comidas y macros · Datos de productos empaquetados por <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a> · <a href="aviso-legal.html">Aviso de privacidad y términos</a></footer>
 
 <script>
 (function(){
@@ -550,6 +554,13 @@
   }
   function cap(s){ return s ? s.charAt(0).toUpperCase()+s.slice(1) : s; }
   function round(n){ return Math.round(n); }
+  // Escapa texto de usuario (descripciones libres, nombres de producto escaneados)
+  // antes de insertarlo en innerHTML, para evitar XSS.
+  function escapeHtml(str){
+    return String(str==null?'':str).replace(/[&<>"']/g, function(ch){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+    });
+  }
 
   /* ============ FOOD DATABASE (per 100g) ============ */
   var FOODS = [
@@ -1590,7 +1601,7 @@
     }
     var rows = state.pendingExtras.map(function(e, i){
       return '<div class="extra-item">' +
-        '<span class="desc">'+e.desc+(e.portions !== 1 ? ' · '+e.portions+' porciones' : '')+'</span>' +
+        '<span class="desc">'+escapeHtml(e.desc)+(e.portions !== 1 ? ' · '+e.portions+' porciones' : '')+'</span>' +
         '<span class="macros">'+e.kcal+' kcal · P '+e.p+'g · C '+e.c+'g · G '+e.f+'g</span>' +
         '<button type="button" class="del-btn" data-extra-index="'+i+'">Quitar</button>' +
       '</div>';
@@ -1675,7 +1686,7 @@
     summaryEl.innerHTML = statsHTML + sparkHTML;
 
     var rows = entries.slice().reverse().map(function(e){
-      var extrasNote = (e.extras && e.extras.length) ? ' <span title="'+e.extras.map(function(x){return x.desc;}).join(', ').replace(/"/g,'&quot;')+'">(+'+e.extras.length+' fuera del plan)</span>' : '';
+      var extrasNote = (e.extras && e.extras.length) ? ' <span title="'+escapeHtml(e.extras.map(function(x){return x.desc;}).join(', '))+'">(+'+e.extras.length+' fuera del plan)</span>' : '';
       return '<tr>' +
         '<td>'+e.date+'</td>' +
         '<td>'+(e.peso != null ? e.peso+' kg' : '–')+'</td>' +
