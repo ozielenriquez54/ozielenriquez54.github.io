@@ -364,7 +364,7 @@
   <section class="card" id="planSection" style="display:none;">
     <div class="card-label">Plan de acción</div>
     <h2>Tu plan de acción</h2>
-    <p class="hint">Fases hacia tu meta con reverse dieting incluido (subir calorías poco a poco después de un déficit, para proteger tu metabolismo). Al volver a calcular, la fecha de inicio de este plan se reinicia.</p>
+    <p class="hint">Fases hacia tu meta con pausas de dieta durante el déficit y reverse dieting al final (subir calorías poco a poco, para proteger tu metabolismo). Al volver a calcular, la fecha de inicio de este plan se reinicia.</p>
     <div id="planGoalEstimate"></div>
     <div id="planPhases"></div>
     <div id="planTimeline"></div>
@@ -1041,33 +1041,55 @@
   }
 
   /* ============ ACTION PLAN (reverse dieting + training) ============ */
+  function distributeMacros(kcalTarget, proteinG, fatPct){
+    var fatG = (kcalTarget * fatPct) / 9;
+    var carbG = Math.max(0, (kcalTarget - proteinG*4 - fatG*9) / 4);
+    return { kcal: round(kcalTarget), p: round(proteinG), c: round(carbG), f: round(fatG) };
+  }
+
   function calcPlan(targets, weeksGoal, peso){
     var goal = targets.goal;
     var tdee = targets.tdee;
+    var fatPct = STRATEGIES[goal].fatPct;
     var phases = [];
     var weeklyTimeline = null;
+    var phase1Timeline = null;
 
     if(goal === 'bajar_grasa'){
+      // Diet breaks: 3 semanas de déficit + 1 semana a mantenimiento (protege metabolismo y adherencia)
+      var breakCycle = 4;
+      var p1 = [];
+      for(var w1=1; w1<=weeksGoal; w1++){
+        var isBreak = (w1 % breakCycle === 0);
+        var kcalWeek = isBreak ? tdee : targets.kcal;
+        var m1 = distributeMacros(kcalWeek, targets.p, fatPct);
+        p1.push({ week:w1, kcal:m1.kcal, p:m1.p, c:m1.c, f:m1.f, isBreak:isBreak });
+      }
+      phase1Timeline = p1;
+      var breakCount = p1.filter(function(x){ return x.isBreak; }).length;
+
       phases.push({
-        name: 'Fase 1 · Déficit controlado',
+        name: 'Fase 1 · Déficit con pausas de dieta',
         weeks: weeksGoal,
         kcal: targets.kcal,
-        desc: 'Déficit del 20% sobre tu gasto energético total ('+tdee+' kcal de mantenimiento). Ritmo esperado de pérdida: 0.5–0.7% de tu peso corporal por semana (~'+(peso*0.005).toFixed(1)+'–'+(peso*0.007).toFixed(1)+' kg/semana), cuidando tu masa muscular con proteína alta y entrenamiento de fuerza.'
+        desc: 'Déficit del 20% sobre tu gasto energético total ('+tdee+' kcal de mantenimiento). Ritmo esperado de pérdida: 0.5–0.7% de tu peso corporal por semana (~'+(peso*0.005).toFixed(1)+'–'+(peso*0.007).toFixed(1)+' kg/semana) en semanas de déficit. Cada 3 semanas de déficit, 1 semana completa a mantenimiento ('+breakCount+' pausa'+(breakCount===1?'':'s')+' en tu plan) — protege tu tasa metabólica, tus hormonas y baja el riesgo de abandonar la dieta. La proteína se mantiene alta todo el tiempo, incluidas las pausas.'
       });
+
       var reverseWeeks = Math.max(4, Math.ceil(weeksGoal/2));
       var stepKcal = Math.max(25, Math.round((tdee - targets.kcal) / reverseWeeks));
       var timeline = [];
       var current = targets.kcal;
       for(var w=1; w<=reverseWeeks; w++){
         current = Math.min(tdee, current + stepKcal);
-        timeline.push({week:w, kcal: current});
+        var m2 = distributeMacros(current, targets.p, fatPct);
+        timeline.push({week:w, kcal:m2.kcal, p:m2.p, c:m2.c, f:m2.f});
         if(current >= tdee) break;
       }
       phases.push({
         name: 'Fase 2 · Reverse diet',
         weeks: timeline.length,
         kcal: tdee,
-        desc: 'Sube tus calorías poco a poco (sobre todo carbohidratos) hasta volver a tu mantenimiento ('+tdee+' kcal). Esto protege tu metabolismo y tus hormonas después del déficit y evita el efecto rebote. Súbele solo si tu peso se mantiene estable o baja esa semana; si subes de peso de golpe, quédate una semana más antes de aumentar de nuevo.'
+        desc: 'Sube tus calorías poco a poco (sobre todo carbohidratos; la proteína no cambia) hasta volver a tu mantenimiento ('+tdee+' kcal). Esto protege tu metabolismo y tus hormonas después del déficit y evita el efecto rebote. Súbele solo si tu promedio semanal de peso se mantiene estable o baja; si sube, quédate una semana más antes de aumentar de nuevo — tu registro diario te lo indica automáticamente comparando tu promedio semanal real.'
       });
       weeklyTimeline = timeline;
     } else if(goal === 'ganar_musculo'){
@@ -1093,7 +1115,7 @@
       });
     }
 
-    return { phases: phases, weeklyTimeline: weeklyTimeline };
+    return { phases: phases, weeklyTimeline: weeklyTimeline, phase1Timeline: phase1Timeline };
   }
 
   function calcGoalTimeline(goal, peso, pesoObjetivo, grasaActual, grasaObjetivo){
@@ -1119,11 +1141,20 @@
     var weeksFast = Math.abs(diff) / (peso * rateHigh);
     var weeksSlow = Math.abs(diff) / (peso * rateLow);
 
+    // Con pausas de dieta (1 de cada 4 semanas a mantenimiento), el calendario real se alarga ~33%
+    var includesBreaks = false;
+    if(goal === 'bajar_grasa'){
+      weeksFast = weeksFast * (4/3);
+      weeksSlow = weeksSlow * (4/3);
+      includesBreaks = true;
+    }
+
     return {
       targetWeight: Math.round(targetWeight*10)/10,
       diffKg: Math.round(diff*10)/10,
       weeksLow: Math.ceil(weeksFast),
-      weeksHigh: Math.ceil(weeksSlow)
+      weeksHigh: Math.ceil(weeksSlow),
+      includesBreaks: includesBreaks
     };
   }
 
@@ -1132,14 +1163,56 @@
     var now = new Date();
     var diffDays = Math.floor((now-start)/(1000*60*60*24));
     var weekNum = Math.max(1, Math.floor(diffDays/7)+1);
-    var kcalTarget = planMeta.targets.kcal;
-    if(planMeta.goal === 'bajar_grasa' && planMeta.weeklyTimeline && planMeta.weeklyTimeline.length){
-      if(weekNum > planMeta.weeksGoal){
+
+    var result = {
+      weekNum: weekNum, kcal: planMeta.targets.kcal, p: planMeta.targets.p,
+      c: planMeta.targets.c, f: planMeta.targets.f, isBreak: false, phase: 'unico'
+    };
+
+    if(planMeta.goal === 'bajar_grasa'){
+      if(planMeta.phase1Timeline && planMeta.phase1Timeline.length && weekNum <= planMeta.weeksGoal){
+        var wk1 = planMeta.phase1Timeline[Math.min(weekNum, planMeta.phase1Timeline.length) - 1];
+        if(wk1){
+          result.kcal = wk1.kcal; result.p = wk1.p; result.c = wk1.c; result.f = wk1.f;
+          result.isBreak = wk1.isBreak; result.phase = wk1.isBreak ? 'pausa' : 'deficit';
+        }
+      } else if(planMeta.weeklyTimeline && planMeta.weeklyTimeline.length){
         var idx = Math.min(planMeta.weeklyTimeline.length, weekNum - planMeta.weeksGoal) - 1;
-        kcalTarget = planMeta.weeklyTimeline[idx].kcal;
+        var wk2 = planMeta.weeklyTimeline[Math.max(0, idx)];
+        if(wk2){ result.kcal = wk2.kcal; result.p = wk2.p; result.c = wk2.c; result.f = wk2.f; result.phase = 'reverse'; }
       }
     }
-    return { weekNum: weekNum, kcal: kcalTarget };
+    return result;
+  }
+
+  function getWeeklyAverage(entries, endDateStr, daysBack){
+    var end = new Date(endDateStr+'T00:00:00');
+    var start = new Date(end); start.setDate(start.getDate() - daysBack + 1);
+    var vals = entries.filter(function(e){
+      var d = new Date(e.date+'T00:00:00');
+      return e.peso != null && d >= start && d <= end;
+    }).map(function(e){ return e.peso; });
+    if(!vals.length) return null;
+    return vals.reduce(function(a,b){ return a+b; }, 0) / vals.length;
+  }
+
+  function getAdaptiveGuidance(planMeta, entries){
+    if(!planMeta || planMeta.goal !== 'bajar_grasa') return null;
+    var weightEntries = entries.filter(function(e){ return e.peso != null; })
+      .slice().sort(function(a,b){ return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+    if(weightEntries.length < 4) return null;
+
+    var lastDate = weightEntries[weightEntries.length-1].date;
+    var avgThisWeek = getWeeklyAverage(weightEntries, lastDate, 7);
+    var prevEnd = new Date(lastDate+'T00:00:00'); prevEnd.setDate(prevEnd.getDate() - 7);
+    var avgPrevWeek = getWeeklyAverage(weightEntries, prevEnd.toISOString().slice(0,10), 7);
+    if(avgThisWeek == null || avgPrevWeek == null) return null;
+
+    return {
+      avgThisWeek: Math.round(avgThisWeek*10)/10,
+      avgPrevWeek: Math.round(avgPrevWeek*10)/10,
+      trend: Math.round((avgThisWeek-avgPrevWeek)*100)/100
+    };
   }
 
   /* ============ LOCAL STORAGE ============ */
@@ -1188,6 +1261,9 @@
       } else {
         msg = 'Tu meta de '+weeksGoal+' semanas está dentro de un ritmo realista y saludable ('+goalEstimate.weeksLow+'-'+goalEstimate.weeksHigh+' semanas estimadas).';
       }
+      if(goalEstimate.includesBreaks){
+        msg += ' (esta estimación ya incluye tus pausas de dieta programadas).';
+      }
       goalHTML = '<div class="goal-estimate"><h4>Tu meta en números</h4><p>De <strong>'+peso+' kg</strong> a <strong>'+goalEstimate.targetWeight+' kg</strong> ('+(goalEstimate.diffKg>0?'+':'')+goalEstimate.diffKg+' kg). '+msg+'</p></div>';
     } else if(goalEstimate && goalEstimate.sameWeight){
       goalHTML = '<div class="goal-estimate"><h4>Tu meta en números</h4><p>Tu peso objetivo ('+goalEstimate.targetWeight+' kg) está prácticamente en tu peso actual — tu plan es más de recomposición/mantenimiento que de cambio de peso.</p></div>';
@@ -1201,14 +1277,25 @@
       '</div>';
     }).join('');
 
+    function macroTimelineTable(rows, showBreaks){
+      var head = '<tr><th>Semana</th>' + rows.map(function(w){
+        var tag = showBreaks && w.isBreak ? ' <span class="phase-weeks" style="color:var(--gold-light);">pausa</span>' : '';
+        return '<th'+(showBreaks && w.isBreak ? ' style="background:var(--gold-dark);"' : '')+'>S'+w.week+tag+'</th>';
+      }).join('') + '</tr>';
+      function row(label, key, unit){
+        return '<tr><td>'+label+'</td>' + rows.map(function(w){ return '<td>'+w[key]+unit+'</td>'; }).join('') + '</tr>';
+      }
+      return '<div class="timeline-scroll"><table class="timeline-table"><thead>'+head+'</thead><tbody>' +
+        row('Kcal','kcal','') + row('Proteína','p','g') + row('Carbos','c','g') + row('Grasas','f','g') +
+        '</tbody></table></div>';
+    }
+
     var timelineHTML = '';
+    if(plan.phase1Timeline && plan.phase1Timeline.length){
+      timelineHTML += '<h4 class="sub-label">Semana a semana (déficit + pausas)</h4>' + macroTimelineTable(plan.phase1Timeline, true);
+    }
     if(plan.weeklyTimeline && plan.weeklyTimeline.length){
-      timelineHTML = '<h4 class="sub-label">Semana a semana (reverse diet)</h4>' +
-        '<div class="timeline-scroll"><table class="timeline-table"><thead><tr><th>Semana</th>' +
-        plan.weeklyTimeline.map(function(w){ return '<th>S'+w.week+'</th>'; }).join('') +
-        '</tr></thead><tbody><tr><td>Kcal</td>' +
-        plan.weeklyTimeline.map(function(w){ return '<td>'+w.kcal+'</td>'; }).join('') +
-        '</tr></tbody></table></div>';
+      timelineHTML += '<h4 class="sub-label">Semana a semana (reverse diet)</h4>' + macroTimelineTable(plan.weeklyTimeline, false);
     }
 
     document.getElementById('planGoalEstimate').innerHTML = goalHTML;
@@ -1316,19 +1403,32 @@
     document.getElementById('summaryBars').innerHTML = html;
   }
 
+  function rollingAverage(vals, window){
+    return vals.map(function(v,i){
+      var start = Math.max(0, i-window+1);
+      var slice = vals.slice(start, i+1);
+      return slice.reduce(function(a,b){ return a+b; }, 0) / slice.length;
+    });
+  }
+
   function buildSparkline(weightEntries){
     var w = 600, h = 100, pad = 10;
     var vals = weightEntries.map(function(e){ return e.peso; });
-    var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+    var avgVals = rollingAverage(vals, 7);
+    var allVals = vals.concat(avgVals);
+    var min = Math.min.apply(null, allVals), max = Math.max.apply(null, allVals);
     if(min === max){ min -= 1; max += 1; }
-    var pts = weightEntries.map(function(e,i){
-      var x = pad + (weightEntries.length>1 ? (i/(weightEntries.length-1)) : 0) * (w-2*pad);
-      var y = h - pad - ((e.peso-min)/(max-min)) * (h-2*pad);
-      return x.toFixed(1)+','+y.toFixed(1);
-    }).join(' ');
-    return '<div class="sparkline-wrap"><h4 class="sub-label">Tendencia de peso</h4>' +
+    function toPoints(series){
+      return series.map(function(v,i){
+        var x = pad + (series.length>1 ? (i/(series.length-1)) : 0) * (w-2*pad);
+        var y = h - pad - ((v-min)/(max-min)) * (h-2*pad);
+        return x.toFixed(1)+','+y.toFixed(1);
+      }).join(' ');
+    }
+    return '<div class="sparkline-wrap"><h4 class="sub-label">Tendencia de peso — línea gris fina: diario · línea dorada: promedio móvil (más confiable que un solo día)</h4>' +
       '<svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'" preserveAspectRatio="none" style="overflow:visible;">' +
-      '<polyline points="'+pts+'" fill="none" stroke="#c9a13b" stroke-width="2.5" vector-effect="non-scaling-stroke"/>' +
+      '<polyline points="'+toPoints(vals)+'" fill="none" stroke="#c4c4c4" stroke-width="1.5" vector-effect="non-scaling-stroke"/>' +
+      '<polyline points="'+toPoints(avgVals)+'" fill="none" stroke="#c9a13b" stroke-width="3" vector-effect="non-scaling-stroke"/>' +
       '</svg></div>';
   }
 
@@ -1346,7 +1446,27 @@
     if(state.planMeta){
       var wk = getCurrentWeekTarget(state.planMeta);
       banner.style.display = 'block';
-      banner.innerHTML = '<strong>Semana '+wk.weekNum+' de tu plan.</strong> Objetivo de esta semana: ~'+wk.kcal+' kcal/día.';
+      if(state.planMeta.goal === 'bajar_grasa'){
+        var phaseLabel = wk.phase === 'pausa' ? 'pausa de dieta programada' : (wk.phase === 'reverse' ? 'reverse diet' : 'fase de déficit');
+        var html = '<strong>Semana '+wk.weekNum+' · '+phaseLabel+'.</strong> Objetivo: ~'+wk.kcal+' kcal (P '+wk.p+'g · C '+wk.c+'g · G '+wk.f+'g).';
+        if(wk.phase === 'pausa'){
+          html += ' Aprovecha para descansar mentalmente de la dieta — si el peso sube un poco esta semana es normal (agua/glucógeno) y baja al volver al déficit.';
+        } else if(wk.phase === 'reverse'){
+          var guidance = getAdaptiveGuidance(state.planMeta, loadLog());
+          if(guidance){
+            if(guidance.trend > 0.2){
+              html += ' Tu promedio semanal subió de '+guidance.avgPrevWeek+' a '+guidance.avgThisWeek+' kg — <span class="warn">mantente en las calorías de la semana pasada</span> un poco más antes de volver a subir.';
+            } else {
+              html += ' Tu promedio semanal ('+guidance.avgThisWeek+' kg) está estable o bajando — vas bien para seguir con la subida calculada.';
+            }
+          } else {
+            html += ' Registra tu peso varios días seguidos para que comparemos tu promedio semanal real y confirmemos si es buen momento de subir.';
+          }
+        }
+        banner.innerHTML = html;
+      } else {
+        banner.innerHTML = '<strong>Semana '+wk.weekNum+' de tu plan.</strong> Objetivo de esta semana: ~'+wk.kcal+' kcal/día.';
+      }
     } else {
       banner.style.display = 'none';
     }
@@ -1416,8 +1536,8 @@
       var planMeta = {
         startDate: new Date().toISOString().slice(0,10),
         goal: t.goal, weeksGoal: weeksGoal, peso: peso,
-        targets: t, weeklyTimeline: planComputed.weeklyTimeline, phases: planComputed.phases,
-        goalEstimate: goalEstimate
+        targets: t, weeklyTimeline: planComputed.weeklyTimeline, phase1Timeline: planComputed.phase1Timeline,
+        phases: planComputed.phases, goalEstimate: goalEstimate
       };
       savePlanMeta(planMeta);
       state.planMeta = planMeta;
@@ -1525,7 +1645,7 @@
       state.targets = savedPlan.targets;
       state.planMeta = savedPlan;
       renderMacroResult(savedPlan.targets);
-      renderPlan({ phases: savedPlan.phases, weeklyTimeline: savedPlan.weeklyTimeline }, savedPlan.goalEstimate, savedPlan.weeksGoal, savedPlan.peso);
+      renderPlan({ phases: savedPlan.phases, weeklyTimeline: savedPlan.weeklyTimeline, phase1Timeline: savedPlan.phase1Timeline }, savedPlan.goalEstimate, savedPlan.weeksGoal, savedPlan.peso);
     }
     renderLogSection();
   })();
