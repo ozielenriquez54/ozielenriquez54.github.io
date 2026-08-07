@@ -276,6 +276,8 @@
   .extra-item .macros { color: var(--muted); font-family: 'Syne Mono', monospace; font-size: 11px; flex-shrink: 0; }
   .extra-item .desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .extra-subtotal { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
+  .extra-match-hint { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 15px; }
+  .extra-match-hint.found { color: var(--green); }
 
   .scan-btn { margin-bottom: 14px; }
 
@@ -490,32 +492,33 @@
     <div class="check-grid" id="logMeals"><p class="empty-note">Genera y elige tus comidas en el Paso 3 para poder marcarlas aquí.</p></div>
 
     <h4 class="sub-label">¿Comiste algo fuera del plan? (restaurante, evento, empaquetado)</h4>
-    <p class="hint" style="margin-bottom:10px;">Para comida de restaurante o evento social: estima el total y deja porciones en 1. Para algo empaquetado: escanea el código de barras o copia los datos de la etiqueta (son "por porción") y pon cuántas porciones te comiste.</p>
+    <p class="hint" style="margin-bottom:10px;">Escribe el alimento — si está en nuestra base (ej. pollo, arroz, aguacate) se llenan los macros solos, tú solo pon cuánto pesó lo que comiste. Si no lo encontramos o es un producto de marca, escanea el código de barras o captura los datos de la etiqueta a mano.</p>
     <button type="button" class="use-btn scan-btn" id="scanBarcodeBtn">📷 Escanear código de barras</button>
     <div class="grid">
       <div class="field" style="grid-column: 1 / -1;">
-        <label for="extraDesc">Descripción</label>
-        <input type="text" id="extraDesc" placeholder="ej. Tacos al pastor con amigos, Barra Quest chocolate">
+        <label for="extraDesc">Alimento / descripción</label>
+        <input type="text" id="extraDesc" placeholder="ej. pollo, tacos al pastor con amigos, Barra Quest chocolate">
+        <p class="extra-match-hint" id="extraMatchHint"></p>
       </div>
       <div class="field">
-        <label for="extraKcal">Kcal (por porción)</label>
+        <label for="extraWeight">Peso consumido (g)</label>
+        <input type="number" id="extraWeight" min="1" step="1" placeholder="100" value="100">
+      </div>
+      <div class="field">
+        <label for="extraKcal">Kcal (por 100 g)</label>
         <input type="number" id="extraKcal" min="0" step="1" placeholder="0">
       </div>
       <div class="field">
-        <label for="extraProt">Proteína g (por porción)</label>
+        <label for="extraProt">Proteína g (por 100 g)</label>
         <input type="number" id="extraProt" min="0" step="0.1" placeholder="0">
       </div>
       <div class="field">
-        <label for="extraCarb">Carbos g (por porción)</label>
+        <label for="extraCarb">Carbos g (por 100 g)</label>
         <input type="number" id="extraCarb" min="0" step="0.1" placeholder="0">
       </div>
       <div class="field">
-        <label for="extraFat">Grasas g (por porción)</label>
+        <label for="extraFat">Grasas g (por 100 g)</label>
         <input type="number" id="extraFat" min="0" step="0.1" placeholder="0">
-      </div>
-      <div class="field">
-        <label for="extraPortions">Porciones</label>
-        <input type="number" id="extraPortions" min="0.25" step="0.25" value="1">
       </div>
     </div>
     <button type="button" class="use-btn" id="addExtraBtn">+ Agregar a mi día</button>
@@ -975,32 +978,36 @@
   }
 
   /* ============ MATCHING ============ */
+  // Busca un solo alimento por nombre/alias en la base (match exacto primero,
+  // luego substring). Se usa tanto para la lista libre del Paso 2 como para
+  // el autocompletado de "comida fuera del plan".
+  function matchFoodByName(text){
+    var nt = normalize(text);
+    if(!nt) return null;
+    for(var i=0;i<FOODS.length;i++){
+      var food = FOODS[i];
+      if(normalize(food.name) === nt || food.aliases.some(function(a){return normalize(a)===nt;})){
+        return food;
+      }
+    }
+    for(var j=0;j<FOODS.length;j++){
+      var f2 = FOODS[j];
+      var names = [f2.name].concat(f2.aliases).map(normalize);
+      if(names.some(function(n){ return n.length>=3 && (nt.indexOf(n)!==-1 || n.indexOf(nt)!==-1); })){
+        return f2;
+      }
+    }
+    return null;
+  }
+
   function parseUserFoods(text){
     var tokens = text.split(/[,;\n]+/).map(function(t){return t.trim();}).filter(Boolean);
     var matched = [];
     var matchedKeys = {};
     var unmatched = [];
     tokens.forEach(function(tok){
-      var nt = normalize(tok);
-      if(!nt) return;
-      var found = null;
-      // exact match on name or alias
-      for(var i=0;i<FOODS.length;i++){
-        var food = FOODS[i];
-        if(normalize(food.name) === nt || food.aliases.some(function(a){return normalize(a)===nt;})){
-          found = food; break;
-        }
-      }
-      // substring fallback
-      if(!found){
-        for(var j=0;j<FOODS.length;j++){
-          var f2 = FOODS[j];
-          var names = [f2.name].concat(f2.aliases).map(normalize);
-          if(names.some(function(n){ return n.length>=3 && (nt.indexOf(n)!==-1 || n.indexOf(nt)!==-1); })){
-            found = f2; break;
-          }
-        }
-      }
+      if(!normalize(tok)) return;
+      var found = matchFoodByName(tok);
       if(found){
         if(!matchedKeys[found.key]){ matched.push(found); matchedKeys[found.key] = true; }
       } else {
@@ -1697,7 +1704,7 @@
     }
     var rows = state.pendingExtras.map(function(e, i){
       return '<div class="extra-item">' +
-        '<span class="desc">'+escapeHtml(e.desc)+(e.portions !== 1 ? ' · '+e.portions+' porciones' : '')+'</span>' +
+        '<span class="desc">'+escapeHtml(e.desc)+' · '+e.weight+' g</span>' +
         '<span class="macros">'+e.kcal+' kcal · P '+e.p+'g · C '+e.c+'g · G '+e.f+'g</span>' +
         '<button type="button" class="del-btn" data-extra-index="'+i+'">Quitar</button>' +
       '</div>';
@@ -1891,19 +1898,36 @@
     renderLogSection();
   });
 
+  document.getElementById('extraDesc').addEventListener('input', function(){
+    var hint = document.getElementById('extraMatchHint');
+    var val = this.value.trim();
+    var match = val.length >= 3 ? matchFoodByName(val) : null;
+    if(match){
+      document.getElementById('extraKcal').value = match.kcal;
+      document.getElementById('extraProt').value = match.p;
+      document.getElementById('extraCarb').value = match.c;
+      document.getElementById('extraFat').value = match.f;
+      hint.textContent = '✓ Encontramos "'+match.name+'" en tu base — macros por 100 g llenados, ajusta el peso que comiste.';
+      hint.className = 'extra-match-hint found';
+    } else {
+      hint.textContent = val.length >= 3 ? 'No está en tu base — captura los macros por 100 g a mano o escanea el código de barras.' : '';
+      hint.className = 'extra-match-hint';
+    }
+  });
+
   document.getElementById('addExtraBtn').addEventListener('click', function(){
     var desc = document.getElementById('extraDesc').value.trim();
     if(!desc){ document.getElementById('extraDesc').focus(); return; }
-    var kcalPer = Math.max(0, parseFloat(document.getElementById('extraKcal').value) || 0);
-    var pPer = Math.max(0, parseFloat(document.getElementById('extraProt').value) || 0);
-    var cPer = Math.max(0, parseFloat(document.getElementById('extraCarb').value) || 0);
-    var fPer = Math.max(0, parseFloat(document.getElementById('extraFat').value) || 0);
-    var portionsVal = parseFloat(document.getElementById('extraPortions').value);
-    var portions = (!portionsVal || portionsVal <= 0) ? 1 : portionsVal;
+    var kcalPer100 = Math.max(0, parseFloat(document.getElementById('extraKcal').value) || 0);
+    var pPer100 = Math.max(0, parseFloat(document.getElementById('extraProt').value) || 0);
+    var cPer100 = Math.max(0, parseFloat(document.getElementById('extraCarb').value) || 0);
+    var fPer100 = Math.max(0, parseFloat(document.getElementById('extraFat').value) || 0);
+    var weightVal = parseFloat(document.getElementById('extraWeight').value);
+    var weight = (!weightVal || weightVal <= 0) ? 100 : weightVal;
 
     state.pendingExtras.push({
-      desc: desc, portions: portions,
-      kcal: round(kcalPer * portions), p: round(pPer * portions), c: round(cPer * portions), f: round(fPer * portions)
+      desc: desc, weight: weight,
+      kcal: round(kcalPer100 * weight/100), p: round(pPer100 * weight/100), c: round(cPer100 * weight/100), f: round(fPer100 * weight/100)
     });
 
     document.getElementById('extraDesc').value = '';
@@ -1911,7 +1935,9 @@
     document.getElementById('extraProt').value = '';
     document.getElementById('extraCarb').value = '';
     document.getElementById('extraFat').value = '';
-    document.getElementById('extraPortions').value = '1';
+    document.getElementById('extraWeight').value = '100';
+    document.getElementById('extraMatchHint').textContent = '';
+    document.getElementById('extraMatchHint').className = 'extra-match-hint';
     document.getElementById('extraDesc').focus();
 
     renderExtraList();
@@ -1989,27 +2015,34 @@
   function fillExtraFormFromProduct(product, code){
     var n = product.nutriments || {};
     var name = product.product_name_es || product.product_name || ('Producto ' + code);
-    var hasServing = n['energy-kcal_serving'] != null || n['proteins_serving'] != null;
-    var kcal, p, c, f, suffix;
-    if(hasServing){
-      kcal = n['energy-kcal_serving'] || 0;
-      p = n['proteins_serving'] || 0;
-      c = n['carbohydrates_serving'] || 0;
-      f = n['fat_serving'] || 0;
-      suffix = product.serving_size ? ' (' + product.serving_size + ')' : '';
-    } else {
-      kcal = n['energy-kcal_100g'] || 0;
-      p = n['proteins_100g'] || 0;
-      c = n['carbohydrates_100g'] || 0;
-      f = n['fat_100g'] || 0;
-      suffix = ' (por 100 g — ajusta "porciones" a lo que realmente comiste)';
+    // Los valores por 100g casi siempre están en Open Food Facts (a diferencia
+    // de los "por porción", que muchos productos no traen), así que son la
+    // base más confiable; el peso consumido es lo que el usuario ajusta.
+    var kcal = n['energy-kcal_100g'] || 0;
+    var p = n['proteins_100g'] || 0;
+    var c = n['carbohydrates_100g'] || 0;
+    var f = n['fat_100g'] || 0;
+
+    var defaultWeight = 100;
+    var servingNote = '';
+    if(product.serving_size){
+      var m = String(product.serving_size).match(/([\d.,]+)\s*g\b/i);
+      if(m){
+        var parsed = parseFloat(m[1].replace(',', '.'));
+        if(parsed > 0) defaultWeight = parsed;
+      }
+      servingNote = ' (porción del empaque: ' + product.serving_size + ')';
     }
-    document.getElementById('extraDesc').value = name + suffix;
+
+    document.getElementById('extraDesc').value = name;
     document.getElementById('extraKcal').value = round(kcal);
     document.getElementById('extraProt').value = Math.round(p*10)/10;
     document.getElementById('extraCarb').value = Math.round(c*10)/10;
     document.getElementById('extraFat').value = Math.round(f*10)/10;
-    document.getElementById('extraPortions').value = '1';
+    document.getElementById('extraWeight').value = defaultWeight;
+    var hint = document.getElementById('extraMatchHint');
+    hint.textContent = 'Datos por 100 g de Open Food Facts' + servingNote + ' — ajusta el peso a lo que realmente comiste.';
+    hint.className = 'extra-match-hint found';
     document.getElementById('extraDesc').scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
