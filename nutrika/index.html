@@ -1464,6 +1464,7 @@
   /* ============ LOCAL STORAGE ============ */
   var LOG_KEY = 'ctMacroLog_v1';
   var PLAN_KEY = 'ctPlanMeta_v1';
+  var PROFILE_KEY = 'ctProfile_v1';
 
   function loadLog(){
     try{ return JSON.parse(localStorage.getItem(LOG_KEY)) || []; }catch(e){ return []; }
@@ -1476,6 +1477,12 @@
   }
   function savePlanMeta(meta){
     try{ localStorage.setItem(PLAN_KEY, JSON.stringify(meta)); }catch(e){}
+  }
+  function loadProfile(){
+    try{ return JSON.parse(localStorage.getItem(PROFILE_KEY)) || null; }catch(e){ return null; }
+  }
+  function saveProfile(profile){
+    try{ localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); }catch(e){}
   }
 
   /* ============ AUTH / CLOUD SYNC ============ */
@@ -1524,6 +1531,32 @@
     };
   }
 
+  function applyProfileToForm(profile){
+    if(!profile) return;
+    var sexoEl = document.getElementById('sexo');
+    var edadEl = document.getElementById('edad');
+    var pesoEl = document.getElementById('peso');
+    var estaturaEl = document.getElementById('estatura');
+    var actividadEl = document.getElementById('actividad');
+    var weeksGoalEl = document.getElementById('weeksGoal');
+    var pesoObjetivoEl = document.getElementById('pesoObjetivo');
+    var grasaActualEl = document.getElementById('grasaActual');
+    var grasaObjetivoEl = document.getElementById('grasaObjetivo');
+    if(sexoEl && profile.sexo != null) sexoEl.value = profile.sexo;
+    if(edadEl && profile.edad != null) edadEl.value = profile.edad;
+    if(pesoEl && profile.peso != null) pesoEl.value = profile.peso;
+    if(estaturaEl && profile.estatura != null) estaturaEl.value = profile.estatura;
+    if(actividadEl && profile.actividad != null) actividadEl.value = profile.actividad;
+    if(weeksGoalEl && profile.weeks_goal != null) weeksGoalEl.value = profile.weeks_goal;
+    if(pesoObjetivoEl) pesoObjetivoEl.value = (profile.peso_objetivo != null) ? profile.peso_objetivo : '';
+    if(grasaActualEl) grasaActualEl.value = (profile.grasa_actual != null) ? profile.grasa_actual : '';
+    if(grasaObjetivoEl) grasaObjetivoEl.value = (profile.grasa_objetivo != null) ? profile.grasa_objetivo : '';
+    if(profile.meta){
+      var goalRadio = document.querySelector('input[name="goal"][value="'+profile.meta+'"]');
+      if(goalRadio) goalRadio.checked = true;
+    }
+  }
+
   function upsertProfileToCloud(){
     var sb = getSupabase();
     if(!sb || !state.user) return;
@@ -1565,6 +1598,12 @@
   function hydrateFromCloud(){
     var sb = getSupabase();
     if(!sb || !state.user) return;
+
+    sb.from('profiles').select('*').eq('id', state.user.id).maybeSingle().then(function(res){
+      if(res.error || !res.data) return;
+      saveProfile(res.data);
+      applyProfileToForm(res.data);
+    });
 
     sb.from('plan_meta').select('data').eq('user_id', state.user.id).maybeSingle().then(function(res){
       if(res.error || !res.data || !res.data.data) return;
@@ -2005,6 +2044,7 @@
       };
       savePlanMeta(planMeta);
       state.planMeta = planMeta;
+      saveProfile(buildProfilePayload());
       upsertProfileToCloud();
       upsertPlanMetaToCloud(planMeta);
 
@@ -2328,6 +2368,8 @@
   (function init(){
     var todayInput = document.getElementById('logFecha');
     if(todayInput) todayInput.value = new Date().toISOString().slice(0,10);
+
+    applyProfileToForm(loadProfile());
 
     var savedPlan = loadPlanMeta();
     if(savedPlan && savedPlan.targets){
