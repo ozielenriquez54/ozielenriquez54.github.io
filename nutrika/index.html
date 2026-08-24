@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Instrument+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Syne+Mono&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" defer></script>
 <style>
   :root {
     --gold: #c9a13b;
@@ -155,6 +156,11 @@
   .btn.secondary { background: var(--dark); }
   .btn.secondary:hover { background: #000; }
   .error-msg { color: var(--gold); font-size: 13px; margin-top: 10px; display: none; }
+
+  .auth-status { font-size: 13px; margin-top: 12px; padding: 10px 14px; border-radius: 3px; }
+  .auth-status.info { background: var(--bg); color: var(--body); border: 1px solid var(--border); }
+  .auth-status.success { background: #eaf6ec; color: #1e6b2e; border: 1px solid #bfe3c6; }
+  .auth-status.error { background: #fbeaea; color: #9b2226; border: 1px solid #f0c6c6; }
 
   /* MACRO TARGET RESULT */
   .macro-result { display: none; margin-top: 24px; border-top: 1px solid var(--border); padding-top: 24px; }
@@ -319,6 +325,30 @@
 </div>
 
 <main>
+
+  <!-- ACCOUNT / CLOUD SYNC -->
+  <section class="card" id="accountCard">
+    <div class="card-label">Tu cuenta</div>
+    <h2>Guarda tu progreso en la nube</h2>
+    <p class="hint">Inicia sesión con tu correo para que tu perfil, tu plan y tu historial se guarden automáticamente y no se pierdan si cambias de celular. Es opcional: la app funciona igual sin cuenta, solo que el historial se queda únicamente en este dispositivo.</p>
+
+    <div id="authLoggedOut">
+      <div class="grid" style="margin-top:14px;">
+        <div class="field">
+          <label for="authEmail">Correo electrónico</label>
+          <input type="email" id="authEmail" placeholder="tucorreo@ejemplo.com" autocomplete="email">
+        </div>
+      </div>
+      <button class="btn" id="authLoginBtn" type="button">Enviar enlace de acceso</button>
+      <div id="authStatus" class="auth-status" style="display:none;"></div>
+    </div>
+
+    <div id="authLoggedIn" style="display:none;">
+      <p class="hint" style="margin-top:0;">Sesión iniciada como <strong id="authUserEmail"></strong>. Tu perfil, plan y registros se sincronizan automáticamente.</p>
+      <button class="btn secondary" id="authLogoutBtn" type="button">Cerrar sesión</button>
+      <div id="authStatus2" class="auth-status" style="display:none;"></div>
+    </div>
+  </section>
 
   <!-- STEP 1: PROFILE + GOAL -->
   <section class="card">
@@ -554,6 +584,17 @@
 <script>
 (function(){
   "use strict";
+
+  /* ============ CLOUD SYNC (SUPABASE) ============ */
+  var SUPABASE_URL = 'https://skwjntfknzakhcjlxlnh.supabase.co';
+  var SUPABASE_KEY = 'sb_publishable_m4IsyJJ3ZGmLwV_qPZxshw_vtkvOPAc';
+  var supabaseClient = null;
+  function getSupabase(){
+    if(supabaseClient) return supabaseClient;
+    if(typeof window.supabase === 'undefined' || !window.supabase.createClient) return null;
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    return supabaseClient;
+  }
 
   /* ============ UTILS ============ */
   function normalize(s){
@@ -1437,6 +1478,139 @@
     try{ localStorage.setItem(PLAN_KEY, JSON.stringify(meta)); }catch(e){}
   }
 
+  /* ============ AUTH / CLOUD SYNC ============ */
+  function setAuthStatus(el, msg, type){
+    if(!el) return;
+    el.textContent = msg;
+    el.className = 'auth-status' + (type ? ' ' + type : '');
+    el.style.display = msg ? 'block' : 'none';
+  }
+
+  function renderAuthUI(){
+    var loggedOut = document.getElementById('authLoggedOut');
+    var loggedIn = document.getElementById('authLoggedIn');
+    if(state.user){
+      loggedOut.style.display = 'none';
+      loggedIn.style.display = 'block';
+      document.getElementById('authUserEmail').textContent = state.user.email || '';
+    } else {
+      loggedOut.style.display = 'block';
+      loggedIn.style.display = 'none';
+    }
+  }
+
+  function buildProfilePayload(){
+    var sexoEl = document.getElementById('sexo');
+    var edadEl = document.getElementById('edad');
+    var pesoEl = document.getElementById('peso');
+    var estaturaEl = document.getElementById('estatura');
+    var actividadEl = document.getElementById('actividad');
+    var weeksGoalEl = document.getElementById('weeksGoal');
+    var pesoObjetivoEl = document.getElementById('pesoObjetivo');
+    var grasaActualEl = document.getElementById('grasaActual');
+    var grasaObjetivoEl = document.getElementById('grasaObjetivo');
+    var goalEl = document.querySelector('input[name="goal"]:checked');
+    return {
+      sexo: sexoEl ? sexoEl.value : null,
+      edad: edadEl ? (parseFloat(edadEl.value) || null) : null,
+      peso: pesoEl ? (parseFloat(pesoEl.value) || null) : null,
+      estatura: estaturaEl ? (parseFloat(estaturaEl.value) || null) : null,
+      actividad: actividadEl ? (parseFloat(actividadEl.value) || null) : null,
+      meta: goalEl ? goalEl.value : null,
+      weeks_goal: weeksGoalEl ? (parseFloat(weeksGoalEl.value) || null) : null,
+      peso_objetivo: (pesoObjetivoEl && pesoObjetivoEl.value) ? parseFloat(pesoObjetivoEl.value) : null,
+      grasa_actual: (grasaActualEl && grasaActualEl.value) ? parseFloat(grasaActualEl.value) : null,
+      grasa_objetivo: (grasaObjetivoEl && grasaObjetivoEl.value) ? parseFloat(grasaObjetivoEl.value) : null
+    };
+  }
+
+  function upsertProfileToCloud(){
+    var sb = getSupabase();
+    if(!sb || !state.user) return;
+    var payload = buildProfilePayload();
+    payload.id = state.user.id;
+    sb.from('profiles').upsert(payload).then(function(res){
+      if(res.error) console.error('Nutrika: error guardando perfil en la nube', res.error);
+    });
+  }
+
+  function upsertPlanMetaToCloud(meta){
+    var sb = getSupabase();
+    if(!sb || !state.user) return;
+    sb.from('plan_meta').upsert({ user_id: state.user.id, data: meta, updated_at: new Date().toISOString() }).then(function(res){
+      if(res.error) console.error('Nutrika: error guardando plan en la nube', res.error);
+    });
+  }
+
+  function upsertLogToCloud(entry){
+    var sb = getSupabase();
+    if(!sb || !state.user) return;
+    sb.from('daily_logs').upsert({
+      user_id: state.user.id, log_date: entry.date, peso: entry.peso, entreno: entry.entreno,
+      habits: entry.habits, notas: entry.notas, meals: entry.meals, extras: entry.extras,
+      kcal: entry.kcal, p: entry.p, c: entry.c, f: entry.f, updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id,log_date' }).then(function(res){
+      if(res.error) console.error('Nutrika: error guardando registro en la nube', res.error);
+    });
+  }
+
+  function deleteLogFromCloud(date){
+    var sb = getSupabase();
+    if(!sb || !state.user) return;
+    sb.from('daily_logs').delete().eq('user_id', state.user.id).eq('log_date', date).then(function(res){
+      if(res.error) console.error('Nutrika: error eliminando registro en la nube', res.error);
+    });
+  }
+
+  function hydrateFromCloud(){
+    var sb = getSupabase();
+    if(!sb || !state.user) return;
+
+    sb.from('plan_meta').select('data').eq('user_id', state.user.id).maybeSingle().then(function(res){
+      if(res.error || !res.data || !res.data.data) return;
+      var meta = res.data.data;
+      savePlanMeta(meta);
+      state.targets = meta.targets;
+      state.originalTargets = meta.originalTargets || meta.targets;
+      state.planMeta = meta;
+      renderMacroResult(meta.targets);
+      renderPlan({ phases: meta.phases, weeklyTimeline: meta.weeklyTimeline, phase1Timeline: meta.phase1Timeline }, meta.goalEstimate, meta.weeksGoal, meta.peso);
+      renderSummary();
+    });
+
+    sb.from('daily_logs').select('*').eq('user_id', state.user.id).order('log_date').then(function(res){
+      if(res.error || !res.data) return;
+      var entries = res.data.map(function(row){
+        return { date: row.log_date, peso: row.peso, entreno: row.entreno, habits: row.habits || [], notas: row.notas || '', meals: row.meals || {}, extras: row.extras || [], kcal: row.kcal || 0, p: row.p || 0, c: row.c || 0, f: row.f || 0 };
+      });
+      saveLogEntries(entries);
+      renderLogSection();
+    });
+  }
+
+  function initAuth(){
+    var sb = getSupabase();
+    if(!sb){
+      setAuthStatus(document.getElementById('authStatus'), 'La sincronización en la nube no está disponible en este momento (no se pudo cargar). La app sigue funcionando normalmente en este dispositivo.', 'error');
+      return;
+    }
+
+    sb.auth.onAuthStateChange(function(event, session){
+      state.session = session;
+      state.user = session ? session.user : null;
+      renderAuthUI();
+      if(state.user) hydrateFromCloud();
+    });
+
+    sb.auth.getSession().then(function(res){
+      var session = res.data ? res.data.session : null;
+      state.session = session;
+      state.user = session ? session.user : null;
+      renderAuthUI();
+      if(state.user) hydrateFromCloud();
+    });
+  }
+
   /* ============ STATE ============ */
   var state = {
     targets: null,
@@ -1445,7 +1619,9 @@
     recipes: { desayuno: [], comida: [], cena: [], postre: [] },
     selected: { desayuno: null, comida: null, cena: null, postre: null },
     pendingExtras: [],
-    mealTargets: null
+    mealTargets: null,
+    session: null,
+    user: null
   };
 
   /* ============ RENDER ============ */
@@ -1829,6 +2005,8 @@
       };
       savePlanMeta(planMeta);
       state.planMeta = planMeta;
+      upsertProfileToCloud();
+      upsertPlanMetaToCloud(planMeta);
 
       renderSummary();
       renderLogSection();
@@ -1851,6 +2029,7 @@
       state.planMeta.weeklyTimeline = planComputed.weeklyTimeline;
       state.planMeta.phase1Timeline = planComputed.phase1Timeline;
       savePlanMeta(state.planMeta);
+      upsertPlanMetaToCloud(state.planMeta);
     }
   });
 
@@ -1887,6 +2066,7 @@
     var idx = entries.findIndex(function(e){ return e.date === fecha; });
     if(idx >= 0) entries[idx] = entry; else entries.push(entry);
     saveLogEntries(entries);
+    upsertLogToCloud(entry);
 
     document.getElementById('logPeso').value = '';
     document.getElementById('logEntreno').checked = false;
@@ -2066,7 +2246,34 @@
     var date = btn.getAttribute('data-date');
     var entries = loadLog().filter(function(en){ return en.date !== date; });
     saveLogEntries(entries);
+    deleteLogFromCloud(date);
     renderLogSection();
+  });
+
+  document.getElementById('authLoginBtn').addEventListener('click', function(){
+    var sb = getSupabase();
+    var statusEl = document.getElementById('authStatus');
+    var email = document.getElementById('authEmail').value.trim();
+    if(!email){ setAuthStatus(statusEl, 'Escribe tu correo electrónico.', 'error'); return; }
+    if(!sb){ setAuthStatus(statusEl, 'La sincronización en la nube no está disponible en este momento.', 'error'); return; }
+    setAuthStatus(statusEl, 'Enviando enlace de acceso...', 'info');
+    sb.auth.signInWithOtp({ email: email, options: { emailRedirectTo: window.location.href } }).then(function(res){
+      if(res.error){
+        setAuthStatus(statusEl, 'No pudimos enviar el enlace: ' + res.error.message, 'error');
+      } else {
+        setAuthStatus(statusEl, 'Listo — revisa tu correo (' + email + ') y abre el enlace para iniciar sesión.', 'success');
+      }
+    });
+  });
+
+  document.getElementById('authLogoutBtn').addEventListener('click', function(){
+    var sb = getSupabase();
+    if(!sb) return;
+    sb.auth.signOut().then(function(){
+      state.user = null;
+      state.session = null;
+      renderAuthUI();
+    });
   });
 
   document.getElementById('generateBtn').addEventListener('click', function(){
@@ -2131,6 +2338,9 @@
       renderPlan({ phases: savedPlan.phases, weeklyTimeline: savedPlan.weeklyTimeline, phase1Timeline: savedPlan.phase1Timeline }, savedPlan.goalEstimate, savedPlan.weeksGoal, savedPlan.peso);
     }
     renderLogSection();
+    // supabase-js carga con "defer", así que espera a que el DOM (y los scripts
+    // diferidos) terminen antes de buscar window.supabase.
+    document.addEventListener('DOMContentLoaded', initAuth);
   })();
 
 })();
