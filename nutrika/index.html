@@ -1277,7 +1277,22 @@
     var tdee = bmr * actividad;
     var strat = STRATEGIES[goal];
     var calories = tdee * strat.calFactor;
-    var proteinG = strat.proteinPerKg * peso;
+
+    // Si hay más de 10 kg de diferencia con el peso objetivo, calculamos la
+    // proteína sobre el peso meta en vez del peso actual: pedirle a alguien
+    // con exceso de grasa importante que coma proteína en función de su peso
+    // total sobreestima la necesidad real (esa grasa de más no requiere
+    // proteína), y el peso objetivo es una mejor referencia de su masa magra.
+    var pesoObjetivoEl = document.getElementById('pesoObjetivo');
+    var pesoObjetivo = pesoObjetivoEl ? parseFloat(pesoObjetivoEl.value) : NaN;
+    var proteinBasisWeight = peso;
+    var proteinNote = '';
+    if(pesoObjetivo > 0 && (peso - pesoObjetivo) > 10){
+      proteinBasisWeight = pesoObjetivo;
+      proteinNote = ' Como tienes más de 10 kg de diferencia con tu peso objetivo ('+pesoObjetivo+' kg), tu proteína se calculó sobre ese peso meta en vez de tu peso actual — así evitamos pedirte una cantidad poco realista basada en exceso de grasa. El coach puede ajustarla manualmente si lo prefiere.';
+    }
+
+    var proteinG = strat.proteinPerKg * proteinBasisWeight;
     var fatG = (calories * strat.fatPct) / 9;
     var carbG = Math.max(0, (calories - proteinG*4 - fatG*9) / 4);
 
@@ -1288,7 +1303,7 @@
       c: round(carbG),
       f: round(fatG),
       tdee: round(tdee),
-      text: strat.text
+      text: strat.text + proteinNote
     };
   }
 
@@ -1691,6 +1706,7 @@
 
   // El coach ajusta proteína/grasa a mano; los carbohidratos absorben la diferencia
   // para que las calorías totales nunca se muevan del objetivo calculado.
+  var macroEditCloudTimer = null;
   function applyMacroEdit(){
     if(!state.targets) return;
     var kcal = state.targets.kcal;
@@ -1719,6 +1735,10 @@
       state.planMeta.weeklyTimeline = planComputed.weeklyTimeline;
       state.planMeta.phase1Timeline = planComputed.phase1Timeline;
       savePlanMeta(state.planMeta);
+      // Se agrupan las subidas a la nube mientras el coach sigue escribiendo,
+      // para no mandar un guardado por cada tecla presionada.
+      clearTimeout(macroEditCloudTimer);
+      macroEditCloudTimer = setTimeout(function(){ upsertPlanMetaToCloud(state.planMeta); }, 600);
     }
   }
 
