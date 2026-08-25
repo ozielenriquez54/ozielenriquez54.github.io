@@ -203,6 +203,10 @@
     display: flex; flex-direction: column;
   }
   .recipe-card.selected { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+  .recetario-badge {
+    align-self: flex-start; background: var(--dark); color: var(--gold-light); font-family: 'Syne Mono', monospace;
+    font-size: 9.5px; letter-spacing: 1px; text-transform: uppercase; padding: 4px 9px; border-radius: 10px; margin-bottom: 8px;
+  }
   .recipe-card h3 { font-family: 'Syne', sans-serif; font-size: 17px; color: var(--ink); margin-bottom: 6px; line-height: 1.3; }
   .recipe-meta { display: flex; gap: 10px; font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; margin-bottom: 12px; }
   .recipe-macros { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -708,7 +712,28 @@
 
     {key:'miel', name:'miel', kcal:304, p:0.3, c:82, f:0, tags:['sweet'], aliases:['miel']},
     {key:'cacao', name:'cacao en polvo', kcal:228, p:20, c:58, f:14, tags:['sweet'], aliases:['cacao','cacao en polvo']},
-    {key:'chocolateoscuro', name:'chocolate oscuro 70%', kcal:598, p:7.8, c:46, f:43, tags:['sweet','fat'], aliases:['chocolate oscuro','chocolate amargo']}
+    {key:'chocolateoscuro', name:'chocolate oscuro 70%', kcal:598, p:7.8, c:46, f:43, tags:['sweet','fat'], aliases:['chocolate oscuro','chocolate amargo']},
+
+    // Agregados para las recetas del Recetario Complex Training 12 Week Challenge.
+    {key:'cebolla', name:'cebolla', kcal:40, p:1.1, c:9.3, f:0.1, tags:['veg'], aliases:['cebolla','cebollas']},
+    {key:'esparrago', name:'espárrago', kcal:22, p:2.4, c:4.1, f:0.2, tags:['veg'], aliases:['esparrago','espárrago','esparragos','espárragos']},
+    {key:'repollo', name:'repollo', kcal:25, p:1.3, c:5.8, f:0.1, tags:['veg'], aliases:['repollo','col']},
+    {key:'chicharos', name:'chícharos', kcal:81, p:5.4, c:14.5, f:0.4, tags:['veg'], aliases:['chicharo','chicharos','chícharos','guisantes','arvejas']},
+    {key:'lechealmendra', name:'leche de almendra', kcal:15, p:0.6, c:0.6, f:1.2, tags:['dairy'], aliases:['leche de almendra','almond milk']},
+    {key:'cremabaja', name:'crema baja en grasa', kcal:155, p:2.5, c:4, f:15, tags:['dairy'], aliases:['crema baja en grasa','crema de avena','media crema']},
+    {key:'yogurtdescremado', name:'yogur natural sin grasa', kcal:56, p:5.7, c:7.7, f:0.2, tags:['dairy'], aliases:['yogur natural sin grasa','yogurt natural sin grasa','yogur sin grasa']},
+    {key:'salsadesoya', name:'salsa de soya', kcal:53, p:8.1, c:4.9, f:0.1, tags:['other'], aliases:['salsa de soya','salsa de soja','soy sauce']},
+    {key:'aceiteajonjoli', name:'aceite de ajonjolí', kcal:884, p:0, c:0, f:100, tags:['fat'], aliases:['aceite de ajonjoli','aceite de ajonjolí','aceite de sesamo','sesame oil']},
+    {key:'pastadetomate', name:'pasta de tomate', kcal:82, p:4.3, c:18.9, f:0.5, tags:['veg'], aliases:['pasta de tomate','pure de tomate','puré de tomate','tomato paste']},
+    {key:'caldo', name:'caldo (pollo/res/verduras)', kcal:6, p:0.9, c:0.5, f:0.1, tags:['other'], aliases:['caldo','caldo de pollo','caldo de res','caldo de verduras','consome']},
+    {key:'harinaavena', name:'harina de avena', kcal:404, p:15, c:66, f:9, tags:['carb'], aliases:['harina de avena','oat flour']},
+    {key:'maicena', name:'maicena', kcal:381, p:0.3, c:91, f:0.1, tags:['carb'], aliases:['maicena','almidon de maiz','almidón de maíz','cornstarch']},
+    {key:'azucar', name:'azúcar', kcal:387, p:0, c:100, f:0, tags:['sweet'], aliases:['azucar','azúcar','sugar']},
+    {key:'mirin', name:'mirin', kcal:230, p:0, c:43, f:0, tags:['sweet'], aliases:['mirin']},
+    {key:'mielmaple', name:'miel de maple', kcal:260, p:0, c:67, f:0.1, tags:['sweet'], aliases:['miel de maple','jarabe de maple','jarabe de arce','maple syrup']},
+    {key:'fideointegral', name:'fideo integral (crudo)', kcal:348, p:14.6, c:72, f:2.5, tags:['carb'], aliases:['fideo integral','fideo','noodles integrales','pasta integral cruda']},
+    {key:'lentejasrojassecas', name:'lentejas rojas (crudas)', kcal:352, p:24.6, c:63.4, f:1.1, tags:['protein'], aliases:['lentejas rojas','lentejas rojas crudas','lentejas secas']},
+    {key:'resmagra', name:'carne molida magra de res', kcal:152, p:21.6, c:0, f:6.9, tags:['protein'], aliases:['carne magra molida','carne magra','carne molida magra']}
   ];
 
   /* Piece-based hints (grams per common unit) for nicer display */
@@ -1062,6 +1087,313 @@
       }
     });
     return {matched:matched, unmatched:unmatched};
+  }
+
+  /* ============ RECETARIO COMPLEX TRAINING (recetas reales) ============ */
+  // Recetas tomadas tal cual del "Recetario Complex Training 12 Week
+  // Challenge": ingredientes y pasos reales, no generados. foodKey liga cada
+  // ingrediente a su alimento en FOODS para calcular los macros reales de la
+  // receta; foodKey:null son sazonadores/hierbas en cantidades tan pequeñas
+  // que no se cuentan (igual que "sal y pimienta al gusto" en el generador
+  // automático).
+  function foodByKey(key){
+    for(var i=0;i<FOODS.length;i++){ if(FOODS[i].key === key) return FOODS[i]; }
+    return null;
+  }
+
+  var RECETARIO = [
+    {
+      key:'salmonhuevos', title:'Salmón y huevos horneados', category:'desayuno',
+      servings:4, time:'35-55', method:'horno',
+      ingredients:[
+        {text:'280 g filete de salmón', foodKey:'salmon', grams:280},
+        {text:'2 cda. (28 g) aceite de coco', foodKey:'aceitecoco', grams:28},
+        {text:'5 huevos (≈250 g)', foodKey:'huevo', grams:250},
+        {text:'2 claras de huevo (≈66 g)', foodKey:'clara', grams:66},
+        {text:'½ taza (120 ml) leche de almendra', foodKey:'lechealmendra', grams:120},
+        {text:'2 dientes de ajo, picados', foodKey:null, grams:0},
+        {text:'200 g espárragos, picados', foodKey:'esparrago', grams:200},
+        {text:'1 cda. orégano', foodKey:null, grams:0},
+        {text:'1 cda. tomillo', foodKey:null, grams:0},
+        {text:'1 cebolla cortada en gajos (≈110 g)', foodKey:'cebolla', grams:110},
+        {text:'1 pimiento cortado en tiras (≈120 g)', foodKey:'pimiento', grams:120},
+        {text:'Sal y pimienta al gusto', foodKey:null, grams:0}
+      ],
+      steps:[
+        'Calienta el horno a 420°F (215°C). Sazona los filetes de salmón con sal y pimienta.',
+        'Calienta 1 cda. de aceite de coco en una sartén a fuego alto y fríe el salmón por el lado de la piel unos 2 minutos; pásalo a una charola y hornea 8 minutos más. Retira y reserva.',
+        'Baja el horno a 350°F (180°C).',
+        'En la misma sartén, con la cucharada de aceite restante, cocina el ajo y los espárragos a fuego medio 5 minutos.',
+        'Sazona con orégano y tomillo. Bate los huevos, las claras y la leche de almendra con una pizca de sal.',
+        'Acomoda el salmón horneado en un refractario, agrega la cebolla y el pimiento, y vierte encima la mezcla de huevo.',
+        'Hornea 30-35 minutos, hasta que los huevos estén cuajados y dorados.'
+      ]
+    },
+    {
+      key:'stickychicken', title:'Sticky Chicken Asian Salad', category:'comida',
+      servings:4, time:'25', method:'salteado',
+      ingredients:[
+        {text:'300 g filete de pechuga de pollo', foodKey:'pollo', grams:300},
+        {text:'2 cda. (≈32 g) salsa de soya', foodKey:'salsadesoya', grams:32},
+        {text:'¼ taza (90 g) miel', foodKey:'miel', grams:90},
+        {text:'1 diente de ajo, picado', foodKey:null, grams:0},
+        {text:'2 cda. (28 g) aceite de ajonjolí', foodKey:'aceiteajonjoli', grams:28},
+        {text:'3½ tazas (350 g) repollo finamente picado', foodKey:'repollo', grams:350},
+        {text:'1 zanahoria picada (≈60 g)', foodKey:'zanahoria', grams:60},
+        {text:'1 pepino picado (≈200 g)', foodKey:'pepino', grams:200},
+        {text:'3 cebollines picados', foodKey:null, grams:0},
+        {text:'1 taza (30 g) hojas de menta', foodKey:null, grams:0},
+        {text:'1 taza (30 g) cilantro', foodKey:null, grams:0},
+        {text:'½ taza (80 g) almendra picada', foodKey:'almendras', grams:80},
+        {text:'1 cda. semillas de ajonjolí tostadas', foodKey:'ajonjoli', grams:9},
+        {text:'Sal y pimienta al gusto', foodKey:null, grams:0}
+      ],
+      steps:[
+        'Coloca el pollo entre 2 hojas de plástico y golpéalo ligeramente para aplanarlo.',
+        'Mezcla la salsa de soya, la miel, el ajo y 1 cda. de aceite de ajonjolí en un tazón grande para el adobo.',
+        'Agrega el pollo, cubre y marina en el refrigerador al menos 10 minutos.',
+        'Calienta 1 cda. de aceite de ajonjolí en una sartén grande a fuego alto y fríe el pollo 4-5 minutos por lado, hasta dorar. Retira y rebana fino cuando enfríe un poco.',
+        'Baja el fuego a medio, agrega el adobo restante a la sartén y cocina 5-6 minutos hasta que espese. Deja enfriar.',
+        'En un tazón grande, mezcla el repollo, la zanahoria, el pepino, el cebollín, la menta, el cilantro, la almendra, las semillas de ajonjolí y el pollo.',
+        'Agrega el aderezo y mezcla bien. Sirve de inmediato o refrigera.'
+      ]
+    },
+    {
+      key:'tunasalad', title:'Green & Black Bean Tuna Salad', category:'comida',
+      servings:2, time:'15', method:'ensalada',
+      ingredients:[
+        {text:'100 g ejotes', foodKey:'ejotes', grams:100},
+        {text:'4 puños (≈120 g) de espinaca baby', foodKey:'espinaca', grams:120},
+        {text:'100 g frijoles negros cocidos', foodKey:'frijoles', grams:100},
+        {text:'200 g atún en agua', foodKey:'atun', grams:200},
+        {text:'1 cda. (14 g) aceite de oliva', foodKey:'aceiteoliva', grams:14},
+        {text:'1 cdita. orégano', foodKey:null, grams:0},
+        {text:'1 cda. alcaparras', foodKey:null, grams:0},
+        {text:'2 cdita. (8 g) semillas de calabaza', foodKey:'calabazasemilla', grams:8},
+        {text:'Sal y pimienta al gusto', foodKey:null, grams:0}
+      ],
+      steps:[
+        'Blanquea los ejotes unos 5 minutos. Escurre y enjuaga los frijoles negros.',
+        'Mezcla en un tazón la espinaca, los ejotes, el atún, los frijoles negros, el orégano y el aceite de oliva.',
+        'Reparte la ensalada en dos platos, agrega las alcaparras y un poco de su líquido encima.',
+        'Sazona con pimienta recién molida y espolvorea las semillas de calabaza para servir.'
+      ]
+    },
+    {
+      key:'lentejasetas', title:'Sopa de lentejas y champiñones', category:'comida',
+      servings:4, time:'35', method:'sopa',
+      ingredients:[
+        {text:'1 cda. (14 g) aceite de coco', foodKey:'aceitecoco', grams:14},
+        {text:'1 cebolla picada (≈110 g)', foodKey:'cebolla', grams:110},
+        {text:'2 zanahorias picadas (≈120 g)', foodKey:'zanahoria', grams:120},
+        {text:'2 dientes de ajo picados', foodKey:null, grams:0},
+        {text:'3 papas peladas y picadas (≈450 g)', foodKey:'papa', grams:450},
+        {text:'¼ taza (50 g) lentejas rojas crudas', foodKey:'lentejasrojassecas', grams:50},
+        {text:'4¼ tazas (1.5 L) caldo de pollo o verduras', foodKey:'caldo', grams:1500},
+        {text:'1 taza (75 g) champiñones, picados', foodKey:'champinon', grams:75},
+        {text:'1 cda. pasta de tomate', foodKey:'pastadetomate', grams:16},
+        {text:'Sal y pimienta al gusto', foodKey:null, grams:0}
+      ],
+      steps:[
+        'En una olla, calienta el aceite y saltea la cebolla 4-5 minutos.',
+        'Agrega la zanahoria y cocina 3 minutos más. Añade el ajo y cocina 1 minuto más.',
+        'Agrega las papas, las lentejas y el caldo. Hierve, tapa y cocina a fuego lento 10 minutos.',
+        'Agrega los champiñones y cocina 5 minutos más.',
+        'Añade la pasta de tomate y sazona con sal y pimienta. Hierve 2 minutos más y ajusta el sazón.',
+        'Sirve caliente.'
+      ]
+    },
+    {
+      key:'garbanzoburger', title:'Hamburguesa de garbanzo y elote', category:'comida',
+      servings:8, time:'40', method:'horno',
+      ingredients:[
+        {text:'400 g garbanzos cocidos', foodKey:'garbanzo', grams:400},
+        {text:'3 dientes de ajo', foodKey:null, grams:0},
+        {text:'1 cebolla pequeña en gajos (≈80 g)', foodKey:'cebolla', grams:80},
+        {text:'1 cda. orégano', foodKey:null, grams:0},
+        {text:'1 cda. polvo de chile', foodKey:null, grams:0},
+        {text:'1 cda. comino', foodKey:null, grams:0},
+        {text:'1 cda. pimentón', foodKey:null, grams:0},
+        {text:'Jugo de 1 limón', foodKey:null, grams:0},
+        {text:'¾ taza (130 g) elote dulce', foodKey:'elote', grams:130},
+        {text:'¼ taza (30 g) almendras', foodKey:'almendras', grams:30},
+        {text:'2 cda. (24 g) harina de avena', foodKey:'harinaavena', grams:24},
+        {text:'2 cdita. (9 g) aceite de coco', foodKey:'aceitecoco', grams:9},
+        {text:'1 pimiento rojo en rebanadas (≈120 g)', foodKey:'pimiento', grams:120},
+        {text:'Sal y pimienta al gusto', foodKey:null, grams:0}
+      ],
+      steps:[
+        'Procesa los garbanzos, el ajo, la cebolla, las especias y el jugo de limón hasta obtener una mezcla suave; sazona con sal y pimienta.',
+        'Pasa a un tazón grande, agrega el elote, el pimiento, la ralladura de limón y la harina de avena, y mezcla bien.',
+        'Forma hamburguesas con 1/3 de taza de la mezcla cada una. Congela 20 minutos.',
+        'Precalienta el horno a 420°F (210°C). Calienta el aceite a fuego medio-alto y fríe las hamburguesas 3 minutos por lado.',
+        'Pasa las hamburguesas a una charola para hornear y hornea 8 minutos más.',
+        'Deja enfriar un poco antes de servir.'
+      ]
+    },
+    {
+      key:'zucchinistirfry', title:'Pollo y calabacita al wok', category:'comida',
+      servings:5, time:'10', method:'salteado',
+      ingredients:[
+        {text:'2 cda. (36 g) mirin', foodKey:'mirin', grams:36},
+        {text:'¼ taza (60 ml) salsa de soya', foodKey:'salsadesoya', grams:60},
+        {text:'1 taza (240 ml) caldo de pollo', foodKey:'caldo', grams:240},
+        {text:'1 cda. (8 g) maicena', foodKey:'maicena', grams:8},
+        {text:'1 cda. (12 g) azúcar', foodKey:'azucar', grams:12},
+        {text:'2 cdita. (9 g) aceite de ajonjolí', foodKey:'aceiteajonjoli', grams:9},
+        {text:'1 cda. (14 g) aceite de coco', foodKey:'aceitecoco', grams:14},
+        {text:'1 cda. ajo picado', foodKey:null, grams:0},
+        {text:'1 cda. jengibre picado', foodKey:null, grams:0},
+        {text:'450 g pechuga de pollo en rebanadas', foodKey:'pollo', grams:450},
+        {text:'1 calabacita grande (≈300 g)', foodKey:'calabacin', grams:300},
+        {text:'1 cda. semillas de ajonjolí', foodKey:'ajonjoli', grams:9},
+        {text:'2 cda. cebollín en rebanadas', foodKey:null, grams:0}
+      ],
+      steps:[
+        'En un tazón, mezcla la salsa de soya, el caldo de pollo, la maicena, el mirin, el azúcar y el aceite de ajonjolí hasta disolver todo.',
+        'En una sartén grande, calienta el aceite de coco y cocina el pollo 2-3 minutos por lado a fuego medio-alto. Reserva.',
+        'En la misma sartén, agrega un poco más de aceite, el ajo y el jengibre; saltea 30-45 segundos sin quemar.',
+        'Incorpora la salsa preparada y cocina a fuego lento 1 minuto.',
+        'Agrega la calabacita y cocina 2 minutos más, hasta que espese y esté tierna.',
+        'Retira del fuego, agrega el pollo y revuelve hasta cubrir bien.',
+        'Decora con semillas de ajonjolí y cebollín.'
+      ]
+    },
+    {
+      key:'fideoscamaron', title:'Fideos con langostinos o camarones', category:'comida',
+      servings:2, time:'20', method:'sartén',
+      ingredients:[
+        {text:'200 g camarones', foodKey:'camaron', grams:200},
+        {text:'125 g fideo integral (crudo)', foodKey:'fideointegral', grams:125},
+        {text:'1 cda. (14 g) aceite de coco', foodKey:'aceitecoco', grams:14},
+        {text:'1 cebolla picada (≈110 g)', foodKey:'cebolla', grams:110},
+        {text:'1 cdita. orégano', foodKey:null, grams:0},
+        {text:'2 dientes de ajo picados', foodKey:null, grams:0},
+        {text:'10 tomates cherry en cuartos (≈150 g)', foodKey:'tomate', grams:150},
+        {text:'2 cda. perejil picado', foodKey:null, grams:0},
+        {text:'125 ml crema baja en grasa', foodKey:'cremabaja', grams:125},
+        {text:'Sal y pimienta al gusto', foodKey:null, grams:0}
+      ],
+      steps:[
+        'Descongela los camarones, enjuaga y seca.',
+        'Cocina la pasta según las instrucciones del paquete.',
+        'Calienta el aceite de coco en una sartén grande y acitrona la cebolla. Agrega el orégano y el ajo, fríe 1-2 minutos más.',
+        'Agrega los camarones y fríe 1 minuto, revolviendo; sazona con sal y pimienta.',
+        'Agrega los tomates cherry y el perejil, saltea medio minuto. Vierte la crema y lleva a ebullición.',
+        'Cocina a fuego lento 1 minuto hasta que espese; ajusta la sazón.',
+        'Agrega la pasta escurrida y mezcla todo junto para servir caliente.'
+      ]
+    },
+    {
+      key:'carnechicharos', title:'Carne y chícharos al curry', category:'comida',
+      servings:4, time:'45', method:'guisado',
+      ingredients:[
+        {text:'500 g carne molida magra de res', foodKey:'resmagra', grams:500},
+        {text:'3 dientes de ajo picados', foodKey:null, grams:0},
+        {text:'25 g jengibre picado', foodKey:null, grams:0},
+        {text:'15 g cilantro, en hojas y picado (dividido)', foodKey:null, grams:0},
+        {text:'2 cda. polvo de curry', foodKey:null, grams:0},
+        {text:'400 g tomate triturado', foodKey:'tomate', grams:400},
+        {text:'200 ml caldo de res', foodKey:'caldo', grams:200},
+        {text:'200 g yogur natural sin grasa', foodKey:'yogurtdescremado', grams:200},
+        {text:'300 g chícharos congelados', foodKey:'chicharos', grams:300},
+        {text:'Sal y pimienta al gusto', foodKey:null, grams:0}
+      ],
+      steps:[
+        'Calienta una sartén seca a fuego alto y dora la carne. Agrega el ajo y el jengibre; saltea 6-8 minutos hasta suavizar.',
+        'Agrega los tallos de cilantro y el curry en polvo; cocina 2-3 minutos más.',
+        'Agrega el tomate triturado y el caldo de res. Sazona con sal y pimienta.',
+        'Hierve, baja el fuego y cocina a fuego lento, destapado, 20 minutos, revolviendo de vez en cuando.',
+        'Agrega 1 cucharada de yogur, los chícharos congelados y la mitad del cilantro. Cocina 2 minutos más.',
+        'Sirve con una porción de arroz al gusto, decorado con el resto del cilantro y una cucharada de yogur.'
+      ]
+    },
+    {
+      key:'oatcookies', title:'Galletas simples de avena', category:'postre',
+      servings:12, time:'30', method:'horno',
+      ingredients:[
+        {text:'180 g avena', foodKey:'avena', grams:180},
+        {text:'100 g harina de avena', foodKey:'harinaavena', grams:100},
+        {text:'70 g almendra molida', foodKey:'almendras', grams:70},
+        {text:'1 cda. polvo de hornear', foodKey:null, grams:0},
+        {text:'1 pizca de sal', foodKey:null, grams:0},
+        {text:'7 cda. (105 g) miel de maple', foodKey:'mielmaple', grams:105},
+        {text:'4 cda. (56 g) aceite de coco', foodKey:'aceitecoco', grams:56}
+      ],
+      steps:[
+        'Precalienta el horno a 360°F (180°C).',
+        'En un tazón grande, mezcla la avena, la harina de avena, la almendra molida, el polvo de hornear y la sal.',
+        'Agrega la miel de maple y el aceite de coco derretido; mezcla de nuevo.',
+        'Con las manos ligeramente húmedas, forma bolitas del tamaño de una nuez y colócalas en una charola con papel para hornear.',
+        'Aplana suavemente cada bolita para darle forma de galleta.',
+        'Hornea 15-20 minutos hasta que doren.',
+        'Deja enfriar por completo antes de servir.'
+      ]
+    },
+    {
+      key:'brownies', title:'Brownies sin harina', category:'postre',
+      servings:12, time:'40', method:'horno',
+      ingredients:[
+        {text:'2 huevos grandes (≈100 g)', foodKey:'huevo', grams:100},
+        {text:'90 g almendra molida', foodKey:'almendras', grams:90},
+        {text:'35 g cocoa en polvo sin azúcar', foodKey:'cacao', grams:35},
+        {text:'1/8 cdita. sal', foodKey:null, grams:0},
+        {text:'¾ cda. polvo de hornear', foodKey:null, grams:0},
+        {text:'175 g miel', foodKey:'miel', grams:175},
+        {text:'1 cda. extracto de vainilla', foodKey:null, grams:0},
+        {text:'90 g chispas de chocolate amargo', foodKey:'chocolateoscuro', grams:90},
+        {text:'85 g crema de cacahuate', foodKey:'mantequillamani', grams:85}
+      ],
+      steps:[
+        'Precalienta el horno a 325°F (160°C). Engrasa un molde de 9x9 pulgadas y fórralo con papel para hornear.',
+        'Bate los huevos con la miel y el extracto de vainilla hasta combinar.',
+        'En otro tazón, mezcla la almendra molida, el cacao en polvo, la sal y el polvo de hornear.',
+        'Incorpora la mezcla de huevo a los secos y mezcla bien. Añade las chispas de chocolate.',
+        'Vierte la masa en el molde y cubre con la crema de cacahuate; haz remolinos con un tenedor.',
+        'Hornea unos 30 minutos, hasta que un palillo salga limpio.',
+        'Deja enfriar 30 minutos antes de cortar en 12 piezas.'
+      ]
+    }
+  ];
+
+  // Suma los macros de los ingredientes ligados a FOODS y los divide entre las
+  // porciones de la receta, para dar el aporte real por porción.
+  function computeRecetarioTotals(recipe){
+    var totals = {kcal:0,p:0,c:0,f:0};
+    recipe.ingredients.forEach(function(ing){
+      if(!ing.foodKey || !ing.grams) return;
+      var food = foodByKey(ing.foodKey);
+      if(!food) return;
+      totals.kcal += food.kcal * ing.grams/100;
+      totals.p += food.p * ing.grams/100;
+      totals.c += food.c * ing.grams/100;
+      totals.f += food.f * ing.grams/100;
+    });
+    var servings = recipe.servings || 1;
+    return { kcal: round(totals.kcal/servings), p: round(totals.p/servings), c: round(totals.c/servings), f: round(totals.f/servings) };
+  }
+
+  // Una receta del recetario solo se ofrece como opción si el usuario ya
+  // tiene TODOS sus ingredientes contables (los sazonadores sin foodKey se
+  // asumen disponibles siempre, igual que en el generador automático).
+  function recetarioMatches(recipe, matchedKeysSet){
+    return recipe.ingredients.every(function(ing){
+      return !ing.foodKey || matchedKeysSet[ing.foodKey];
+    });
+  }
+
+  function buildRecetarioRecipe(recipe){
+    return {
+      id: 'recetario-' + recipe.key,
+      title: recipe.title,
+      time: recipe.time,
+      method: recipe.method,
+      servings: recipe.servings,
+      source: 'recetario',
+      totals: computeRecetarioTotals(recipe),
+      ingredients: recipe.ingredients.map(function(ing){ return ing.text; }),
+      steps: recipe.steps
+    };
   }
 
   /* ============ ENGINE ============ */
@@ -1799,10 +2131,13 @@
   function recipeCardHTML(mealType, recipe, isSelected){
     var ingredientsHTML = recipe.ingredients.map(function(i){ return '<li>'+i+'</li>'; }).join('');
     var stepsHTML = recipe.steps.map(function(s){ return '<li>'+s+'</li>'; }).join('');
+    var badge = recipe.source === 'recetario' ? '<span class="recetario-badge">Recetario Complex Training</span>' : '';
+    var servingsHint = recipe.servings ? '<span>· rinde '+recipe.servings+' porciones</span>' : '';
     return '' +
     '<div class="recipe-card'+(isSelected?' selected':'')+'" data-meal="'+mealType+'" data-id="'+recipe.id+'">' +
+      badge +
       '<h3>'+recipe.title+'</h3>' +
-      '<div class="recipe-meta"><span>⏱ '+recipe.time+' min</span><span>· '+recipe.method+'</span></div>' +
+      '<div class="recipe-meta"><span>⏱ '+recipe.time+' min</span><span>· '+recipe.method+'</span>'+servingsHint+'</div>' +
       '<div class="recipe-macros">' +
         '<span class="macro-pill kcal">'+recipe.totals.kcal+' kcal</span>' +
         '<span class="macro-pill">P '+recipe.totals.p+'g</span>' +
@@ -2369,11 +2704,25 @@
     var cenaSet = generateSet(PRINCIPALES, engine, 3, comidaSet.usedIds, state.mealTargets.cena);
     var postreSet = generateSet(POSTRES, engine, 2, [], state.mealTargets.postre);
 
-    state.recipes = { desayuno: d.results, comida: comidaSet.results, cena: cenaSet.results, postre: postreSet.results };
+    state.recipes = { desayuno: d.results.slice(), comida: comidaSet.results.slice(), cena: cenaSet.results.slice(), postre: postreSet.results.slice() };
+
+    // Recetas reales del Recetario Complex Training: se agregan como opción
+    // EXTRA (no reemplazan las generadas) solo cuando el usuario ya tiene
+    // todos los ingredientes contables de esa receta.
+    var matchedKeysSet = {};
+    parsed.matched.forEach(function(f){ matchedKeysSet[f.key] = true; });
+    RECETARIO.forEach(function(recipe){
+      if(!recetarioMatches(recipe, matchedKeysSet)) return;
+      var built = buildRecetarioRecipe(recipe);
+      if(recipe.category === 'desayuno') state.recipes.desayuno.push(built);
+      else if(recipe.category === 'postre') state.recipes.postre.push(built);
+      else { state.recipes.comida.push(built); state.recipes.cena.push(Object.assign({}, built)); }
+    });
+
     state.selected = {
-      desayuno: d.results[0] ? d.results[0].id : null,
-      comida: comidaSet.results[0] ? comidaSet.results[0].id : null,
-      cena: cenaSet.results[0] ? cenaSet.results[0].id : null,
+      desayuno: state.recipes.desayuno[0] ? state.recipes.desayuno[0].id : null,
+      comida: state.recipes.comida[0] ? state.recipes.comida[0].id : null,
+      cena: state.recipes.cena[0] ? state.recipes.cena[0].id : null,
       postre: null
     };
 
