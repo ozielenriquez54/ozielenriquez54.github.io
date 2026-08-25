@@ -1502,6 +1502,35 @@
         if(byKey[entry.food.key]) byKey[entry.food.key].qty += entry.qty;
         else byKey[entry.food.key] = {food: entry.food, qty: entry.qty};
       });
+      // Relleno de macros: algunas plantillas no traen un rol dedicado a
+      // grasa o carbohidrato (p.ej. "pollo con arroz" no tiene rol de
+      // grasa), así que por más que se ajusten las cantidades, esa comida
+      // nunca podría llegar sola a esa meta. Si un macro se queda muy por
+      // debajo de lo que le toca a esta comida, se agrega otro alimento
+      // disponible del usuario (que la receta no use ya) para cerrar el
+      // hueco, en vez de servir una comida estructuralmente incompleta.
+      var TOPUP_INFO = { f: {tag:'fat', max:40}, c: {tag:'carb', max:180} };
+      var topupNotes = [];
+      ['f','c'].forEach(function(macroKey){
+        var info = TOPUP_INFO[macroKey];
+        var current = 0;
+        Object.keys(byKey).forEach(function(k){ current += byKey[k].food[macroKey] * byKey[k].qty/100; });
+        var target = mealTarget[macroKey];
+        if(!target || current >= target*0.75) return;
+
+        var candidate = matchedFoods.filter(function(fd){
+          return fd.tags.indexOf(info.tag) !== -1 && !byKey[fd.key];
+        })[0];
+        if(!candidate || !candidate[macroKey]) return;
+
+        var missing = target - current;
+        var grams = round(Math.min(info.max, (missing*100) / candidate[macroKey]));
+        if(grams < 5) return;
+
+        byKey[candidate.key] = {food: candidate, qty: grams};
+        topupNotes.push(candidate.name + ' (' + grams + ' g' + unitHint(candidate, grams) + ')');
+      });
+
       var merged = Object.keys(byKey).map(function(k){ return byKey[k]; });
 
       var totals = {kcal:0,p:0,c:0,f:0};
@@ -1533,6 +1562,9 @@
           var e = filled[k];
           return e.food.name + ' (' + round(e.qty) + ' g' + unitHint(e.food, e.qty) + ')';
         }).join(', ') + '.');
+      }
+      if(topupNotes.length){
+        steps.push('Súmale: ' + topupNotes.join(', ') + ' para acercarte a tus macros de esta comida.');
       }
       steps.push('Sazona al gusto con sal, pimienta y tus especias favoritas.');
 
