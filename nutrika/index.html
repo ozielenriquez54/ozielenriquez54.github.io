@@ -642,7 +642,13 @@
     {key:'frijoles', name:'frijoles negros cocidos', kcal:132, p:8.9, c:23.7, f:0.5, tags:['protein'], aliases:['frijol','frijoles','frijoles negros']},
     {key:'lentejas', name:'lentejas cocidas', kcal:116, p:9, c:20, f:0.4, tags:['protein'], aliases:['lenteja','lentejas']},
     {key:'garbanzo', name:'garbanzos cocidos', kcal:164, p:8.9, c:27.4, f:2.6, tags:['protein'], aliases:['garbanzo','garbanzos']},
-    {key:'proteinapolvo', name:'proteína en polvo', kcal:400, p:80, c:8, f:7, tags:['protein'], aliases:['proteina en polvo','proteína en polvo','whey']},
+    {key:'proteinapolvo', name:'proteína en polvo', kcal:400, p:80, c:8, f:7, tags:['protein'], aliases:[
+      'proteina en polvo','proteína en polvo','whey','whey protein','proteina whey','suplemento proteico',
+      'proteina sabor vainilla','proteina vainilla','proteina sabor chocolate','proteina chocolate',
+      'proteina sabor fresa','proteina fresa','proteina sabor cookies','proteina cookies and cream',
+      'isopure','iso pure','mutant','1st phorm','1stphorm','optimum nutrition','gold standard',
+      'dymatize','iso100','muscletech','bsn','genetic nutrition','star nutrition','ultimate nutrition'
+    ]},
 
     {key:'arrozblanco', name:'arroz blanco cocido', kcal:130, p:2.7, c:28, f:0.3, tags:['carb'], aliases:['arroz','arroz blanco']},
     {key:'arrozintegral', name:'arroz integral cocido', kcal:123, p:2.7, c:26, f:1, tags:['carb'], aliases:['arroz integral']},
@@ -980,6 +986,26 @@
       ]
     },
     {
+      id:'p7', mealTypes:['postre'], method:'microondas', time:5,
+      roles:[ role('protein',['protein'],30,true,['proteinapolvo']), role('carb',['carb'],25,true,['harinaavena','avena']), role('dairy',['dairy'],60,false,['lechedescremada','lecheentera','lechealmendra']), role('fat',['fat'],10,false,['mantequillamani','aceitecoco']) ],
+      titleCore:function(f){ return 'Mug cake proteico'; },
+      coreSteps:[
+        'Mezcla {{protein}} con {{carb}} y una pizca de polvo de hornear en una taza o tazón apto para microondas.',
+        'Agrega {{dairy}} poco a poco, batiendo, hasta formar una masa espesa sin grumos.',
+        'Cocina en microondas 60-90 segundos hasta que cuaje. Deja enfriar un minuto antes de comer.'
+      ]
+    },
+    {
+      id:'p8', mealTypes:['postre'], method:'sin cocción', time:10,
+      roles:[ role('protein',['protein'],30,true,['proteinapolvo']), role('carb',['carb'],40,true,['avena']), role('fat',['fat'],20,true,['mantequillamani']), role('dairy',['dairy'],30,false,['lechedescremada','lecheentera','lechealmendra']) ],
+      titleCore:function(f){ return 'Bolitas proteicas de '+f.fat.food.name; },
+      coreSteps:[
+        'Mezcla {{protein}}, {{carb}} y {{fat}} en un tazón hasta integrar bien.',
+        'Agrega {{dairy}} poco a poco hasta lograr una masa moldeable (ni muy seca ni pegajosa).',
+        'Forma bolitas pequeñas con las manos y refrigera al menos 20 minutos antes de comer.'
+      ]
+    },
+    {
       id:'p2', mealTypes:['postre'], method:'microondas', time:6,
       roles:[ role('fruit',['fruit'],150,true,['manzana','pera']), role('fat',['fat'],15,false,['nueces','mantequillamani']) ],
       titleCore:function(f){ return f.fruit.food.name+' horneada con canela'; },
@@ -990,7 +1016,7 @@
     },
     {
       id:'p3', mealTypes:['postre'], method:'licuadora', time:5,
-      roles:[ role('fruit',['fruit'],100,true), role('protein',['protein','dairy'],100,true,['yogurgriego','lecheentera','lechedescremada']) ],
+      roles:[ role('fruit',['fruit'],100,true), role('protein',['protein','dairy'],100,true,['yogurgriego','lecheentera','lechedescremada','proteinapolvo']) ],
       titleCore:function(f){ return 'Batido postre de '+f.fruit.food.name; },
       coreSteps:[
         'Licúa {{fruit}} con {{protein}} y un poco de hielo hasta obtener consistencia cremosa.',
@@ -1509,6 +1535,14 @@
       // debajo de lo que le toca a esta comida, se agrega otro alimento
       // disponible del usuario (que la receta no use ya) para cerrar el
       // hueco, en vez de servir una comida estructuralmente incompleta.
+      // Los almidones salados (arroz, papa, pasta, tortillas...) no tienen
+      // sentido en un licuado, postre sin cocción o cualquier receta que ya
+      // lleve proteína en polvo — se excluyen del relleno en esos casos.
+      var SAVORY_CARB_KEYS = {arrozblanco:1, arrozintegral:1, papa:1, camote:1, pasta:1, fideointegral:1, panintegral:1, tortillamaiz:1, tortillaharina:1, quinoa:1, elote:1, platanomacho:1};
+      var SHAKE_STYLE_METHODS = {'licuadora':1, 'sin cocción':1, 'microondas':1, 'sin horno':1};
+      var usesProteinPowder = Object.keys(byKey).some(function(k){ return byKey[k].food.key === 'proteinapolvo'; });
+      var avoidSavoryCarbs = usesProteinPowder || !!SHAKE_STYLE_METHODS[tpl.method];
+
       var TOPUP_INFO = { f: {tag:'fat', max:40}, c: {tag:'carb', max:180} };
       var topupNotes = [];
       ['f','c'].forEach(function(macroKey){
@@ -1519,7 +1553,9 @@
         if(!target || current >= target*0.75) return;
 
         var candidate = matchedFoods.filter(function(fd){
-          return fd.tags.indexOf(info.tag) !== -1 && !byKey[fd.key];
+          if(fd.tags.indexOf(info.tag) === -1 || byKey[fd.key]) return false;
+          if(macroKey === 'c' && avoidSavoryCarbs && SAVORY_CARB_KEYS[fd.key]) return false;
+          return true;
         })[0];
         if(!candidate || !candidate[macroKey]) return;
 
