@@ -916,7 +916,7 @@
     },
     {
       id:'m7', mealTypes:['comida','cena'], method:'bowl', time:15,
-      roles:[ role('carb',['carb'],100,true,['quinoa','arrozintegral']), role('protein',['protein'],120,true), role('veg',['veg'],150,false), role('fat',['fat'],15,false,['aceiteoliva','aguacate']) ],
+      roles:[ role('carb',['carb'],100,true,['quinoa','arrozintegral','arrozblanco','papa','camote']), role('protein',['protein'],120,true), role('veg',['veg'],150,false), role('fat',['fat'],15,false,['aceiteoliva','aguacate']) ],
       titleCore:function(f){ return 'Bowl de '+f.carb.food.name+' con '+f.protein.food.name; },
       coreSteps:[
         'Calienta o cuece {{carb}}.',
@@ -971,6 +971,16 @@
       coreSteps:[
         'Corta {{protein}} y {{veg}} en trozos similares.',
         'Saltea en sartén caliente con aceite, primero {{protein}} 3-4 minutos, luego agrega {{veg}} 4-5 minutos más.'
+      ]
+    },
+    {
+      id:'m13', mealTypes:['comida','cena'], method:'salteado', time:18,
+      roles:[ role('protein',['protein'],150,true), role('fruit',['fruit'],120,true), role('carb',['carb'],100,false,['arrozblanco','arrozintegral','quinoa','papa','camote']) ],
+      titleCore:function(f){ return cap(f.protein.food.name)+' en salsa de '+f.fruit.food.name; },
+      coreSteps:[
+        'Cocina {{protein}} en sartén con sal y pimienta, 6-8 minutos por lado, hasta dorar.',
+        'En la misma sartén, agrega {{fruit}} en trozos y cocina 4-5 minutos hasta que se suavice y suelte su jugo, formando una salsa ligera.',
+        'Sirve {{protein}} bañado con la salsa de fruta.'
       ]
     }
   ];
@@ -1436,8 +1446,24 @@
         candidates.sort(function(a,b){ return r.preferred.indexOf(a.key) - r.preferred.indexOf(b.key); });
       } else {
         candidates = matchedFoods.filter(function(f){
+          // La proteína en polvo es un suplemento, no un ingrediente para
+          // cocinar (no se hierve en sopa, no se saltea, no se asa): solo
+          // debe usarse donde una receta la pida explícitamente por nombre
+          // (licuados, mug cake, bolitas proteicas), nunca por coincidencia
+          // genérica de tag "protein".
+          if(f.key === 'proteinapolvo') return false;
           return f.tags.some(function(t){ return r.tags.indexOf(t) !== -1; });
         });
+        // Si el rol acepta verdura pero el usuario no dio NINGUNA verdura en
+        // toda su lista, usa fruta en su lugar (guisos/salteados con fruta
+        // existen y son válidos) en vez de tirar la receta completa por
+        // faltar un solo ingrediente que el usuario nunca tuvo disponible.
+        if(candidates.length === 0 && r.tags.indexOf('veg') !== -1){
+          var hasAnyVeg = matchedFoods.some(function(f){ return f.tags.indexOf('veg') !== -1; });
+          if(!hasAnyVeg){
+            candidates = matchedFoods.filter(function(f){ return f.tags.indexOf('fruit') !== -1; });
+          }
+        }
       }
       if(candidates.length === 0) return null;
       var rkey = r.tags.join('|') + '::' + (r.preferred||[]).join(',');
