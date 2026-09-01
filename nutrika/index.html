@@ -2073,10 +2073,21 @@
 
     sb.from('daily_logs').select('*').eq('user_id', state.user.id).order('log_date').then(function(res){
       if(res.error || !res.data) return;
-      var entries = res.data.map(function(row){
-        return { date: row.log_date, peso: row.peso, entreno: row.entreno, habits: row.habits || [], notas: row.notas || '', meals: row.meals || {}, extras: row.extras || [], kcal: row.kcal || 0, p: row.p || 0, c: row.c || 0, f: row.f || 0 };
+      var cloudEntries = res.data.map(function(row){
+        return { date: row.log_date, peso: row.peso, entreno: row.entreno, habits: row.habits || [], notas: row.notas || '', meals: row.meals || {}, extras: row.extras || [], kcal: row.kcal || 0, p: row.p || 0, c: row.c || 0, f: row.f || 0, grasa: row.grasa != null ? row.grasa : null };
       });
-      saveLogEntries(entries);
+      // No sobrescribir sin más: si el usuario ya traía historial guardado
+      // solo en este dispositivo (típico la primera vez que inicia sesión),
+      // la nube está vacía y un overwrite directo lo borraría por completo.
+      // Se conservan los días que solo existen localmente y se suben a la
+      // nube, en vez de perderlos.
+      var localEntries = loadLog();
+      var cloudDates = {};
+      cloudEntries.forEach(function(e){ cloudDates[e.date] = true; });
+      var localOnly = localEntries.filter(function(e){ return !cloudDates[e.date]; });
+      var merged = cloudEntries.concat(localOnly).sort(function(a,b){ return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+      saveLogEntries(merged);
+      localOnly.forEach(function(e){ upsertLogToCloud(e); });
       renderLogSection();
     });
   }
@@ -2088,15 +2099,11 @@
       return;
     }
 
+    // onAuthStateChange ya dispara un evento inicial (INITIAL_SESSION) con la
+    // sesión actual al registrarse, además de los cambios futuros (login,
+    // logout, refresh de token) — llamar también a getSession() por separado
+    // duplicaba la hidratación inicial en cada carga de página.
     sb.auth.onAuthStateChange(function(event, session){
-      state.session = session;
-      state.user = session ? session.user : null;
-      renderAuthUI();
-      if(state.user) hydrateFromCloud();
-    });
-
-    sb.auth.getSession().then(function(res){
-      var session = res.data ? res.data.session : null;
       state.session = session;
       state.user = session ? session.user : null;
       renderAuthUI();
