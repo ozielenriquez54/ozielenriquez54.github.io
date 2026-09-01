@@ -227,6 +227,8 @@
     if(!sb || !state.user) return;
 
     sb.from('profiles').select('*').eq('id', state.user.id).maybeSingle().then(function(res){
+      if(res.error) console.error('Nutrika coach: error leyendo tu propio perfil', res.error);
+      else console.log('Nutrika coach: tu perfil leído desde Supabase es', res.data);
       if(res.error || !res.data || !res.data.is_coach){
         document.getElementById('notCoachCard').style.display = 'block';
         document.getElementById('clientListCard').style.display = 'none';
@@ -236,7 +238,7 @@
       document.getElementById('clientListCard').style.display = 'block';
 
       sb.from('profiles').select('*').order('email').then(function(res2){
-        if(res2.error || !res2.data) return;
+        if(res2.error){ console.error('Nutrika coach: error leyendo la lista de clientes', res2.error); return; }
         state.clients = res2.data.filter(function(p){ return !p.is_coach; });
         renderClientList();
       });
