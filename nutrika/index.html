@@ -513,6 +513,10 @@
         <label for="logPeso">Peso hoy (kg)</label>
         <input type="number" id="logPeso" step="0.1" min="20" max="300" placeholder="70.0">
       </div>
+      <div class="field">
+        <label for="logGrasa">% grasa corporal (opcional)</label>
+        <input type="number" id="logGrasa" step="0.1" min="3" max="60" placeholder="ej. 22.5">
+      </div>
     </div>
 
     <div class="check-row" style="margin-top:18px;">
@@ -2033,7 +2037,7 @@
     var sb = getSupabase();
     if(!sb || !state.user) return;
     sb.from('daily_logs').upsert({
-      user_id: state.user.id, log_date: entry.date, peso: entry.peso, entreno: entry.entreno,
+      user_id: state.user.id, log_date: entry.date, peso: entry.peso, grasa: entry.grasa, entreno: entry.entreno,
       habits: entry.habits, notas: entry.notas, meals: entry.meals, extras: entry.extras,
       kcal: entry.kcal, p: entry.p, c: entry.c, f: entry.f, updated_at: new Date().toISOString()
     }, { onConflict: 'user_id,log_date' }).then(function(res){
@@ -2358,9 +2362,12 @@
     });
   }
 
-  function buildSparkline(weightEntries){
+  // Gráfica de tendencia genérica (línea diaria + promedio móvil de 7 días),
+  // reutilizada para peso y % de grasa corporal — cualquier serie numérica
+  // por fecha funciona igual.
+  function buildTrendChart(entries, key, opts){
     var w = 600, h = 100, pad = 10;
-    var vals = weightEntries.map(function(e){ return e.peso; });
+    var vals = entries.map(function(e){ return e[key]; });
     var avgVals = rollingAverage(vals, 7);
     var allVals = vals.concat(avgVals);
     var min = Math.min.apply(null, allVals), max = Math.max.apply(null, allVals);
@@ -2372,11 +2379,29 @@
         return x.toFixed(1)+','+y.toFixed(1);
       }).join(' ');
     }
-    return '<div class="sparkline-wrap"><h4 class="sub-label">Tendencia de peso — línea gris fina: diario · línea dorada: promedio móvil (más confiable que un solo día)</h4>' +
+    return '<div class="sparkline-wrap"><h4 class="sub-label">'+opts.title+'</h4>' +
       '<svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'" preserveAspectRatio="none" style="overflow:visible;">' +
       '<polyline points="'+toPoints(vals)+'" fill="none" stroke="#c4c4c4" stroke-width="1.5" vector-effect="non-scaling-stroke"/>' +
-      '<polyline points="'+toPoints(avgVals)+'" fill="none" stroke="#c9a13b" stroke-width="3" vector-effect="non-scaling-stroke"/>' +
+      '<polyline points="'+toPoints(avgVals)+'" fill="none" stroke="'+(opts.color||'#c9a13b')+'" stroke-width="3" vector-effect="non-scaling-stroke"/>' +
       '</svg></div>';
+  }
+
+  var HABIT_LABELS = {
+    macros: 'Cumplí mis calorías/macros', agua: 'Tomé suficiente agua', verduras: 'Comí suficientes verduras',
+    sueno: 'Dormí 7+ horas', alcohol: 'Sin alcohol'
+  };
+  function buildHabitBars(entries){
+    if(!entries.length) return '';
+    var total = entries.length;
+    var rows = Object.keys(HABIT_LABELS).map(function(k){
+      var count = entries.filter(function(e){ return e.habits && e.habits.indexOf(k) !== -1; }).length;
+      var pct = round(count/total*100);
+      return '<div class="bar-row">' +
+        '<div class="bar-labels"><span class="name">'+HABIT_LABELS[k]+'</span><span>'+count+'/'+total+' días · '+pct+'%</span></div>' +
+        '<div class="bar-track"><div class="bar-fill '+(pct>=70?'good':'')+'" style="width:'+pct+'%"></div></div>' +
+      '</div>';
+    }).join('');
+    return '<h4 class="sub-label">Hábitos — % de días registrados que cumpliste cada uno</h4>' + rows;
   }
 
   function renderExtraList(){
@@ -2450,40 +2475,50 @@
       return;
     }
 
-    var weightEntries = entries.filter(function(e){ return e.peso; });
+    var weightEntries = entries.filter(function(e){ return e.peso != null; });
     var firstW = weightEntries.length ? weightEntries[0].peso : null;
     var lastW = weightEntries.length ? weightEntries[weightEntries.length-1].peso : null;
     var deltaW = (firstW != null && lastW != null) ? (lastW - firstW) : null;
 
+    var grasaEntries = entries.filter(function(e){ return e.grasa != null; });
+    var firstG = grasaEntries.length ? grasaEntries[0].grasa : null;
+    var lastG = grasaEntries.length ? grasaEntries[grasaEntries.length-1].grasa : null;
+    var deltaG = (firstG != null && lastG != null) ? (lastG - firstG) : null;
+
     var last7 = entries.slice(-7);
     var trainedCount = last7.filter(function(e){ return e.entreno; }).length;
 
-    var totalHabitsPossible = entries.length * 5;
+    var habitCount = Object.keys(HABIT_LABELS).length;
+    var totalHabitsPossible = entries.length * habitCount;
     var totalHabitsDone = entries.reduce(function(sum,e){ return sum + (e.habits ? e.habits.length : 0); }, 0);
     var adherencePct = totalHabitsPossible ? round(totalHabitsDone/totalHabitsPossible*100) : 0;
 
     var statsHTML = '<div class="stat-grid">' +
       '<div class="stat-card"><div class="v">'+entries.length+'</div><div class="l">Días registrados</div></div>' +
       '<div class="stat-card"><div class="v">'+(deltaW != null ? (deltaW>0?'+':'')+deltaW.toFixed(1)+' kg' : '–')+'</div><div class="l">Cambio de peso total</div></div>' +
+      '<div class="stat-card"><div class="v">'+(deltaG != null ? (deltaG>0?'+':'')+deltaG.toFixed(1)+' pp' : '–')+'</div><div class="l">Cambio de % grasa total</div></div>' +
       '<div class="stat-card"><div class="v">'+trainedCount+'/'+last7.length+'</div><div class="l">Entrenos (últimos '+last7.length+' días)</div></div>' +
       '<div class="stat-card"><div class="v">'+adherencePct+'%</div><div class="l">Adherencia a hábitos</div></div>' +
     '</div>';
 
-    var sparkHTML = weightEntries.length >= 2 ? buildSparkline(weightEntries) : '';
-    summaryEl.innerHTML = statsHTML + sparkHTML;
+    var weightChartHTML = weightEntries.length >= 2 ? buildTrendChart(weightEntries, 'peso', {title:'Tendencia de peso — línea gris fina: diario · línea dorada: promedio móvil (más confiable que un solo día)'}) : '';
+    var grasaChartHTML = grasaEntries.length >= 2 ? buildTrendChart(grasaEntries, 'grasa', {title:'Tendencia de % de grasa corporal — línea gris fina: diario · línea dorada: promedio móvil', color:'#96771f'}) : '';
+    var habitBarsHTML = buildHabitBars(entries);
+    summaryEl.innerHTML = statsHTML + weightChartHTML + grasaChartHTML + habitBarsHTML;
 
     var rows = entries.slice().reverse().map(function(e){
       var extrasNote = (e.extras && e.extras.length) ? ' <span title="'+escapeHtml(e.extras.map(function(x){return x.desc;}).join(', '))+'">(+'+e.extras.length+' fuera del plan)</span>' : '';
       return '<tr>' +
         '<td>'+e.date+'</td>' +
         '<td>'+(e.peso != null ? e.peso+' kg' : '–')+'</td>' +
+        '<td>'+(e.grasa != null ? e.grasa+'%' : '–')+'</td>' +
         '<td>'+(e.kcal || 0)+' kcal'+extrasNote+'</td>' +
         '<td>'+(e.entreno ? '✓' : '–')+'</td>' +
-        '<td>'+(e.habits ? e.habits.length : 0)+'/5</td>' +
+        '<td>'+(e.habits ? e.habits.length : 0)+'/'+Object.keys(HABIT_LABELS).length+'</td>' +
         '<td><button class="del-btn" data-date="'+e.date+'">Eliminar</button></td>' +
       '</tr>';
     }).join('');
-    histEl.innerHTML = '<div class="log-table-wrap"><table class="log-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Kcal</th><th>Entrenó</th><th>Hábitos</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    histEl.innerHTML = '<div class="log-table-wrap"><table class="log-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Grasa</th><th>Kcal</th><th>Entrenó</th><th>Hábitos</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   }
 
   /* ============ EVENTS ============ */
@@ -2546,6 +2581,8 @@
     var fecha = document.getElementById('logFecha').value || new Date().toISOString().slice(0,10);
     var pesoVal = parseFloat(document.getElementById('logPeso').value);
     var peso = isNaN(pesoVal) ? null : pesoVal;
+    var grasaVal = parseFloat(document.getElementById('logGrasa').value);
+    var grasa = isNaN(grasaVal) ? null : grasaVal;
     var entreno = document.getElementById('logEntreno').checked;
     var habits = Array.prototype.map.call(document.querySelectorAll('#logHabits input[type=checkbox]:checked'), function(cb){ return cb.value; });
     var notas = document.getElementById('logNotas').value.trim();
@@ -2567,7 +2604,7 @@
     });
 
     var entry = {
-      date: fecha, peso: peso, entreno: entreno, habits: habits, notas: notas, meals: meals, extras: extras,
+      date: fecha, peso: peso, grasa: grasa, entreno: entreno, habits: habits, notas: notas, meals: meals, extras: extras,
       kcal: round(kcalTotal), p: round(pTotal), c: round(cTotal), f: round(fTotal)
     };
 
@@ -2578,6 +2615,7 @@
     upsertLogToCloud(entry);
 
     document.getElementById('logPeso').value = '';
+    document.getElementById('logGrasa').value = '';
     document.getElementById('logEntreno').checked = false;
     document.querySelectorAll('#logHabits input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
     document.querySelectorAll('#logMeals input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
