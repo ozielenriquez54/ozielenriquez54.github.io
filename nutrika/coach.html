@@ -204,6 +204,67 @@
     return '<h4 class="sub-label">Hábitos</h4>' + rows;
   }
 
+  // Agrupa los registros diarios por semana del plan (igual que "Semana 1",
+  // "Semana 2"... que ya ve el cliente en su propia app) y suma los
+  // macronutrientes de cada semana, con su promedio por día registrado —
+  // así el coach ve de un vistazo cuánto está comiendo realmente el
+  // cliente en total y en promedio, para poder corregir sus macros.
+  function buildWeeklyMacroSummary(entries, plan){
+    if(!entries.length) return '';
+    var startDate = (plan && plan.startDate) ? new Date(plan.startDate+'T00:00:00') : null;
+
+    var groups = {};
+    entries.forEach(function(e){
+      var d = new Date(e.date+'T00:00:00');
+      var weekNum;
+      if(startDate){
+        weekNum = Math.floor((d - startDate) / (1000*60*60*24*7)) + 1;
+      } else {
+        // Sin fecha de inicio de plan: agrupa por semana de calendario (lunes a domingo).
+        var monday = new Date(d);
+        var dow = (monday.getDay() + 6) % 7;
+        monday.setDate(monday.getDate() - dow);
+        weekNum = monday.toISOString().slice(0,10);
+      }
+      var key = String(weekNum);
+      if(!groups[key]) groups[key] = { key: key, entries: [] };
+      groups[key].entries.push(e);
+    });
+
+    var weekKeys = Object.keys(groups).sort(function(a,b){
+      var na = parseFloat(a), nb = parseFloat(b);
+      if(!isNaN(na) && !isNaN(nb)) return na - nb;
+      return a < b ? -1 : (a > b ? 1 : 0);
+    });
+
+    var target = (plan && plan.targets) ? plan.targets : null;
+    function pctLabel(avg, goal){
+      if(!goal) return '';
+      return ' <span style="color:var(--muted);font-size:11px;">('+round(avg/goal*100)+'% de la meta)</span>';
+    }
+
+    var rows = weekKeys.map(function(k){
+      var g = groups[k];
+      var days = g.entries.length;
+      var sum = g.entries.reduce(function(acc,e){
+        acc.kcal += e.kcal; acc.p += e.p; acc.c += e.c; acc.f += e.f; return acc;
+      }, {kcal:0,p:0,c:0,f:0});
+      var avg = { kcal: sum.kcal/days, p: sum.p/days, c: sum.c/days, f: sum.f/days };
+      var label = startDate ? 'Semana '+k : k;
+      return '<tr>' +
+        '<td>'+label+'</td>' +
+        '<td>'+days+'</td>' +
+        '<td>'+round(sum.kcal)+' kcal<br>'+round(avg.kcal)+'/día'+(target?pctLabel(avg.kcal,target.kcal):'')+'</td>' +
+        '<td>'+round(sum.p)+' g<br>'+round(avg.p)+' g/día'+(target?pctLabel(avg.p,target.p):'')+'</td>' +
+        '<td>'+round(sum.c)+' g<br>'+round(avg.c)+' g/día'+(target?pctLabel(avg.c,target.c):'')+'</td>' +
+        '<td>'+round(sum.f)+' g<br>'+round(avg.f)+' g/día'+(target?pctLabel(avg.f,target.f):'')+'</td>' +
+      '</tr>';
+    }).join('');
+
+    return '<h4 class="sub-label">Macronutrientes por semana (total y promedio por día registrado)</h4>' +
+      '<div class="log-table-wrap"><table class="log-table"><thead><tr><th>Semana</th><th>Días</th><th>Calorías</th><th>Proteína</th><th>Carbohidratos</th><th>Grasas</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }
+
   var state = { user: null, clients: [] };
 
   function renderAuthUI(){
@@ -313,6 +374,8 @@
       document.getElementById('clientDetailBody').innerHTML = html;
       return;
     }
+
+    html += buildWeeklyMacroSummary(entries, plan);
 
     var weightEntries = entries.filter(function(e){ return e.peso != null; });
     var grasaEntries = entries.filter(function(e){ return e.grasa != null; });
