@@ -114,7 +114,16 @@
   <section class="card" id="clientListCard" style="display:none;">
     <div class="card-label">Clientes</div>
     <h2>Tus clientes</h2>
-    <p class="hint">Da clic en un cliente para ver su progreso completo.</p>
+    <p class="hint">Solo ves aquí a los clientes que tienes asignados — otros coaches no pueden ver a los tuyos, ni tú los de ellos.</p>
+
+    <div class="field" style="max-width:360px;">
+      <label for="claimEmail">Agregar cliente por correo</label>
+      <input type="email" id="claimEmail" placeholder="cliente@correo.com">
+    </div>
+    <button class="btn secondary" id="claimClientBtn" type="button">+ Agregar cliente</button>
+    <div id="claimStatus" class="auth-status"></div>
+
+    <p class="hint" style="margin-top:24px;">Da clic en un cliente para ver su progreso completo.</p>
     <div id="clientListWrap"><p class="empty-note">Cargando clientes...</p></div>
   </section>
 
@@ -407,6 +416,28 @@
   document.getElementById('backToListBtn').addEventListener('click', function(){
     document.getElementById('clientDetailCard').style.display = 'none';
     document.getElementById('clientListCard').style.display = 'block';
+  });
+
+  document.getElementById('claimClientBtn').addEventListener('click', function(){
+    var sb = getSupabase();
+    var statusEl = document.getElementById('claimStatus');
+    var email = document.getElementById('claimEmail').value.trim();
+    if(!email){ setAuthStatus(statusEl, 'Escribe el correo del cliente.', 'error'); return; }
+    if(!sb || !state.user) return;
+    setAuthStatus(statusEl, 'Buscando...', 'info');
+    // Solo se puede "reclamar" un cliente que todavía no tiene coach
+    // asignado (lo garantiza también la política de la base de datos, esto
+    // es nada más para dar un mensaje más claro si no aplica).
+    sb.from('profiles').update({ coach_id: state.user.id }).eq('email', email).is('coach_id', null).select().then(function(res){
+      if(res.error){ setAuthStatus(statusEl, 'Error: ' + res.error.message, 'error'); return; }
+      if(!res.data || !res.data.length){
+        setAuthStatus(statusEl, 'No encontramos un cliente sin asignar con ese correo. Verifica que ya haya iniciado sesión al menos una vez en la app, y que no tenga ya otro coach.', 'error');
+        return;
+      }
+      setAuthStatus(statusEl, 'Cliente agregado correctamente.', 'success');
+      document.getElementById('claimEmail').value = '';
+      loadClients();
+    });
   });
 
   document.getElementById('authLoginBtn').addEventListener('click', function(){
