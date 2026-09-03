@@ -110,8 +110,15 @@
         <label for="authEmail">Correo electrónico</label>
         <input type="email" id="authEmail" placeholder="tucorreo@ejemplo.com" autocomplete="email">
       </div>
-      <button class="btn" id="authLoginBtn" type="button">Enviar enlace de acceso</button>
+      <button class="btn" id="authLoginBtn" type="button">Enviar código de acceso</button>
       <div id="authStatus" class="auth-status"></div>
+
+      <div class="field" style="max-width:360px; margin-top:18px;">
+        <label for="authOtpCode">¿Ya te llegó el código? Escríbelo aquí (6 dígitos)</label>
+        <input type="text" id="authOtpCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="123456" autocomplete="one-time-code">
+      </div>
+      <button class="btn secondary" id="authVerifyOtpBtn" type="button">Confirmar código</button>
+      <p class="hint" style="margin:8px 0 0;">Más confiable que el enlace en el celular: el enlace a veces se abre en otra app/navegador. El código siempre funciona aquí mismo.</p>
     </div>
 
     <div id="authLoggedIn" style="display:none;">
@@ -521,12 +528,30 @@
     var email = document.getElementById('authEmail').value.trim();
     if(!email){ setAuthStatus(statusEl, 'Escribe tu correo electrónico.', 'error'); return; }
     if(!sb){ setAuthStatus(statusEl, 'La sincronización en la nube no está disponible en este momento.', 'error'); return; }
-    setAuthStatus(statusEl, 'Enviando enlace de acceso...', 'info');
+    setAuthStatus(statusEl, 'Enviando código de acceso...', 'info');
     sb.auth.signInWithOtp({ email: email, options: { emailRedirectTo: window.location.href } }).then(function(res){
       if(res.error){
-        setAuthStatus(statusEl, 'No pudimos enviar el enlace: ' + res.error.message, 'error');
+        setAuthStatus(statusEl, 'No pudimos enviar el código: ' + res.error.message, 'error');
       } else {
-        setAuthStatus(statusEl, 'Listo — revisa tu correo (' + email + ') y abre el enlace para iniciar sesión.', 'success');
+        setAuthStatus(statusEl, 'Listo — revisa tu correo (' + email + '). Puedes darle clic al enlace, o escribir aquí abajo el código de 6 dígitos que también te llega.', 'success');
+      }
+    });
+  });
+
+  document.getElementById('authVerifyOtpBtn').addEventListener('click', function(){
+    var sb = getSupabase();
+    var statusEl = document.getElementById('authStatus');
+    var email = document.getElementById('authEmail').value.trim();
+    var code = document.getElementById('authOtpCode').value.trim();
+    if(!email){ setAuthStatus(statusEl, 'Escribe tu correo electrónico arriba.', 'error'); return; }
+    if(!code){ setAuthStatus(statusEl, 'Escribe el código de 6 dígitos que te llegó por correo.', 'error'); return; }
+    if(!sb){ setAuthStatus(statusEl, 'La sincronización en la nube no está disponible en este momento.', 'error'); return; }
+    setAuthStatus(statusEl, 'Verificando código...', 'info');
+    sb.auth.verifyOtp({ email: email, token: code, type: 'email' }).then(function(res){
+      if(res.error){
+        setAuthStatus(statusEl, 'Código incorrecto o vencido: ' + res.error.message, 'error');
+      } else {
+        document.getElementById('authOtpCode').value = '';
       }
     });
   });
