@@ -110,15 +110,24 @@
         <label for="authEmail">Correo electrónico</label>
         <input type="email" id="authEmail" placeholder="tucorreo@ejemplo.com" autocomplete="email">
       </div>
-      <button class="btn" id="authLoginBtn" type="button">Enviar código de acceso</button>
-      <div id="authStatus" class="auth-status"></div>
-
-      <div class="field" style="max-width:360px; margin-top:18px;">
-        <label for="authOtpCode">¿Ya te llegó el código? Escríbelo aquí (6 dígitos)</label>
-        <input type="text" id="authOtpCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="123456" autocomplete="one-time-code">
+      <div class="field" style="max-width:360px;">
+        <label for="authPassword">Contraseña</label>
+        <input type="password" id="authPassword" placeholder="Mínimo 6 caracteres" autocomplete="current-password">
       </div>
-      <button class="btn secondary" id="authVerifyOtpBtn" type="button">Confirmar código</button>
-      <p class="hint" style="margin:8px 0 0;">Más confiable que el enlace en el celular: el enlace a veces se abre en otra app/navegador. El código siempre funciona aquí mismo.</p>
+      <button class="btn" id="authLoginBtn" type="button">Iniciar sesión</button>
+      <button class="btn secondary" id="authSignupBtn" type="button">Crear cuenta nueva</button>
+      <div id="authStatus" class="auth-status"></div>
+      <p class="hint" style="margin:10px 0 0;"><button type="button" class="photo-link" id="authForgotBtn">¿Olvidaste tu contraseña?</button></p>
+    </div>
+
+    <div id="authRecoverForm" style="display:none;">
+      <p class="hint" style="margin-top:0;">Escribe tu nueva contraseña.</p>
+      <div class="field" style="max-width:360px;">
+        <label for="authNewPassword">Nueva contraseña</label>
+        <input type="password" id="authNewPassword" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+      </div>
+      <button class="btn" id="authSetNewPasswordBtn" type="button">Guardar nueva contraseña</button>
+      <div id="authRecoverStatus" class="auth-status"></div>
     </div>
 
     <div id="authLoggedIn" style="display:none;">
@@ -306,18 +315,25 @@
       '<div class="log-table-wrap"><table class="log-table"><thead><tr><th>Semana</th><th>Días</th><th>Calorías</th><th>Proteína</th><th>Carbohidratos</th><th>Grasas</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   }
 
-  var state = { user: null, clients: [] };
+  var state = { user: null, clients: [], recoveryMode: false };
 
   function renderAuthUI(){
     var loggedOut = document.getElementById('authLoggedOut');
     var loggedIn = document.getElementById('authLoggedIn');
-    if(state.user){
+    var recoverForm = document.getElementById('authRecoverForm');
+    if(state.recoveryMode){
+      loggedOut.style.display = 'none';
+      loggedIn.style.display = 'none';
+      recoverForm.style.display = 'block';
+    } else if(state.user){
       loggedOut.style.display = 'none';
       loggedIn.style.display = 'block';
+      recoverForm.style.display = 'none';
       document.getElementById('authUserEmail').textContent = state.user.email || '';
     } else {
       loggedOut.style.display = 'block';
       loggedIn.style.display = 'none';
+      recoverForm.style.display = 'none';
       document.getElementById('notCoachCard').style.display = 'none';
       document.getElementById('clientListCard').style.display = 'none';
       document.getElementById('clientDetailCard').style.display = 'none';
@@ -526,32 +542,70 @@
     var sb = getSupabase();
     var statusEl = document.getElementById('authStatus');
     var email = document.getElementById('authEmail').value.trim();
-    if(!email){ setAuthStatus(statusEl, 'Escribe tu correo electrónico.', 'error'); return; }
+    var password = document.getElementById('authPassword').value;
+    if(!email || !password){ setAuthStatus(statusEl, 'Escribe tu correo y tu contraseña.', 'error'); return; }
     if(!sb){ setAuthStatus(statusEl, 'La sincronización en la nube no está disponible en este momento.', 'error'); return; }
-    setAuthStatus(statusEl, 'Enviando código de acceso...', 'info');
-    sb.auth.signInWithOtp({ email: email, options: { emailRedirectTo: window.location.href } }).then(function(res){
+    setAuthStatus(statusEl, 'Iniciando sesión...', 'info');
+    sb.auth.signInWithPassword({ email: email, password: password }).then(function(res){
       if(res.error){
-        setAuthStatus(statusEl, 'No pudimos enviar el código: ' + res.error.message, 'error');
-      } else {
-        setAuthStatus(statusEl, 'Listo — revisa tu correo (' + email + '). Puedes darle clic al enlace, o escribir aquí abajo el código de 6 dígitos que también te llega.', 'success');
+        setAuthStatus(statusEl, 'No pudimos iniciar sesión: ' + res.error.message + '. Si es tu primera vez con contraseña, usa "Crear cuenta nueva" o "¿Olvidaste tu contraseña?".', 'error');
       }
     });
   });
 
-  document.getElementById('authVerifyOtpBtn').addEventListener('click', function(){
+  document.getElementById('authSignupBtn').addEventListener('click', function(){
     var sb = getSupabase();
     var statusEl = document.getElementById('authStatus');
     var email = document.getElementById('authEmail').value.trim();
-    var code = document.getElementById('authOtpCode').value.trim();
-    if(!email){ setAuthStatus(statusEl, 'Escribe tu correo electrónico arriba.', 'error'); return; }
-    if(!code){ setAuthStatus(statusEl, 'Escribe el código de 6 dígitos que te llegó por correo.', 'error'); return; }
+    var password = document.getElementById('authPassword').value;
+    if(!email || !password){ setAuthStatus(statusEl, 'Escribe tu correo y una contraseña.', 'error'); return; }
+    if(password.length < 6){ setAuthStatus(statusEl, 'La contraseña debe tener al menos 6 caracteres.', 'error'); return; }
     if(!sb){ setAuthStatus(statusEl, 'La sincronización en la nube no está disponible en este momento.', 'error'); return; }
-    setAuthStatus(statusEl, 'Verificando código...', 'info');
-    sb.auth.verifyOtp({ email: email, token: code, type: 'email' }).then(function(res){
+    setAuthStatus(statusEl, 'Creando cuenta...', 'info');
+    sb.auth.signUp({ email: email, password: password }).then(function(res){
       if(res.error){
-        setAuthStatus(statusEl, 'Código incorrecto o vencido: ' + res.error.message, 'error');
+        setAuthStatus(statusEl, 'No pudimos crear la cuenta: ' + res.error.message, 'error');
+      } else if(res.data && res.data.session){
+        setAuthStatus(statusEl, 'Cuenta creada. ¡Bienvenido!', 'success');
       } else {
-        document.getElementById('authOtpCode').value = '';
+        setAuthStatus(statusEl, 'Cuenta creada — revisa tu correo (' + email + ') y confirma tu cuenta para poder iniciar sesión.', 'success');
+      }
+    });
+  });
+
+  document.getElementById('authForgotBtn').addEventListener('click', function(){
+    var sb = getSupabase();
+    var statusEl = document.getElementById('authStatus');
+    var email = document.getElementById('authEmail').value.trim();
+    if(!email){ setAuthStatus(statusEl, 'Escribe tu correo electrónico arriba primero.', 'error'); return; }
+    if(!sb){ setAuthStatus(statusEl, 'La sincronización en la nube no está disponible en este momento.', 'error'); return; }
+    setAuthStatus(statusEl, 'Enviando enlace para poner tu contraseña...', 'info');
+    sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.href }).then(function(res){
+      if(res.error){
+        setAuthStatus(statusEl, 'No pudimos enviar el enlace: ' + res.error.message, 'error');
+      } else {
+        setAuthStatus(statusEl, 'Listo — revisa tu correo (' + email + ') y da clic en el enlace para poner tu contraseña.', 'success');
+      }
+    });
+  });
+
+  document.getElementById('authSetNewPasswordBtn').addEventListener('click', function(){
+    var sb = getSupabase();
+    var statusEl = document.getElementById('authRecoverStatus');
+    var password = document.getElementById('authNewPassword').value;
+    if(!password || password.length < 6){ setAuthStatus(statusEl, 'La contraseña debe tener al menos 6 caracteres.', 'error'); return; }
+    if(!sb){ setAuthStatus(statusEl, 'La sincronización en la nube no está disponible en este momento.', 'error'); return; }
+    setAuthStatus(statusEl, 'Guardando...', 'info');
+    sb.auth.updateUser({ password: password }).then(function(res){
+      if(res.error){
+        setAuthStatus(statusEl, 'No pudimos guardar la contraseña: ' + res.error.message, 'error');
+      } else {
+        state.recoveryMode = false;
+        document.getElementById('authNewPassword').value = '';
+        setAuthStatus(statusEl, '', null);
+        state.user = res.data.user;
+        renderAuthUI();
+        if(state.user) loadClients();
       }
     });
   });
@@ -572,6 +626,11 @@
       return;
     }
     sb.auth.onAuthStateChange(function(event, session){
+      if(event === 'PASSWORD_RECOVERY'){
+        state.recoveryMode = true;
+        renderAuthUI();
+        return;
+      }
       state.user = session ? session.user : null;
       renderAuthUI();
       if(state.user) loadClients();
