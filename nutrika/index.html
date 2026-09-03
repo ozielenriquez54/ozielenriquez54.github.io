@@ -308,6 +308,12 @@
   .modal-close { background: none; border: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); padding: 0 4px; }
   .modal-close:hover { color: var(--gold-dark); }
   #barcodeReader { width: 100%; min-height: 220px; border-radius: 4px; overflow: hidden; background: #000; }
+  .photo-modal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 12px; }
+  .photo-modal-grid figure { margin: 0; }
+  .photo-modal-grid img { width: 100%; border-radius: 4px; display: block; background: var(--light); }
+  .photo-modal-grid figcaption { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-top: 6px; text-align: center; }
+  .photo-modal-grid .empty-note { grid-column: 1 / -1; }
+  .photo-link { background: none; border: none; color: var(--gold-dark); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
   .barcode-status { margin-top: 12px; font-size: 13.5px; color: var(--muted); text-align: center; }
   .barcode-status.error { color: var(--gold-dark); font-weight: 600; }
 
@@ -532,6 +538,23 @@
       <label class="check-item"><input type="checkbox" value="alcohol"> Sin alcohol</label>
     </div>
 
+    <h4 class="sub-label">Fotos de progreso (opcional)</h4>
+    <p class="hint" id="fotoLoginHint" style="display:none;">Inicia sesión arriba en "Tu cuenta" para poder guardar fotos — se suben a tu espacio privado en la nube, no se guardan solo en este celular.</p>
+    <div class="grid" id="fotoInputsGrid">
+      <div class="field">
+        <label for="logFotoFrente">De frente</label>
+        <input type="file" id="logFotoFrente" accept="image/*">
+      </div>
+      <div class="field">
+        <label for="logFotoLado">De lado</label>
+        <input type="file" id="logFotoLado" accept="image/*">
+      </div>
+      <div class="field">
+        <label for="logFotoEspalda">De espalda</label>
+        <input type="file" id="logFotoEspalda" accept="image/*">
+      </div>
+    </div>
+
     <h4 class="sub-label">¿Qué comiste de tu plan hoy?</h4>
     <div class="check-grid" id="logMeals"><p class="empty-note">Genera y elige tus comidas en el Paso 3 para poder marcarlas aquí.</p></div>
 
@@ -581,6 +604,16 @@
   </section>
 
 </main>
+
+<div class="modal-overlay" id="photoModal">
+  <div class="modal-card" style="max-width:600px;">
+    <div class="modal-head">
+      <h4 id="photoModalTitle">Fotos de progreso</h4>
+      <button type="button" class="modal-close" id="closePhotoModalBtn" aria-label="Cerrar">✕</button>
+    </div>
+    <div id="photoModalBody" class="photo-modal-grid"></div>
+  </div>
+</div>
 
 <div class="modal-overlay" id="barcodeModal">
   <div class="modal-card">
@@ -1962,6 +1995,15 @@
       loggedOut.style.display = 'block';
       loggedIn.style.display = 'none';
     }
+    // Las fotos de progreso se guardan en la nube (no hay forma práctica de
+    // guardar imágenes solo en localStorage), así que solo tienen sentido
+    // con sesión iniciada.
+    var fotoHint = document.getElementById('fotoLoginHint');
+    var fotoGrid = document.getElementById('fotoInputsGrid');
+    if(fotoHint && fotoGrid){
+      fotoHint.style.display = state.user ? 'none' : 'block';
+      fotoGrid.style.display = state.user ? 'grid' : 'none';
+    }
   }
 
   function buildProfilePayload(){
@@ -2039,9 +2081,41 @@
     sb.from('daily_logs').upsert({
       user_id: state.user.id, log_date: entry.date, peso: entry.peso, grasa: entry.grasa, entreno: entry.entreno,
       habits: entry.habits, notas: entry.notas, meals: entry.meals, extras: entry.extras,
-      kcal: entry.kcal, p: entry.p, c: entry.c, f: entry.f, updated_at: new Date().toISOString()
+      kcal: entry.kcal, p: entry.p, c: entry.c, f: entry.f,
+      foto_frente: entry.foto_frente || null, foto_lado: entry.foto_lado || null, foto_espalda: entry.foto_espalda || null,
+      updated_at: new Date().toISOString()
     }, { onConflict: 'user_id,log_date' }).then(function(res){
       if(res.error) console.error('Nutrika: error guardando registro en la nube', res.error);
+    });
+  }
+
+  var PHOTO_BUCKET = 'progress-photos';
+
+  // Sube una foto de progreso al espacio privado del usuario en Supabase
+  // Storage. No hay forma práctica de guardar imágenes solo en
+  // localStorage (el límite de espacio se llenaría muy rápido), así que
+  // esto solo funciona con sesión iniciada — devuelve null si no hay
+  // archivo o no hay sesión, para poder usarse siempre dentro de un
+  // Promise.all sin checar cada caso por separado.
+  function uploadProgressPhoto(file, date, tipo){
+    var sb = getSupabase();
+    if(!sb || !state.user || !file) return Promise.resolve(null);
+    var ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    var path = state.user.id + '/' + date + '-' + tipo + '.' + ext;
+    return sb.storage.from(PHOTO_BUCKET).upload(path, file, { upsert: true }).then(function(res){
+      if(res.error){ console.error('Nutrika: error subiendo foto de progreso', res.error); return null; }
+      return path;
+    });
+  }
+
+  // Las fotos son privadas (el bucket no es público), así que para verlas
+  // hace falta pedir una URL firmada de un solo uso con vigencia corta.
+  function getSignedPhotoUrl(path){
+    var sb = getSupabase();
+    if(!sb || !path) return Promise.resolve(null);
+    return sb.storage.from(PHOTO_BUCKET).createSignedUrl(path, 300).then(function(res){
+      if(res.error || !res.data) return null;
+      return res.data.signedUrl;
     });
   }
 
@@ -2078,7 +2152,7 @@
     sb.from('daily_logs').select('*').eq('user_id', state.user.id).order('log_date').then(function(res){
       if(res.error || !res.data) return;
       var cloudEntries = res.data.map(function(row){
-        return { date: row.log_date, peso: row.peso, entreno: row.entreno, habits: row.habits || [], notas: row.notas || '', meals: row.meals || {}, extras: row.extras || [], kcal: row.kcal || 0, p: row.p || 0, c: row.c || 0, f: row.f || 0, grasa: row.grasa != null ? row.grasa : null };
+        return { date: row.log_date, peso: row.peso, entreno: row.entreno, habits: row.habits || [], notas: row.notas || '', meals: row.meals || {}, extras: row.extras || [], kcal: row.kcal || 0, p: row.p || 0, c: row.c || 0, f: row.f || 0, grasa: row.grasa != null ? row.grasa : null, foto_frente: row.foto_frente || null, foto_lado: row.foto_lado || null, foto_espalda: row.foto_espalda || null };
       });
       // No sobrescribir sin más: si el usuario ya traía historial guardado
       // solo en este dispositivo (típico la primera vez que inicia sesión),
@@ -2508,6 +2582,7 @@
 
     var rows = entries.slice().reverse().map(function(e){
       var extrasNote = (e.extras && e.extras.length) ? ' <span title="'+escapeHtml(e.extras.map(function(x){return x.desc;}).join(', '))+'">(+'+e.extras.length+' fuera del plan)</span>' : '';
+      var hasFotos = !!(e.foto_frente || e.foto_lado || e.foto_espalda);
       return '<tr>' +
         '<td>'+e.date+'</td>' +
         '<td>'+(e.peso != null ? e.peso+' kg' : '–')+'</td>' +
@@ -2515,10 +2590,42 @@
         '<td>'+(e.kcal || 0)+' kcal'+extrasNote+'</td>' +
         '<td>'+(e.entreno ? '✓' : '–')+'</td>' +
         '<td>'+(e.habits ? e.habits.length : 0)+'/'+Object.keys(HABIT_LABELS).length+'</td>' +
+        '<td>'+(hasFotos ? '<button type="button" class="photo-link" data-date="'+e.date+'">📷 Ver fotos</button>' : '–')+'</td>' +
         '<td><button class="del-btn" data-date="'+e.date+'">Eliminar</button></td>' +
       '</tr>';
     }).join('');
-    histEl.innerHTML = '<div class="log-table-wrap"><table class="log-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Grasa</th><th>Kcal</th><th>Entrenó</th><th>Hábitos</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    histEl.innerHTML = '<div class="log-table-wrap"><table class="log-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Grasa</th><th>Kcal</th><th>Entrenó</th><th>Hábitos</th><th>Fotos</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    histEl.querySelectorAll('.photo-link').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var date = btn.getAttribute('data-date');
+        var entry = entries.find(function(e){ return e.date === date; });
+        if(entry) openPhotoViewer(entry);
+      });
+    });
+  }
+
+  function openPhotoViewer(entry){
+    var modal = document.getElementById('photoModal');
+    var body = document.getElementById('photoModalBody');
+    document.getElementById('photoModalTitle').textContent = 'Fotos de progreso — ' + entry.date;
+    body.innerHTML = '<p class="empty-note">Cargando fotos...</p>';
+    modal.classList.add('open');
+
+    var slots = [ {key:'foto_frente', label:'Frente'}, {key:'foto_lado', label:'Lado'}, {key:'foto_espalda', label:'Espalda'} ];
+    Promise.all(slots.map(function(s){ return getSignedPhotoUrl(entry[s.key]); })).then(function(urls){
+      var html = slots.map(function(s, i){
+        if(!entry[s.key]) return '';
+        var url = urls[i];
+        if(!url) return '<figure><p class="empty-note">No se pudo cargar (' + s.label + ')</p></figure>';
+        return '<figure><img src="'+escapeHtml(url)+'" alt="Foto de '+s.label.toLowerCase()+' — '+escapeHtml(entry.date)+'"><figcaption>'+s.label+'</figcaption></figure>';
+      }).join('');
+      body.innerHTML = html || '<p class="empty-note">No hay fotos guardadas para este día.</p>';
+    });
+  }
+
+  function closePhotoModal(){
+    document.getElementById('photoModal').classList.remove('open');
+    document.getElementById('photoModalBody').innerHTML = '';
   }
 
   /* ============ EVENTS ============ */
@@ -2603,26 +2710,50 @@
       kcalTotal += ex.kcal; pTotal += ex.p; cTotal += ex.c; fTotal += ex.f;
     });
 
-    var entry = {
-      date: fecha, peso: peso, grasa: grasa, entreno: entreno, habits: habits, notas: notas, meals: meals, extras: extras,
-      kcal: round(kcalTotal), p: round(pTotal), c: round(cTotal), f: round(fTotal)
-    };
+    var fotoFrenteFile = document.getElementById('logFotoFrente').files[0];
+    var fotoLadoFile = document.getElementById('logFotoLado').files[0];
+    var fotoEspaldaFile = document.getElementById('logFotoEspalda').files[0];
+    var saveBtn = document.getElementById('saveLogBtn');
+    var hasNewPhoto = !!(fotoFrenteFile || fotoLadoFile || fotoEspaldaFile);
+    if(hasNewPhoto){ saveBtn.disabled = true; saveBtn.textContent = 'Guardando fotos...'; }
 
-    var entries = loadLog();
-    var idx = entries.findIndex(function(e){ return e.date === fecha; });
-    if(idx >= 0) entries[idx] = entry; else entries.push(entry);
-    saveLogEntries(entries);
-    upsertLogToCloud(entry);
+    Promise.all([
+      uploadProgressPhoto(fotoFrenteFile, fecha, 'frente'),
+      uploadProgressPhoto(fotoLadoFile, fecha, 'lado'),
+      uploadProgressPhoto(fotoEspaldaFile, fecha, 'espalda')
+    ]).then(function(fotoPaths){
+      var entries = loadLog();
+      var idx = entries.findIndex(function(e){ return e.date === fecha; });
+      var existing = idx >= 0 ? entries[idx] : null;
 
-    document.getElementById('logPeso').value = '';
-    document.getElementById('logGrasa').value = '';
-    document.getElementById('logEntreno').checked = false;
-    document.querySelectorAll('#logHabits input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
-    document.querySelectorAll('#logMeals input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
-    document.getElementById('logNotas').value = '';
-    state.pendingExtras = [];
+      // Si no se subió una foto nueva para ese ángulo, conserva la que ya
+      // hubiera guardada de una edición anterior del mismo día.
+      var entry = {
+        date: fecha, peso: peso, grasa: grasa, entreno: entreno, habits: habits, notas: notas, meals: meals, extras: extras,
+        kcal: round(kcalTotal), p: round(pTotal), c: round(cTotal), f: round(fTotal),
+        foto_frente: fotoPaths[0] || (existing && existing.foto_frente) || null,
+        foto_lado: fotoPaths[1] || (existing && existing.foto_lado) || null,
+        foto_espalda: fotoPaths[2] || (existing && existing.foto_espalda) || null
+      };
 
-    renderLogSection();
+      if(idx >= 0) entries[idx] = entry; else entries.push(entry);
+      saveLogEntries(entries);
+      upsertLogToCloud(entry);
+
+      document.getElementById('logPeso').value = '';
+      document.getElementById('logGrasa').value = '';
+      document.getElementById('logEntreno').checked = false;
+      document.querySelectorAll('#logHabits input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
+      document.querySelectorAll('#logMeals input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
+      document.getElementById('logNotas').value = '';
+      document.getElementById('logFotoFrente').value = '';
+      document.getElementById('logFotoLado').value = '';
+      document.getElementById('logFotoEspalda').value = '';
+      state.pendingExtras = [];
+
+      if(hasNewPhoto){ saveBtn.disabled = false; saveBtn.textContent = 'Guardar registro de hoy'; }
+      renderLogSection();
+    });
   });
 
   // Vista previa en vivo: sin esto, los campos "por 100 g" nunca cambian al
@@ -2804,6 +2935,11 @@
   document.getElementById('closeBarcodeBtn').addEventListener('click', closeBarcodeScanner);
   document.getElementById('barcodeModal').addEventListener('click', function(e){
     if(e.target.id === 'barcodeModal') closeBarcodeScanner();
+  });
+
+  document.getElementById('closePhotoModalBtn').addEventListener('click', closePhotoModal);
+  document.getElementById('photoModal').addEventListener('click', function(e){
+    if(e.target.id === 'photoModal') closePhotoModal();
   });
 
   document.getElementById('extraFoodList').addEventListener('click', function(e){

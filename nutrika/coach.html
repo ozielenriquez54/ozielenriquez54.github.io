@@ -71,6 +71,21 @@
   .log-table th { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
   .empty-note { color: var(--muted); font-size: 14px; font-style: italic; padding: 10px 0; }
   .back-link { display: inline-block; margin-bottom: 16px; font-family: 'Syne Mono', monospace; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--gold-dark); text-decoration: none; cursor: pointer; }
+  .photo-link { background: none; border: none; color: var(--gold-dark); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(10,10,10,.85);
+    z-index: 500; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-card { background: var(--white); border-radius: 6px; padding: 20px; max-width: 600px; width: 100%; max-height: 90vh; overflow-y: auto; }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .modal-head h4 { font-family: 'Syne', sans-serif; font-size: 17px; color: var(--ink); }
+  .modal-close { background: none; border: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); padding: 0 4px; }
+  .modal-close:hover { color: var(--gold-dark); }
+  .photo-modal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 12px; }
+  .photo-modal-grid figure { margin: 0; }
+  .photo-modal-grid img { width: 100%; border-radius: 4px; display: block; background: var(--light); }
+  .photo-modal-grid figcaption { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-top: 6px; text-align: center; }
   footer { text-align: center; padding: 30px 24px; font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
 </style>
 </head>
@@ -135,6 +150,16 @@
   </section>
 
 </main>
+
+<div class="modal-overlay" id="photoModal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h4 id="photoModalTitle">Fotos de progreso</h4>
+      <button type="button" class="modal-close" id="closePhotoModalBtn" aria-label="Cerrar">✕</button>
+    </div>
+    <div id="photoModalBody" class="photo-modal-grid"></div>
+  </div>
+</div>
 
 <footer>Complex Training · con tecnología Nutrika</footer>
 
@@ -353,7 +378,7 @@
       var planRes = results[0], logsRes = results[1];
       var plan = (!planRes.error && planRes.data) ? planRes.data.data : null;
       var entries = (!logsRes.error && logsRes.data) ? logsRes.data.map(function(row){
-        return { date: row.log_date, peso: row.peso, grasa: row.grasa, entreno: row.entreno, habits: row.habits || [], kcal: row.kcal || 0, p: row.p || 0, c: row.c || 0, f: row.f || 0 };
+        return { date: row.log_date, peso: row.peso, grasa: row.grasa, entreno: row.entreno, habits: row.habits || [], kcal: row.kcal || 0, p: row.p || 0, c: row.c || 0, f: row.f || 0, foto_frente: row.foto_frente || null, foto_lado: row.foto_lado || null, foto_espalda: row.foto_espalda || null };
       }) : [];
       renderClientDetail(client, plan, entries);
     });
@@ -398,6 +423,7 @@
     html += buildHabitBars(entries);
 
     var rows = entries.slice().reverse().slice(0, 30).map(function(e){
+      var hasFotos = !!(e.foto_frente || e.foto_lado || e.foto_espalda);
       return '<tr>' +
         '<td>'+e.date+'</td>' +
         '<td>'+(e.peso != null ? e.peso+' kg' : '–')+'</td>' +
@@ -405,17 +431,64 @@
         '<td>'+(e.kcal || 0)+' kcal</td>' +
         '<td>'+(e.entreno ? '✓' : '–')+'</td>' +
         '<td>'+(e.habits ? e.habits.length : 0)+'/'+Object.keys(HABIT_LABELS).length+'</td>' +
+        '<td>'+(hasFotos ? '<button type="button" class="photo-link" data-date="'+escapeHtml(e.date)+'">📷 Ver fotos</button>' : '–')+'</td>' +
       '</tr>';
     }).join('');
     html += '<h4 class="sub-label">Últimos registros</h4>' +
-      '<div class="log-table-wrap"><table class="log-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Grasa</th><th>Kcal</th><th>Entrenó</th><th>Hábitos</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+      '<div class="log-table-wrap"><table class="log-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Grasa</th><th>Kcal</th><th>Entrenó</th><th>Hábitos</th><th>Fotos</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 
     document.getElementById('clientDetailBody').innerHTML = html;
+    document.getElementById('clientDetailBody').querySelectorAll('.photo-link').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var date = btn.getAttribute('data-date');
+        var entry = entries.find(function(e){ return e.date === date; });
+        if(entry) openPhotoViewer(entry);
+      });
+    });
+  }
+
+  var PHOTO_BUCKET = 'progress-photos';
+  function getSignedPhotoUrl(path){
+    var sb = getSupabase();
+    if(!sb || !path) return Promise.resolve(null);
+    return sb.storage.from(PHOTO_BUCKET).createSignedUrl(path, 300).then(function(res){
+      if(res.error || !res.data) return null;
+      return res.data.signedUrl;
+    });
+  }
+
+  function openPhotoViewer(entry){
+    var modal = document.getElementById('photoModal');
+    var body = document.getElementById('photoModalBody');
+    document.getElementById('photoModalTitle').textContent = 'Fotos de progreso — ' + entry.date;
+    body.innerHTML = '<p class="empty-note">Cargando fotos...</p>';
+    modal.classList.add('open');
+
+    var slots = [ {key:'foto_frente', label:'Frente'}, {key:'foto_lado', label:'Lado'}, {key:'foto_espalda', label:'Espalda'} ];
+    Promise.all(slots.map(function(s){ return getSignedPhotoUrl(entry[s.key]); })).then(function(urls){
+      var htmlOut = slots.map(function(s, i){
+        if(!entry[s.key]) return '';
+        var url = urls[i];
+        if(!url) return '<figure><p class="empty-note">No se pudo cargar (' + s.label + ')</p></figure>';
+        return '<figure><img src="'+escapeHtml(url)+'" alt="Foto de '+s.label.toLowerCase()+'"><figcaption>'+s.label+'</figcaption></figure>';
+      }).join('');
+      body.innerHTML = htmlOut || '<p class="empty-note">No hay fotos guardadas para este día.</p>';
+    });
+  }
+
+  function closePhotoModal(){
+    document.getElementById('photoModal').classList.remove('open');
+    document.getElementById('photoModalBody').innerHTML = '';
   }
 
   document.getElementById('backToListBtn').addEventListener('click', function(){
     document.getElementById('clientDetailCard').style.display = 'none';
     document.getElementById('clientListCard').style.display = 'block';
+  });
+
+  document.getElementById('closePhotoModalBtn').addEventListener('click', closePhotoModal);
+  document.getElementById('photoModal').addEventListener('click', function(e){
+    if(e.target.id === 'photoModal') closePhotoModal();
   });
 
   document.getElementById('claimClientBtn').addEventListener('click', function(){
