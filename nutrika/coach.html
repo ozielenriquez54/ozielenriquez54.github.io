@@ -425,10 +425,11 @@
     if(!email){ setAuthStatus(statusEl, 'Escribe el correo del cliente.', 'error'); return; }
     if(!sb || !state.user) return;
     setAuthStatus(statusEl, 'Buscando...', 'info');
-    // Solo se puede "reclamar" un cliente que todavía no tiene coach
-    // asignado (lo garantiza también la política de la base de datos, esto
-    // es nada más para dar un mensaje más claro si no aplica).
-    sb.from('profiles').update({ coach_id: state.user.id }).eq('email', email).is('coach_id', null).select().then(function(res){
+    // La asignación la hace una función en la base de datos (claim_client),
+    // no un UPDATE directo desde aquí — así el permiso lo controla una sola
+    // regla explícita en vez de depender de cómo Postgres combina varias
+    // políticas de UPDATE distintas sobre la misma tabla.
+    sb.rpc('claim_client', { client_email: email }).then(function(res){
       console.log('Nutrika coach: respuesta completa al intentar agregar cliente', res);
       if(res.error){ setAuthStatus(statusEl, 'Error: ' + res.error.message, 'error'); return; }
       if(!res.data || !res.data.length){
