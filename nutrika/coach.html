@@ -23,6 +23,12 @@
   .site-logo { display: flex; align-items: center; gap: 12px; text-decoration: none; }
   .logo-img { height: 46px; width: auto; display: block; }
   .header-doc { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: rgba(255,255,255,.4); }
+  .header-logout-btn {
+    font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--gold-light); background: none; border: 1px solid rgba(255,255,255,.3); border-radius: 20px;
+    padding: 7px 16px; cursor: pointer;
+  }
+  .header-logout-btn:hover { border-color: var(--gold); color: var(--gold); }
   main { max-width: 960px; margin: 0 auto; padding: 40px 24px 100px; }
   .card { background: var(--white); border: 1px solid var(--border); border-radius: 4px; padding: 28px 24px; margin-bottom: 28px; }
   .card-label { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold); display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
@@ -95,7 +101,8 @@
   <a href="index.html" class="site-logo">
     <img src="assets/logo.jpg" alt="Complex Training" class="logo-img">
   </a>
-  <div class="header-doc">Vista de Coach</div>
+  <div class="header-doc" id="headerDoc">Vista de Coach</div>
+  <button type="button" id="headerLogoutBtn" class="header-logout-btn" style="display:none;">Cerrar sesión</button>
 </header>
 
 <main>
@@ -337,6 +344,13 @@
       document.getElementById('notCoachCard').style.display = 'none';
       document.getElementById('clientListCard').style.display = 'none';
       document.getElementById('clientDetailCard').style.display = 'none';
+    }
+    var headerDoc = document.getElementById('headerDoc');
+    var headerLogoutBtn = document.getElementById('headerLogoutBtn');
+    if(headerDoc && headerLogoutBtn){
+      var showLogout = state.user && !state.recoveryMode;
+      headerDoc.style.display = showLogout ? 'none' : 'block';
+      headerLogoutBtn.style.display = showLogout ? 'inline-block' : 'none';
     }
   }
 
@@ -610,14 +624,16 @@
     });
   });
 
-  document.getElementById('authLogoutBtn').addEventListener('click', function(){
+  function doLogout(){
     var sb = getSupabase();
     if(!sb) return;
     sb.auth.signOut().then(function(){
       state.user = null;
       renderAuthUI();
     });
-  });
+  }
+  document.getElementById('authLogoutBtn').addEventListener('click', doLogout);
+  document.getElementById('headerLogoutBtn').addEventListener('click', doLogout);
 
   function initAuth(){
     var sb = getSupabase();
