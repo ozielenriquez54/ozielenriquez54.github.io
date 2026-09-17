@@ -289,6 +289,20 @@
   .log-table th { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
   .del-btn { background: none; border: none; color: var(--gold); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
 
+  .date-nav { display: flex; align-items: center; gap: 6px; }
+  .date-nav input[type=date] { flex: 1; }
+  .date-nav-btn {
+    flex-shrink: 0; width: 38px; height: 38px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg); color: var(--ink); font-size: 16px; cursor: pointer; line-height: 1;
+  }
+  .date-nav-btn:hover { border-color: var(--gold); color: var(--gold-dark); }
+  .date-today-btn {
+    font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+    background: none; border: none; color: var(--gold-dark); text-decoration: underline; cursor: pointer; padding: 0; margin-top: 6px;
+  }
+  .bar-row .bar-labels .remaining { color: var(--muted); }
+  .bar-row .bar-labels .remaining.done { color: var(--green); }
+
   .extra-food-list { margin: 12px 0 4px; }
   .extra-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 10px 14px; margin-bottom: 8px; font-size: 13.5px; }
   .extra-item .macros { color: var(--muted); font-family: 'Syne Mono', monospace; font-size: 11px; flex-shrink: 0; }
@@ -541,10 +555,15 @@
     <div class="grid">
       <div class="field">
         <label for="logFecha">Fecha</label>
-        <input type="date" id="logFecha">
+        <div class="date-nav">
+          <button type="button" class="date-nav-btn" id="logPrevDayBtn" aria-label="Día anterior">←</button>
+          <input type="date" id="logFecha">
+          <button type="button" class="date-nav-btn" id="logNextDayBtn" aria-label="Día siguiente">→</button>
+        </div>
+        <button type="button" class="date-today-btn" id="logTodayBtn">Ir a hoy</button>
       </div>
       <div class="field">
-        <label for="logPeso">Peso hoy (kg)</label>
+        <label for="logPeso">Peso ese día (kg)</label>
         <input type="number" id="logPeso" step="0.1" min="20" max="300" placeholder="70.0">
       </div>
       <div class="field">
@@ -568,6 +587,7 @@
 
     <h4 class="sub-label">Fotos de progreso (opcional)</h4>
     <p class="hint" id="fotoLoginHint" style="display:none;">Inicia sesión arriba en "Tu cuenta" para poder guardar fotos — se suben a tu espacio privado en la nube, no se guardan solo en este celular.</p>
+    <p class="hint" id="logFotoExistingNote" style="display:none;"></p>
     <div class="grid" id="fotoInputsGrid">
       <div class="field">
         <label for="logFotoFrente">De frente</label>
@@ -620,12 +640,15 @@
     <button type="button" class="use-btn" id="addExtraBtn">+ Agregar a mi día</button>
     <div id="extraFoodList"></div>
 
+    <h4 class="sub-label">Lo que llevas hoy vs. tu meta</h4>
+    <div id="logMacroProgress"></div>
+
     <div class="field" style="margin-top:18px;">
       <label for="logNotas">Notas (opcional)</label>
       <textarea id="logNotas" placeholder="¿Cómo te sentiste hoy? ¿Algo que ajustar?"></textarea>
     </div>
 
-    <button class="btn" id="saveLogBtn">Guardar registro de hoy</button>
+    <button class="btn" id="saveLogBtn">Guardar registro</button>
 
     <div id="logSummary" style="margin-top:28px;"></div>
     <div id="logHistory"></div>
@@ -2192,6 +2215,7 @@
       renderMacroResult(meta.targets);
       renderPlan({ phases: meta.phases, weeklyTimeline: meta.weeklyTimeline, phase1Timeline: meta.phase1Timeline }, meta.goalEstimate, meta.weeksGoal, meta.peso);
       renderSummary();
+      renderLogMacroProgress();
     });
 
     sb.from('daily_logs').select('*').eq('user_id', state.user.id).order('log_date').then(function(res){
@@ -2212,6 +2236,8 @@
       saveLogEntries(merged);
       localOnly.forEach(function(e){ upsertLogToCloud(e); });
       renderLogSection();
+      var dateInput = document.getElementById('logFecha');
+      if(dateInput) loadLogFormForDate(dateInput.value || new Date().toISOString().slice(0,10));
     });
   }
 
@@ -2293,8 +2319,11 @@
 
     state.targets = { goal: state.targets.goal, kcal: kcal, tdee: state.targets.tdee, p: p, c: c, f: f, text: state.targets.text };
 
+    var checkedMealsEdit = getCheckedMealKeys();
     renderSummary();
     renderLogSection();
+    setCheckedMealKeys(checkedMealsEdit);
+    renderLogMacroProgress();
 
     if(state.planMeta){
       var planComputed = calcPlan(state.targets, state.planMeta.weeksGoal, state.planMeta.peso);
@@ -2422,9 +2451,12 @@
         var meal = btn.getAttribute('data-meal');
         var id = btn.getAttribute('data-id');
         state.selected[meal] = id;
+        var checkedMeals = getCheckedMealKeys();
         renderRecipes();
         renderSummary();
         renderLogSection();
+        setCheckedMealKeys(checkedMeals);
+        renderLogMacroProgress();
       });
     });
   }
@@ -2548,6 +2580,127 @@
     }, {kcal:0, p:0, c:0, f:0});
     rows += '<div class="extra-subtotal">Subtotal fuera del plan: '+round(subtotal.kcal)+' kcal · P '+round(subtotal.p)+'g · C '+round(subtotal.c)+'g · G '+round(subtotal.f)+'g</div>';
     listEl.innerHTML = '<div class="extra-food-list">' + rows + '</div>';
+  }
+
+  // Suma lo marcado en "¿Qué comiste de tu plan hoy?" más los extras
+  // pendientes — la usan tanto el guardado del registro como el resumen en
+  // vivo, para no calcular los totales de macros en dos lugares distintos.
+  function computeLogTotals(){
+    var kcalTotal = 0, pTotal = 0, cTotal = 0, fTotal = 0;
+    var meals = {};
+    document.querySelectorAll('#logMeals input[type=checkbox]:checked').forEach(function(cb){
+      var meal = cb.getAttribute('data-meal');
+      var r = findSelectedRecipe(meal);
+      if(r){
+        meals[meal] = { title: r.title, kcal: r.totals.kcal, p: r.totals.p, c: r.totals.c, f: r.totals.f };
+        kcalTotal += r.totals.kcal; pTotal += r.totals.p; cTotal += r.totals.c; fTotal += r.totals.f;
+      }
+    });
+    state.pendingExtras.forEach(function(ex){
+      kcalTotal += ex.kcal; pTotal += ex.p; cTotal += ex.c; fTotal += ex.f;
+    });
+    return { meals: meals, kcal: kcalTotal, p: pTotal, c: cTotal, f: fTotal };
+  }
+
+  function renderLogMacroProgress(){
+    var el = document.getElementById('logMacroProgress');
+    if(!el) return;
+    if(!state.targets){
+      el.innerHTML = '<p class="empty-note">Calcula tus macros en el Paso 2 para ver tu progreso del día.</p>';
+      return;
+    }
+    var totals = computeLogTotals();
+    var t = state.targets;
+    var bars = [
+      {name:'Calorías', val: totals.kcal, target: t.kcal, unit:'kcal'},
+      {name:'Proteína', val: totals.p, target: t.p, unit:'g'},
+      {name:'Carbohidratos', val: totals.c, target: t.c, unit:'g'},
+      {name:'Grasas', val: totals.f, target: t.f, unit:'g'}
+    ];
+    el.innerHTML = bars.map(function(b){
+      var pct = b.target > 0 ? (b.val/b.target*100) : 0;
+      var cls = pct > 110 ? 'over' : (pct >= 85 ? 'good' : '');
+      var w = Math.min(pct, 130);
+      var remaining = b.target - b.val;
+      var remainingLabel = remaining > 0.5
+        ? (round(remaining) + ' ' + b.unit + ' restantes')
+        : (remaining < -0.5 ? (round(-remaining) + ' ' + b.unit + ' de más') : 'Completo');
+      var remainingCls = remaining <= 0.5 ? 'done' : '';
+      return '<div class="bar-row">' +
+        '<div class="bar-labels"><span class="name">'+b.name+'</span><span>'+round(b.val)+' / '+round(b.target)+' '+b.unit+' · <span class="remaining '+remainingCls+'">'+remainingLabel+'</span></span></div>' +
+        '<div class="bar-track"><div class="bar-fill '+cls+'" style="width:'+w+'%"></div></div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // renderLogSection() reconstruye los checkboxes de "#logMeals" desde cero
+  // (sin marcar) cada vez que cambian las recetas elegidas o las metas de
+  // macros — estas dos funciones guardan y reponen solo lo marcado en la
+  // sesión actual, sin tocar peso/hábitos/extras pendientes como sí hace
+  // loadLogFormForDate() (que relee todo desde el registro guardado).
+  function getCheckedMealKeys(){
+    return Array.prototype.map.call(document.querySelectorAll('#logMeals input[type=checkbox]:checked'), function(cb){ return cb.getAttribute('data-meal'); });
+  }
+  function setCheckedMealKeys(keys){
+    document.querySelectorAll('#logMeals input[type=checkbox]').forEach(function(cb){
+      cb.checked = keys.indexOf(cb.getAttribute('data-meal')) !== -1;
+    });
+  }
+
+  function shiftDateStr(dateStr, days){
+    var d = new Date(dateStr + 'T00:00:00');
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0,10);
+  }
+
+  function updateLogDateLabel(dateStr, hasEntry){
+    var btn = document.getElementById('saveLogBtn');
+    if(!btn) return;
+    var d = new Date(dateStr + 'T00:00:00');
+    var label = d.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' });
+    btn.textContent = (hasEntry ? 'Actualizar registro — ' : 'Guardar registro — ') + label;
+  }
+
+  // Al cambiar de día (flechas, "Ir a hoy" o el propio input de fecha) carga
+  // lo que ya hubiera guardado ese día para poder corregirlo, o deja todo en
+  // blanco si el día está libre — así se puede tanto revisar/editar un día
+  // pasado como pre-programar uno futuro sin perder lo ya registrado.
+  function loadLogFormForDate(dateStr){
+    var entries = loadLog();
+    var entry = entries.find(function(e){ return e.date === dateStr; });
+
+    document.getElementById('logPeso').value = (entry && entry.peso != null) ? entry.peso : '';
+    document.getElementById('logGrasa').value = (entry && entry.grasa != null) ? entry.grasa : '';
+    document.getElementById('logEntreno').checked = !!(entry && entry.entreno);
+    document.querySelectorAll('#logHabits input[type=checkbox]').forEach(function(cb){
+      cb.checked = !!(entry && entry.habits && entry.habits.indexOf(cb.value) !== -1);
+    });
+    document.querySelectorAll('#logMeals input[type=checkbox]').forEach(function(cb){
+      var meal = cb.getAttribute('data-meal');
+      cb.checked = !!(entry && entry.meals && entry.meals[meal]);
+    });
+    state.pendingExtras = (entry && entry.extras) ? entry.extras.slice() : [];
+    document.getElementById('logNotas').value = (entry && entry.notas) ? entry.notas : '';
+    document.getElementById('logFotoFrente').value = '';
+    document.getElementById('logFotoLado').value = '';
+    document.getElementById('logFotoEspalda').value = '';
+
+    var fotoNote = document.getElementById('logFotoExistingNote');
+    if(fotoNote){
+      var hasFotos = !!(entry && (entry.foto_frente || entry.foto_lado || entry.foto_espalda));
+      if(hasFotos){
+        fotoNote.style.display = 'block';
+        fotoNote.innerHTML = 'Ya tienes fotos guardadas para este día. <button type="button" class="photo-link" id="logViewExistingPhotosBtn">Ver fotos</button> — subir una nueva las reemplaza.';
+        document.getElementById('logViewExistingPhotosBtn').addEventListener('click', function(){ openPhotoViewer(entry); });
+      } else {
+        fotoNote.style.display = 'none';
+        fotoNote.innerHTML = '';
+      }
+    }
+
+    renderExtraList();
+    renderLogMacroProgress();
+    updateLogDateLabel(dateStr, !!entry);
   }
 
   function renderLogSection(){
@@ -2683,6 +2836,7 @@
   document.getElementById('calcMacrosBtn').addEventListener('click', function(){
     var t = calcTargets();
     if(t){
+      var checkedMealsCalc = getCheckedMealKeys();
       state.targets = t;
       state.originalTargets = { goal: t.goal, kcal: t.kcal, tdee: t.tdee, p: t.p, c: t.c, f: t.f, text: t.text };
       renderMacroResult(t);
@@ -2712,6 +2866,8 @@
 
       renderSummary();
       renderLogSection();
+      setCheckedMealKeys(checkedMealsCalc);
+      renderLogMacroProgress();
     }
   });
 
@@ -2719,10 +2875,13 @@
   document.getElementById('tFatInput').addEventListener('input', applyMacroEdit);
   document.getElementById('resetMacrosBtn').addEventListener('click', function(){
     if(!state.originalTargets) return;
+    var checkedMealsReset = getCheckedMealKeys();
     state.targets = { goal: state.originalTargets.goal, kcal: state.originalTargets.kcal, tdee: state.originalTargets.tdee, p: state.originalTargets.p, c: state.originalTargets.c, f: state.originalTargets.f, text: state.originalTargets.text };
     renderMacroResult(state.targets);
     renderSummary();
     renderLogSection();
+    setCheckedMealKeys(checkedMealsReset);
+    renderLogMacroProgress();
     if(state.planMeta){
       var planComputed = calcPlan(state.targets, state.planMeta.weeksGoal, state.planMeta.peso);
       renderPlan(planComputed, state.planMeta.goalEstimate, state.planMeta.weeksGoal, state.planMeta.peso);
@@ -2745,21 +2904,10 @@
     var habits = Array.prototype.map.call(document.querySelectorAll('#logHabits input[type=checkbox]:checked'), function(cb){ return cb.value; });
     var notas = document.getElementById('logNotas').value.trim();
 
-    var meals = {};
-    var kcalTotal = 0, pTotal = 0, cTotal = 0, fTotal = 0;
-    document.querySelectorAll('#logMeals input[type=checkbox]:checked').forEach(function(cb){
-      var meal = cb.getAttribute('data-meal');
-      var r = findSelectedRecipe(meal);
-      if(r){
-        meals[meal] = { title: r.title, kcal: r.totals.kcal, p: r.totals.p, c: r.totals.c, f: r.totals.f };
-        kcalTotal += r.totals.kcal; pTotal += r.totals.p; cTotal += r.totals.c; fTotal += r.totals.f;
-      }
-    });
-
+    var totals = computeLogTotals();
+    var meals = totals.meals;
+    var kcalTotal = totals.kcal, pTotal = totals.p, cTotal = totals.c, fTotal = totals.f;
     var extras = state.pendingExtras.slice();
-    extras.forEach(function(ex){
-      kcalTotal += ex.kcal; pTotal += ex.p; cTotal += ex.c; fTotal += ex.f;
-    });
 
     var fotoFrenteFile = document.getElementById('logFotoFrente').files[0];
     var fotoLadoFile = document.getElementById('logFotoLado').files[0];
@@ -2791,19 +2939,12 @@
       saveLogEntries(entries);
       upsertLogToCloud(entry);
 
-      document.getElementById('logPeso').value = '';
-      document.getElementById('logGrasa').value = '';
-      document.getElementById('logEntreno').checked = false;
-      document.querySelectorAll('#logHabits input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
-      document.querySelectorAll('#logMeals input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
-      document.getElementById('logNotas').value = '';
-      document.getElementById('logFotoFrente').value = '';
-      document.getElementById('logFotoLado').value = '';
-      document.getElementById('logFotoEspalda').value = '';
-      state.pendingExtras = [];
-
-      if(hasNewPhoto){ saveBtn.disabled = false; saveBtn.textContent = 'Guardar registro de hoy'; }
+      if(hasNewPhoto) saveBtn.disabled = false;
+      // renderLogSection() reconstruye los checkboxes de "#logMeals" desde
+      // cero (sin marcar) — hay que llamarla antes de loadLogFormForDate()
+      // para que sea esta última la que deje marcado lo que corresponde.
       renderLogSection();
+      loadLogFormForDate(fecha);
     });
   });
 
@@ -2876,6 +3017,7 @@
     document.getElementById('extraDesc').focus();
 
     renderExtraList();
+    renderLogMacroProgress();
   });
 
   /* ============ BARCODE SCANNER ============ */
@@ -2999,6 +3141,30 @@
     var idx = parseInt(btn.getAttribute('data-extra-index'), 10);
     state.pendingExtras.splice(idx, 1);
     renderExtraList();
+    renderLogMacroProgress();
+  });
+
+  document.getElementById('logMeals').addEventListener('change', function(e){
+    if(e.target && e.target.matches('input[type=checkbox]')) renderLogMacroProgress();
+  });
+
+  document.getElementById('logFecha').addEventListener('change', function(){
+    loadLogFormForDate(this.value || new Date().toISOString().slice(0,10));
+  });
+  document.getElementById('logPrevDayBtn').addEventListener('click', function(){
+    var input = document.getElementById('logFecha');
+    input.value = shiftDateStr(input.value || new Date().toISOString().slice(0,10), -1);
+    loadLogFormForDate(input.value);
+  });
+  document.getElementById('logNextDayBtn').addEventListener('click', function(){
+    var input = document.getElementById('logFecha');
+    input.value = shiftDateStr(input.value || new Date().toISOString().slice(0,10), 1);
+    loadLogFormForDate(input.value);
+  });
+  document.getElementById('logTodayBtn').addEventListener('click', function(){
+    var input = document.getElementById('logFecha');
+    input.value = new Date().toISOString().slice(0,10);
+    loadLogFormForDate(input.value);
   });
 
   document.getElementById('logHistory').addEventListener('click', function(e){
@@ -3174,6 +3340,7 @@
       renderPlan({ phases: savedPlan.phases, weeklyTimeline: savedPlan.weeklyTimeline, phase1Timeline: savedPlan.phase1Timeline }, savedPlan.goalEstimate, savedPlan.weeksGoal, savedPlan.peso);
     }
     renderLogSection();
+    if(todayInput) loadLogFormForDate(todayInput.value);
     // supabase-js carga con "defer", así que espera a que el DOM (y los scripts
     // diferidos) terminen antes de buscar window.supabase.
     document.addEventListener('DOMContentLoaded', initAuth);
