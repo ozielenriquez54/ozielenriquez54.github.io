@@ -394,6 +394,13 @@
     .arco-grid { grid-template-columns: 1fr; }
     .arco-key { border-bottom: none; padding-bottom: 4px; }
   }
+  .logo-name, .header-doc, .hero-sub, .meta-label, .contact-key, .footer-right { color: #b5ada5; }
+  .resp-val, .contact-val { overflow-wrap: anywhere; min-width: 0; }
+  @media (max-width: 600px) {
+    .site-header, .print-bar, footer { flex-wrap: wrap; height: auto; gap: 12px; padding-top: 12px; padding-bottom: 12px; }
+    .transfer-table { table-layout: fixed; overflow-wrap: anywhere; }
+    .transfer-table td:first-child { width: auto; }
+  }
 </style>
 </head>
 <body>
@@ -791,16 +798,17 @@
 </footer>
 
 <script>
-  // Highlight active TOC item on scroll
+  // Resalta únicamente la sección activa del índice.
   const anchors = document.querySelectorAll('.section-anchor');
   const links = document.querySelectorAll('.toc-list a');
   const obs = new IntersectionObserver(entries => {
     entries.forEach(e => {
       if (e.isIntersecting) {
-        links.forEach(l => l.style.color = '');
+        links.forEach(l => { l.style.color = ''; l.style.borderLeftColor = ''; l.removeAttribute('aria-current'); });
         const id = e.target.id;
         const active = document.querySelector(`.toc-list a[href="#${id}"]`);
         if (active) {
+          active.setAttribute('aria-current', 'location');
           active.style.color = 'var(--fire)';
           active.style.borderLeftColor = 'var(--fire)';
         }

@@ -377,6 +377,14 @@
   footer a { color: var(--gold-dark); text-decoration: underline; }
   .off-attribution { margin-top: 8px; font-size: 11.5px; color: var(--muted); text-align: center; }
   .off-attribution a { color: var(--gold-dark); }
+  .btn:not(.secondary), .tab-btn.active, .use-btn.active, .use-btn:hover, .macro-pill.kcal { color: #1c1c1c; }
+  .card-label, .use-btn, .del-btn, .phase-kcal, .error-msg, .goal-estimate .warn { color: #806319; }
+  .header-doc { color: #b5b5b5; }
+  .field, .card, .date-nav input { min-width: 0; }
+  .recipe-grid { grid-template-columns: repeat(auto-fit, minmax(min(270px, 100%), 1fr)); }
+  .recipe-meta, .extra-item, .bar-labels { flex-wrap: wrap; }
+  @media (max-width: 420px) { main { padding-left: 12px; padding-right: 12px; } .card { padding: 20px 16px; } }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -402,7 +410,7 @@
       Nutrición inteligente
     </div>
     <h1>Tus alimentos. Tu <em>meta</em>. Tu plan de comidas.</h1>
-    <p>Dinos qué alimentos tienes disponibles y cuál es tu objetivo. Calculamos tus macros diarios y generamos desayunos, comidas, cenas y postres listos en 20 minutos o menos, con receta y macros incluidos.</p>
+    <p>Dinos qué alimentos tienes disponibles y cuál es tu objetivo. Calculamos tus macros diarios y generamos desayunos, comidas, cenas y postres con receta, tiempo de preparación y macros incluidos.</p>
   </div>
 </div>
 
@@ -427,7 +435,7 @@
       </div>
       <button class="btn" id="authLoginBtn" type="button">Iniciar sesión</button>
       <button class="btn secondary" id="authSignupBtn" type="button">Crear cuenta nueva</button>
-      <div id="authStatus" class="auth-status" style="display:none;"></div>
+      <div id="authStatus" class="auth-status" role="status" aria-live="polite" style="display:none;"></div>
       <p class="hint" style="margin:10px 0 0;"><button type="button" class="photo-link" id="authForgotBtn">¿Olvidaste tu contraseña?</button></p>
       <p class="hint" style="margin:4px 0 0;">¿Ya tenías cuenta con el código por correo? Usa "¿Olvidaste tu contraseña?" para ponerle una contraseña la primera vez.</p>
     </div>
@@ -441,13 +449,13 @@
         </div>
       </div>
       <button class="btn" id="authSetNewPasswordBtn" type="button">Guardar nueva contraseña</button>
-      <div id="authRecoverStatus" class="auth-status" style="display:none;"></div>
+      <div id="authRecoverStatus" class="auth-status" role="status" aria-live="polite" style="display:none;"></div>
     </div>
 
     <div id="authLoggedIn" style="display:none;">
       <p class="hint" style="margin-top:0;">Sesión iniciada como <strong id="authUserEmail"></strong>. Tu perfil, plan y registros se sincronizan automáticamente.</p>
       <button class="btn secondary" id="authLogoutBtn" type="button">Cerrar sesión</button>
-      <div id="authStatus2" class="auth-status" style="display:none;"></div>
+      <div id="authStatus2" class="auth-status" role="status" aria-live="polite" style="display:none;"></div>
     </div>
   </section>
 
@@ -507,11 +515,11 @@
       </div>
       <div class="field">
         <label for="peso">Peso (kg)</label>
-        <input type="number" id="peso" min="30" max="250" value="70">
+        <input type="number" id="peso" step="0.1" min="30" max="250" value="70">
       </div>
       <div class="field">
         <label for="estatura">Estatura (cm)</label>
-        <input type="number" id="estatura" min="120" max="230" value="170">
+        <input type="number" id="estatura" step="0.1" min="120" max="230" value="170">
       </div>
       <div class="field">
         <label for="actividad">Nivel de actividad</label>
@@ -543,14 +551,14 @@
     <p class="hint" style="margin:10px 0 0;">Llena tu peso objetivo, o tu % de grasa actual y objetivo si lo sabes (no necesitas ambos) — con eso calculamos cuántas semanas te tomaría llegar de forma realista.</p>
 
     <button class="btn" id="calcMacrosBtn">Calcular mis macros y mi plan</button>
-    <div class="error-msg" id="profileError">Revisa que edad, peso y estatura sean valores válidos.</div>
+    <div class="error-msg" id="profileError" role="alert">Revisa los valores y rangos de edad, peso, estatura, plazo y objetivos.</div>
 
     <div class="macro-result" id="macroResult">
       <div class="macro-target-grid">
         <div class="macro-stat"><div class="val" id="tKcal">–</div><div class="lbl">Kcal / día (fijo)</div></div>
-        <div class="macro-stat editable"><input type="number" class="val-input" id="tProtInput" min="0" max="500" step="1"><div class="lbl">Proteína (g)</div></div>
+        <div class="macro-stat editable"><input type="number" class="val-input" id="tProtInput" aria-label="Proteína en gramos" min="0" max="500" step="1"><div class="lbl">Proteína (g)</div></div>
         <div class="macro-stat auto"><div class="val" id="tCarb">–</div><div class="lbl">Carbos (g) · auto</div></div>
-        <div class="macro-stat editable"><input type="number" class="val-input" id="tFatInput" min="0" max="400" step="1"><div class="lbl">Grasas (g)</div></div>
+        <div class="macro-stat editable"><input type="number" class="val-input" id="tFatInput" aria-label="Grasas en gramos" min="0" max="400" step="1"><div class="lbl">Grasas (g)</div></div>
       </div>
       <div class="macro-edit-row">
         <span id="macroEditNote">Ajusta proteína o grasa a mano — los carbohidratos se recalculan solos para no salirte de tus kcal.</span>
@@ -576,7 +584,7 @@
     <h2>Tus alimentos disponibles</h2>
     <p class="hint">Escribe los alimentos que tienes, separados por coma o en líneas distintas (ej: pollo, huevo, arroz, avena, brócoli, yogur griego, aguacate, plátano). Damos por hecho que tienes lo básico de alacena: sal, pimienta, ajo, cebolla, aceite de oliva, limón y especias.</p>
     <div class="field">
-      <textarea id="foodInput" placeholder="pollo, huevo, arroz, avena, brócoli, atún, yogur griego, aguacate, plátano, frijoles, tomate, queso panela...">pollo, huevo, arroz, avena, brócoli, atún, yogur griego, aguacate, plátano, frijoles, tomate, queso panela, pan integral, manzana, espinaca</textarea>
+      <textarea id="foodInput" aria-label="Alimentos disponibles" placeholder="pollo, huevo, arroz, avena, brócoli, atún, yogur griego, aguacate, plátano, frijoles, tomate, queso panela...">pollo, huevo, arroz, avena, brócoli, atún, yogur griego, aguacate, plátano, frijoles, tomate, queso panela, pan integral, manzana, espinaca</textarea>
     </div>
     <button class="btn" id="generateBtn">Generar mi plan de comidas</button>
     <div class="unmatched-note" id="unmatchedNote"></div>
@@ -586,7 +594,7 @@
   <section class="card" id="resultsSection" style="display:none;">
     <div class="card-label">Paso 3</div>
     <h2>Tu plan de comidas</h2>
-    <p class="hint">Recetas de máximo 20 minutos, con porciones calculadas para cubrir tu objetivo de macros de cada comida. Pulsa "Usar en mi resumen" en la que prefieras de cada categoría para ver cómo se acumulan tus macros del día.</p>
+    <p class="hint">Recetas con tiempos de preparación indicados, con porciones calculadas para cubrir tu objetivo de macros de cada comida. Pulsa "Usar en mi resumen" en la que prefieras de cada categoría para ver cómo se acumulan tus macros del día.</p>
     <div id="mealTargetsInfo" class="meal-targets-info"></div>
     <div class="tabs">
       <button class="tab-btn active" data-tab="desayuno">Desayunos</button>
@@ -612,7 +620,7 @@
   <section class="card" id="logSection">
     <div class="card-label">Paso 5</div>
     <h2>Registro diario</h2>
-    <p class="hint">Registra tu peso, si entrenaste y qué tan apegado estuviste a tu plan hoy. Esto se guarda solo en este navegador/celular — nadie más lo ve, y si borras los datos del navegador se pierde.</p>
+    <p class="hint">Registra tu peso, si entrenaste y qué tan apegado estuviste a tu plan hoy. Sin cuenta, el registro se guarda en este navegador. Con sesión iniciada, se sincroniza en la nube y tu coach asignado puede consultar tu progreso. Consulta el aviso de privacidad.</p>
 
     <div id="logWeekBanner" class="strategy-box" style="display:none; margin-bottom:20px;"></div>
 
@@ -713,6 +721,7 @@
     </div>
 
     <button class="btn" id="saveLogBtn">Guardar registro</button>
+    <p id="storageStatus" role="alert"></p>
 
     <div id="logSummary" style="margin-top:28px;"></div>
     <div id="logHistory"></div>
@@ -720,7 +729,7 @@
 
 </main>
 
-<div class="modal-overlay" id="photoModal">
+<div class="modal-overlay" id="photoModal" role="dialog" aria-modal="true" aria-labelledby="photoModalTitle">
   <div class="modal-card" style="max-width:600px;">
     <div class="modal-head">
       <h4 id="photoModalTitle">Fotos de progreso</h4>
@@ -730,7 +739,7 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="barcodeModal">
+<div class="modal-overlay" id="barcodeModal" role="dialog" aria-modal="true" aria-label="Escanear código de barras">
   <div class="modal-card">
     <div class="modal-head">
       <h4>Escanear código de barras</h4>
@@ -1212,10 +1221,10 @@
     },
     {
       id:'p6', mealTypes:['postre'], method:'microondas', time:5,
-      roles:[ role('fruit',['fruit'],100,true,['fresas']), role('fat',['fat'],0,false) ],
+      roles:[ role('fruit',['fruit'],100,true,['fresas']), role('fat',['fat'],15,true,['chocolateoscuro']) ],
       titleCore:function(f){ return f.fruit.food.name+' con chocolate derretido'; },
       coreSteps:[
-        'Derrite un poco de chocolate oscuro en microondas por intervalos de 20 segundos.',
+        'Derrite {{fat}} en microondas por intervalos de 20 segundos.',
         'Lava {{fruit}} y sumérgela parcialmente en el chocolate derretido.'
       ]
     }
@@ -1774,7 +1783,7 @@
       var steps = tpl.coreSteps.map(function(s){
         return s.replace(/\{\{(\w+)\}\}/g, function(_, key){
           var e = filled[key];
-          if(!e) return '';
+          if(!e) return key === 'dairy' ? 'agua' : '';
           return e.food.name + ' (' + round(e.qty) + ' g' + unitHint(e.food, e.qty) + ')';
         });
       });
@@ -1850,7 +1859,8 @@
     var goal = document.querySelector('input[name="goal"]:checked').value;
 
     var errBox = document.getElementById('profileError');
-    if(!edad || !peso || !estatura || edad<10 || peso<20 || estatura<100){
+    var invalid = ['edad','peso','estatura','weeksGoal','pesoObjetivo','grasaActual','grasaObjetivo'].some(function(id){ return !document.getElementById(id).checkValidity(); });
+    if(invalid || !Number.isFinite(edad) || !Number.isFinite(peso) || !Number.isFinite(estatura) || !Number.isFinite(actividad) || !STRATEGIES[goal]){
       errBox.style.display = 'block';
       return null;
     }
@@ -1928,7 +1938,7 @@
       });
 
       var reverseWeeks = Math.max(4, Math.ceil(weeksGoal/2));
-      var stepKcal = Math.max(25, Math.round((tdee - targets.kcal) / reverseWeeks));
+      var stepKcal = Math.max(25, Math.ceil((tdee - targets.kcal) / reverseWeeks));
       var timeline = [];
       var current = targets.kcal;
       for(var w=1; w<=reverseWeeks; w++){
@@ -1956,7 +1966,7 @@
         name: 'Fase 2 · Pausas de mantenimiento',
         weeks: null,
         kcal: tdee,
-        desc: 'Cada '+breakEvery+' semanas de superávit, toma 1-2 semanas a mantenimiento ('+tdee+' kcal). Te da un respiro mental y hormonal, y evita acumular grasa innecesaria en bulks largos. Con tu meta de '+weeksGoal+' semanas, planea tu primera pausa alrededor de la semana '+Math.min(breakEvery, weeksGoal)+'.'
+        desc: 'Cada '+breakEvery+' semanas de superávit, toma 1-2 semanas a mantenimiento ('+tdee+' kcal). Te da un respiro mental y hormonal, y evita acumular grasa innecesaria en bulks largos. Con tu meta de '+escapeHtml(weeksGoal)+' semanas, planea tu primera pausa alrededor de la semana '+Math.min(breakEvery, weeksGoal)+'.'
       });
     } else {
       phases.push({
@@ -2013,7 +2023,7 @@
   function getCurrentWeekTarget(planMeta){
     var start = new Date(planMeta.startDate+'T00:00:00');
     var now = new Date();
-    var diffDays = Math.floor((now-start)/(1000*60*60*24));
+    var diffDays = Math.round((Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / 86400000);
     var weekNum = Math.max(1, Math.floor(diffDays/7)+1);
 
     var result = {
@@ -2072,23 +2082,64 @@
   var PLAN_KEY = 'ctPlanMeta_v1';
   var PROFILE_KEY = 'ctProfile_v1';
 
+  // Los datos de invitado se conservan, pero nunca se atribuyen a una cuenta automáticamente.
+  var memoryStorage = {};
+  function readLocal(key){ return Object.prototype.hasOwnProperty.call(memoryStorage, key) ? memoryStorage[key] : localStorage.getItem(key); }
+  function writeLocal(key, value){
+    try { localStorage.setItem(key, value); delete memoryStorage[key]; } catch(e) {
+      memoryStorage[key] = value;
+      document.getElementById('storageStatus').textContent = 'No se pudo guardar en este navegador. Los cambios solo permanecen en esta página hasta que se confirme su sincronización en la nube.';
+    }
+  }
+  function storageKey(key){ return state && state.user ? key + ':' + state.user.id : key; }
+  var identityVersion = 0;
+  var localRevision = { profile: 0, plan: 0, log: 0 };
+  function resetAccountView(){
+    identityVersion++;
+    clearTimeout(macroEditCloudTimer);
+    closePhotoModal();
+    if(document.getElementById('barcodeModal').classList.contains('open')) closeBarcodeScanner();
+    state.targets = state.originalTargets = state.planMeta = null;
+    state.recipes = { desayuno: [], comida: [], cena: [], postre: [] };
+    state.selected = { desayuno: null, comida: null, cena: null, postre: null };
+    state.savedMeals = {};
+    state.pendingExtras = [];
+    state.mealTargets = null;
+    ['macroResult','planSection','resultsSection','summarySection'].forEach(function(id){ document.getElementById(id).style.display = 'none'; });
+    document.querySelectorAll('#goalChoices input, .field input, .field select, .field textarea').forEach(function(el){
+      if(el.type === 'radio' || el.type === 'checkbox') el.checked = el.defaultChecked;
+      else if(el.tagName === 'SELECT') Array.from(el.options).forEach(function(o){ o.selected = o.defaultSelected; });
+      else el.value = el.defaultValue || '';
+    });
+    document.getElementById('logFecha').value = todayLocalDateStr();
+    applyProfileToForm(loadProfile());
+    var meta = loadPlanMeta();
+    if(meta && meta.targets && Array.isArray(meta.phases)){
+      state.targets = meta.targets; state.originalTargets = meta.originalTargets || meta.targets; state.planMeta = meta;
+      renderMacroResult(meta.targets); renderPlan(meta, meta.goalEstimate, meta.weeksGoal, meta.peso);
+    }
+    renderLogSection(); loadLogFormForDate(todayLocalDateStr());
+  }
   function loadLog(){
-    try{ return JSON.parse(localStorage.getItem(LOG_KEY)) || []; }catch(e){ return []; }
+    try{ var entries = JSON.parse(readLocal(storageKey(LOG_KEY))); return Array.isArray(entries) ? entries : []; }catch(e){ return []; }
   }
   function saveLogEntries(entries){
-    try{ localStorage.setItem(LOG_KEY, JSON.stringify(entries)); }catch(e){}
+    localRevision.log++;
+    try{ writeLocal(storageKey(LOG_KEY), JSON.stringify(entries)); }catch(e){}
   }
   function loadPlanMeta(){
-    try{ return JSON.parse(localStorage.getItem(PLAN_KEY)) || null; }catch(e){ return null; }
+    try{ return JSON.parse(readLocal(storageKey(PLAN_KEY))) || null; }catch(e){ return null; }
   }
   function savePlanMeta(meta){
-    try{ localStorage.setItem(PLAN_KEY, JSON.stringify(meta)); }catch(e){}
+    localRevision.plan++;
+    try{ writeLocal(storageKey(PLAN_KEY), JSON.stringify(meta)); }catch(e){}
   }
   function loadProfile(){
-    try{ return JSON.parse(localStorage.getItem(PROFILE_KEY)) || null; }catch(e){ return null; }
+    try{ return JSON.parse(readLocal(storageKey(PROFILE_KEY))) || null; }catch(e){ return null; }
   }
   function saveProfile(profile){
-    try{ localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); }catch(e){}
+    localRevision.profile++;
+    try{ writeLocal(storageKey(PROFILE_KEY), JSON.stringify(profile)); }catch(e){}
   }
 
   /* ============ AUTH / CLOUD SYNC ============ */
@@ -2184,18 +2235,21 @@
     if(grasaActualEl) grasaActualEl.value = (profile.grasa_actual != null) ? profile.grasa_actual : '';
     if(grasaObjetivoEl) grasaObjetivoEl.value = (profile.grasa_objetivo != null) ? profile.grasa_objetivo : '';
     if(profile.meta){
-      var goalRadio = document.querySelector('input[name="goal"][value="'+profile.meta+'"]');
+      var goalRadio = Array.from(document.querySelectorAll('input[name="goal"]')).find(function(el){ return el.value === profile.meta; });
       if(goalRadio) goalRadio.checked = true;
     }
   }
 
+  function reportCloudError(message){
+    setAuthStatus(document.getElementById('authStatus2'), message + ' Los cambios locales se conservan en este navegador.', 'error');
+  }
   function upsertProfileToCloud(){
     var sb = getSupabase();
     if(!sb || !state.user) return;
     var payload = buildProfilePayload();
     payload.id = state.user.id;
     sb.from('profiles').upsert(payload).then(function(res){
-      if(res.error) console.error('Nutrika: error guardando perfil en la nube', res.error);
+      if(res.error) reportCloudError('No se pudo guardar el perfil en la nube.');
     });
   }
 
@@ -2203,7 +2257,7 @@
     var sb = getSupabase();
     if(!sb || !state.user) return;
     sb.from('plan_meta').upsert({ user_id: state.user.id, data: meta, updated_at: new Date().toISOString() }).then(function(res){
-      if(res.error) console.error('Nutrika: error guardando plan en la nube', res.error);
+      if(res.error) reportCloudError('No se pudo guardar el plan en la nube.');
     });
   }
 
@@ -2217,7 +2271,7 @@
       foto_frente: entry.foto_frente || null, foto_lado: entry.foto_lado || null, foto_espalda: entry.foto_espalda || null,
       updated_at: new Date().toISOString()
     }, { onConflict: 'user_id,log_date' }).then(function(res){
-      if(res.error) console.error('Nutrika: error guardando registro en la nube', res.error);
+      if(res.error) reportCloudError('No se pudo guardar el registro en la nube.');
     });
   }
 
@@ -2231,11 +2285,12 @@
   // Promise.all sin checar cada caso por separado.
   function uploadProgressPhoto(file, date, tipo){
     var sb = getSupabase();
-    if(!sb || !state.user || !file) return Promise.resolve(null);
+    if(!file) return Promise.resolve(null);
+    if(!sb || !state.user) return Promise.reject(new Error('Inicia sesión para guardar fotos.'));
     var ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
     var path = state.user.id + '/' + date + '-' + tipo + '.' + ext;
     return sb.storage.from(PHOTO_BUCKET).upload(path, file, { upsert: true }).then(function(res){
-      if(res.error){ console.error('Nutrika: error subiendo foto de progreso', res.error); return null; }
+      if(res.error) throw res.error;
       return path;
     });
   }
@@ -2263,15 +2318,20 @@
     var sb = getSupabase();
     if(!sb || !state.user) return;
 
+    var version = identityVersion;
+    var revisions = Object.assign({}, localRevision);
     sb.from('profiles').select('*').eq('id', state.user.id).maybeSingle().then(function(res){
+      if(version !== identityVersion || revisions.profile !== localRevision.profile) return;
       if(res.error || !res.data) return;
       saveProfile(res.data);
       applyProfileToForm(res.data);
     });
 
     sb.from('plan_meta').select('data').eq('user_id', state.user.id).maybeSingle().then(function(res){
+      if(version !== identityVersion || revisions.plan !== localRevision.plan) return;
       if(res.error || !res.data || !res.data.data) return;
       var meta = res.data.data;
+      if(!meta.targets || !Array.isArray(meta.phases)) return;
       savePlanMeta(meta);
       state.targets = meta.targets;
       state.originalTargets = meta.originalTargets || meta.targets;
@@ -2283,15 +2343,13 @@
     });
 
     sb.from('daily_logs').select('*').eq('user_id', state.user.id).order('log_date').then(function(res){
+      if(version !== identityVersion || revisions.log !== localRevision.log) return;
       if(res.error || !res.data) return;
       var cloudEntries = res.data.map(function(row){
         return { date: row.log_date, peso: row.peso, entreno: row.entreno, habits: row.habits || [], notas: row.notas || '', meals: row.meals || {}, extras: row.extras || [], kcal: row.kcal || 0, p: row.p || 0, c: row.c || 0, f: row.f || 0, grasa: row.grasa != null ? row.grasa : null, foto_frente: row.foto_frente || null, foto_lado: row.foto_lado || null, foto_espalda: row.foto_espalda || null };
       });
-      // No sobrescribir sin más: si el usuario ya traía historial guardado
-      // solo en este dispositivo (típico la primera vez que inicia sesión),
-      // la nube está vacía y un overwrite directo lo borraría por completo.
-      // Se conservan los días que solo existen localmente y se suben a la
-      // nube, en vez de perderlos.
+      // Conserva los días locales de esta cuenta que aún no llegaron a la nube.
+      // Los registros de invitado y de otras cuentas usan claves distintas.
       var localEntries = loadLog();
       var cloudDates = {};
       cloudEntries.forEach(function(e){ cloudDates[e.date] = true; });
@@ -2321,15 +2379,15 @@
     // logout, refresh de token) — llamar también a getSession() por separado
     // duplicaba la hidratación inicial en cada carga de página.
     sb.auth.onAuthStateChange(function(event, session){
-      if(event === 'PASSWORD_RECOVERY'){
-        state.recoveryMode = true;
-        renderAuthUI();
-        return;
-      }
+      if(event === 'PASSWORD_RECOVERY') state.recoveryMode = true;
+      var previousId = state.user && state.user.id;
       state.session = session;
       state.user = session ? session.user : null;
+      var changed = previousId !== (state.user && state.user.id);
+      if(changed) resetAccountView();
+      if(!state.user) state.recoveryMode = false;
       renderAuthUI();
-      if(state.user) hydrateFromCloud();
+      if(state.user && !state.recoveryMode && (changed || event === 'INITIAL_SESSION')) setTimeout(hydrateFromCloud, 0);
     });
   }
 
@@ -2341,6 +2399,7 @@
     recipes: { desayuno: [], comida: [], cena: [], postre: [] },
     selected: { desayuno: null, comida: null, cena: null, postre: null },
     pendingExtras: [],
+    savedMeals: {},
     mealTargets: null,
     session: null,
     user: null,
@@ -2369,7 +2428,7 @@
     document.getElementById('tCarb').textContent = t.c + 'g';
     document.getElementById('tFatInput').value = t.f;
     updateMacroEditNote(t.kcal, false);
-    document.getElementById('strategyBox').innerHTML = '<strong>Estrategia: </strong>' + t.text;
+    document.getElementById('strategyBox').innerHTML = '<strong>Estrategia: </strong>' + escapeHtml(t.text);
     document.getElementById('macroResult').style.display = 'block';
   }
 
@@ -2384,12 +2443,14 @@
     var p = Math.max(0, parseFloat(pInput.value) || 0);
     var f = Math.max(0, parseFloat(fInput.value) || 0);
 
+    if(!pInput.checkValidity() || !fInput.checkValidity()) return;
     var rawCarbKcal = kcal - p*4 - f*9;
     var overBudget = rawCarbKcal < 0;
     var c = Math.max(0, round(rawCarbKcal / 4));
 
     document.getElementById('tCarb').textContent = c + 'g';
     updateMacroEditNote(kcal, overBudget);
+    if(overBudget) return;
 
     state.targets = { goal: state.targets.goal, kcal: kcal, tdee: state.targets.tdee, p: p, c: c, f: f, text: state.targets.text };
 
@@ -2419,25 +2480,25 @@
     if(goalEstimate && !goalEstimate.sameWeight){
       var msg;
       if(weeksGoal < goalEstimate.weeksLow){
-        msg = '<span class="warn">Tu meta de '+weeksGoal+' semanas es más agresiva que lo recomendado</span> para hacerlo de forma segura — a un ritmo saludable te tomaría entre '+goalEstimate.weeksLow+' y '+goalEstimate.weeksHigh+' semanas. Considera ampliar tu plazo.';
+        msg = '<span class="warn">Tu meta de '+escapeHtml(weeksGoal)+' semanas es más agresiva que lo recomendado</span> para hacerlo de forma segura — a un ritmo saludable te tomaría entre '+escapeHtml(goalEstimate.weeksLow)+' y '+escapeHtml(goalEstimate.weeksHigh)+' semanas. Considera ampliar tu plazo.';
       } else if(weeksGoal > goalEstimate.weeksHigh){
-        msg = 'Tu meta de '+weeksGoal+' semanas es holgada — a tu ritmo esperado podrías llegar en '+goalEstimate.weeksLow+' a '+goalEstimate.weeksHigh+' semanas. Tienes margen para ir todavía más gradual si prefieres.';
+        msg = 'Tu meta de '+escapeHtml(weeksGoal)+' semanas es holgada — a tu ritmo esperado podrías llegar en '+escapeHtml(goalEstimate.weeksLow)+' a '+escapeHtml(goalEstimate.weeksHigh)+' semanas. Tienes margen para ir todavía más gradual si prefieres.';
       } else {
-        msg = 'Tu meta de '+weeksGoal+' semanas está dentro de un ritmo realista y saludable ('+goalEstimate.weeksLow+'-'+goalEstimate.weeksHigh+' semanas estimadas).';
+        msg = 'Tu meta de '+escapeHtml(weeksGoal)+' semanas está dentro de un ritmo realista y saludable ('+escapeHtml(goalEstimate.weeksLow)+'-'+escapeHtml(goalEstimate.weeksHigh)+' semanas estimadas).';
       }
       if(goalEstimate.includesBreaks){
         msg += ' (esta estimación ya incluye tus pausas de dieta programadas).';
       }
-      goalHTML = '<div class="goal-estimate"><h4>Tu meta en números</h4><p>De <strong>'+peso+' kg</strong> a <strong>'+goalEstimate.targetWeight+' kg</strong> ('+(goalEstimate.diffKg>0?'+':'')+goalEstimate.diffKg+' kg). '+msg+'</p></div>';
+      goalHTML = '<div class="goal-estimate"><h4>Tu meta en números</h4><p>De <strong>'+escapeHtml(peso)+' kg</strong> a <strong>'+escapeHtml(goalEstimate.targetWeight)+' kg</strong> ('+(goalEstimate.diffKg>0?'+':'')+goalEstimate.diffKg+' kg). '+msg+'</p></div>';
     } else if(goalEstimate && goalEstimate.sameWeight){
-      goalHTML = '<div class="goal-estimate"><h4>Tu meta en números</h4><p>Tu peso objetivo ('+goalEstimate.targetWeight+' kg) está prácticamente en tu peso actual — tu plan es más de recomposición/mantenimiento que de cambio de peso.</p></div>';
+      goalHTML = '<div class="goal-estimate"><h4>Tu meta en números</h4><p>Tu peso objetivo ('+escapeHtml(goalEstimate.targetWeight)+' kg) está prácticamente en tu peso actual — tu plan es más de recomposición/mantenimiento que de cambio de peso.</p></div>';
     }
 
     var phasesHTML = plan.phases.map(function(p){
       return '<div class="phase-card">' +
-        '<div class="phase-head"><h4>'+p.name+'</h4>'+(p.weeks?'<span class="phase-weeks">'+p.weeks+' semanas</span>':'')+'</div>' +
+        '<div class="phase-head"><h4>'+escapeHtml(p.name)+'</h4>'+(p.weeks?'<span class="phase-weeks">'+escapeHtml(p.weeks)+' semanas</span>':'')+'</div>' +
         '<div class="phase-kcal">'+round(p.kcal)+' kcal/día</div>' +
-        '<p>'+p.desc+'</p>' +
+        '<p>'+escapeHtml(p.desc)+'</p>' +
       '</div>';
     }).join('');
 
@@ -2472,7 +2533,7 @@
     var ingredientsHTML = recipe.ingredients.map(function(i){ return '<li>'+i+'</li>'; }).join('');
     var stepsHTML = recipe.steps.map(function(s){ return '<li>'+s+'</li>'; }).join('');
     var badge = recipe.source === 'recetario' ? '<span class="recetario-badge">Recetario Complex Training</span>' : '';
-    var servingsHint = recipe.servings ? '<span>· rinde '+recipe.servings+' porciones</span>' : '';
+    var servingsHint = recipe.servings ? '<span>· rinde '+recipe.servings+' porciones · macros por porción</span>' : '';
     return '' +
     '<div class="recipe-card'+(isSelected?' selected':'')+'" data-meal="'+mealType+'" data-id="'+recipe.id+'">' +
       badge +
@@ -2561,7 +2622,7 @@
       var r = picks[m];
       if(r){
         totals.kcal += r.totals.kcal; totals.p += r.totals.p; totals.c += r.totals.c; totals.f += r.totals.f;
-        labels.push(cap(m)+': <span>'+r.title+'</span>');
+        labels.push(cap(m)+': <span>'+escapeHtml(r.title)+'</span>');
       }
     });
     document.getElementById('summaryPicks').innerHTML = labels.join(' &nbsp;·&nbsp; ') || 'Selecciona recetas con "Usar en mi resumen".';
@@ -2581,7 +2642,9 @@
   // cuenta el porcentaje/clase de color, con el riesgo de que se desincronizaran.
   var MACRO_DOT_LABEL = { kcal: '', prot: 'P', carb: 'C', fat: 'G' };
   function buildMacroBarRow(b, showRemaining){
-    var pct = b.target > 0 ? (b.val/b.target*100) : 0;
+    // Sin meta definida (target 0) pero con algo ya registrado, la barra debe
+    // verse llena/pasada en vez de vacía — 0/0 no significa "nada consumido".
+    var pct = b.target > 0 ? (b.val/b.target*100) : (b.val > 0 ? 130 : 0);
     var w = Math.min(pct, 130);
     var remainingHtml = '';
     if(showRemaining){
@@ -2662,8 +2725,8 @@
     }
     var rows = state.pendingExtras.map(function(e, i){
       return '<div class="extra-item">' +
-        '<span class="desc">'+escapeHtml(e.desc)+' · '+e.weight+' g</span>' +
-        '<span class="macros">'+e.kcal+' kcal · P '+e.p+'g · C '+e.c+'g · G '+e.f+'g</span>' +
+        '<span class="desc">'+escapeHtml(e.desc)+' · '+escapeHtml(e.weight)+' g</span>' +
+        '<span class="macros">'+escapeHtml(e.kcal)+' kcal · P '+escapeHtml(e.p)+'g · C '+escapeHtml(e.c)+'g · G '+escapeHtml(e.f)+'g</span>' +
         '<button type="button" class="del-btn" data-extra-index="'+i+'">Quitar</button>' +
       '</div>';
     }).join('');
@@ -2682,7 +2745,8 @@
     var meals = {};
     document.querySelectorAll('#logMeals input[type=checkbox]:checked').forEach(function(cb){
       var meal = cb.getAttribute('data-meal');
-      var r = findSelectedRecipe(meal);
+      var saved = state.savedMeals[meal];
+      var r = saved ? {title: saved.title, totals: saved} : findSelectedRecipe(meal);
       if(r){
         meals[meal] = { title: r.title, kcal: r.totals.kcal, p: r.totals.p, c: r.totals.c, f: r.totals.f };
         kcalTotal += r.totals.kcal; pTotal += r.totals.p; cTotal += r.totals.c; fTotal += r.totals.f;
@@ -2767,8 +2831,11 @@
     // cualquier edit sin guardar de la fecha anterior queda descartado a
     // propósito (por eso navegar de fecha también limpia el flag).
     state.logFormDirty = false;
+    document.getElementById('logFecha').value = dateStr;
     var entries = loadLog();
     var entry = entries.find(function(e){ return e.date === dateStr; });
+    state.savedMeals = entry && entry.meals ? entry.meals : {};
+    renderLogSection();
 
     document.getElementById('logPeso').value = (entry && entry.peso != null) ? entry.peso : '';
     document.getElementById('logGrasa').value = (entry && entry.grasa != null) ? entry.grasa : '';
@@ -2805,14 +2872,17 @@
   }
 
   function renderLogSection(){
+    var checkedMeals = getCheckedMealKeys();
     var mealsHTML = '';
     ['desayuno','comida','cena','postre'].forEach(function(m){
-      var r = findSelectedRecipe(m);
+      var saved = state.savedMeals[m];
+      var r = saved ? {title: saved.title, totals: saved} : findSelectedRecipe(m);
       if(r){
-        mealsHTML += '<label class="check-item"><input type="checkbox" data-meal="'+m+'"> '+cap(m)+': '+r.title+' ('+r.totals.kcal+' kcal)</label>';
+        mealsHTML += '<label class="check-item"><input type="checkbox" data-meal="'+m+'"> '+cap(m)+': '+escapeHtml(r.title)+' ('+escapeHtml(r.totals.kcal)+' kcal)</label>';
       }
     });
     document.getElementById('logMeals').innerHTML = mealsHTML || '<p class="empty-note">Genera y elige tus comidas en el Paso 3 para poder marcarlas aquí.</p>';
+    setCheckedMealKeys(checkedMeals);
     renderExtraList();
 
     var banner = document.getElementById('logWeekBanner');
@@ -2821,7 +2891,7 @@
       banner.style.display = 'block';
       if(state.planMeta.goal === 'bajar_grasa'){
         var phaseLabel = wk.phase === 'pausa' ? 'pausa de dieta programada' : (wk.phase === 'reverse' ? 'reverse diet' : 'fase de déficit');
-        var html = '<strong>Semana '+wk.weekNum+' · '+phaseLabel+'.</strong> Objetivo: ~'+wk.kcal+' kcal (P '+wk.p+'g · C '+wk.c+'g · G '+wk.f+'g).';
+        var html = '<strong>Semana '+wk.weekNum+' · '+phaseLabel+'.</strong> Objetivo: ~'+escapeHtml(wk.kcal)+' kcal (P '+escapeHtml(wk.p)+'g · C '+escapeHtml(wk.c)+'g · G '+escapeHtml(wk.f)+'g).';
         if(wk.phase === 'pausa'){
           html += ' Aprovecha para descansar mentalmente de la dieta — si el peso sube un poco esta semana es normal (agua/glucógeno) y baja al volver al déficit.';
         } else if(wk.phase === 'reverse'){
@@ -2838,7 +2908,7 @@
         }
         banner.innerHTML = html;
       } else {
-        banner.innerHTML = '<strong>Semana '+wk.weekNum+' de tu plan.</strong> Objetivo de esta semana: ~'+wk.kcal+' kcal/día.';
+        banner.innerHTML = '<strong>Semana '+wk.weekNum+' de tu plan.</strong> Objetivo de esta semana: ~'+escapeHtml(wk.kcal)+' kcal/día.';
       }
     } else {
       banner.style.display = 'none';
@@ -2889,14 +2959,14 @@
       var extrasNote = (e.extras && e.extras.length) ? ' <span title="'+escapeHtml(e.extras.map(function(x){return x.desc;}).join(', '))+'">(+'+e.extras.length+' fuera del plan)</span>' : '';
       var hasFotos = !!(e.foto_frente || e.foto_lado || e.foto_espalda);
       return '<tr>' +
-        '<td>'+e.date+'</td>' +
-        '<td>'+(e.peso != null ? e.peso+' kg' : '–')+'</td>' +
-        '<td>'+(e.grasa != null ? e.grasa+'%' : '–')+'</td>' +
-        '<td>'+(e.kcal || 0)+' kcal'+extrasNote+'</td>' +
+        '<td>'+escapeHtml(e.date)+'</td>' +
+        '<td>'+(e.peso != null ? escapeHtml(e.peso)+' kg' : '–')+'</td>' +
+        '<td>'+(e.grasa != null ? escapeHtml(e.grasa)+'%' : '–')+'</td>' +
+        '<td>'+escapeHtml(e.kcal || 0)+' kcal'+extrasNote+'</td>' +
         '<td>'+(e.entreno ? '✓' : '–')+'</td>' +
         '<td>'+(e.habits ? e.habits.length : 0)+'/'+Object.keys(HABIT_LABELS).length+'</td>' +
-        '<td>'+(hasFotos ? '<button type="button" class="photo-link" data-date="'+e.date+'">📷 Ver fotos</button>' : '–')+'</td>' +
-        '<td><button class="del-btn" data-date="'+e.date+'">Eliminar</button></td>' +
+        '<td>'+(hasFotos ? '<button type="button" class="photo-link" data-date="'+escapeHtml(e.date)+'">📷 Ver fotos</button>' : '–')+'</td>' +
+        '<td><button class="del-btn" data-date="'+escapeHtml(e.date)+'">Eliminar</button></td>' +
       '</tr>';
     }).join('');
     histEl.innerHTML = '<div class="log-table-wrap"><table class="log-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Grasa</th><th>Kcal</th><th>Entrenó</th><th>Hábitos</th><th>Fotos</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
@@ -2909,15 +2979,21 @@
     });
   }
 
+  var photoRequest = 0;
+  var photoReturnFocus = null;
   function openPhotoViewer(entry){
+    var request = ++photoRequest;
+    photoReturnFocus = document.activeElement;
     var modal = document.getElementById('photoModal');
     var body = document.getElementById('photoModalBody');
     document.getElementById('photoModalTitle').textContent = 'Fotos de progreso — ' + entry.date;
     body.innerHTML = '<p class="empty-note">Cargando fotos...</p>';
     modal.classList.add('open');
+    document.getElementById('closePhotoModalBtn').focus();
 
     var slots = [ {key:'foto_frente', label:'Frente'}, {key:'foto_lado', label:'Lado'}, {key:'foto_espalda', label:'Espalda'} ];
     Promise.all(slots.map(function(s){ return getSignedPhotoUrl(entry[s.key]); })).then(function(urls){
+      if(request !== photoRequest) return;
       var html = slots.map(function(s, i){
         if(!entry[s.key]) return '';
         var url = urls[i];
@@ -2929,6 +3005,9 @@
   }
 
   function closePhotoModal(){
+    photoRequest++;
+    if(photoReturnFocus && photoReturnFocus.isConnected) photoReturnFocus.focus();
+    photoReturnFocus = null;
     document.getElementById('photoModal').classList.remove('open');
     document.getElementById('photoModalBody').innerHTML = '';
   }
@@ -2996,6 +3075,8 @@
   });
 
   document.getElementById('saveLogBtn').addEventListener('click', function(){
+    if(['logFecha','logPeso','logGrasa'].some(function(id){ return !document.getElementById(id).reportValidity(); })) return;
+    var version = identityVersion;
     var fecha = document.getElementById('logFecha').value || todayLocalDateStr();
     var pesoVal = parseFloat(document.getElementById('logPeso').value);
     var peso = isNaN(pesoVal) ? null : pesoVal;
@@ -3022,6 +3103,8 @@
       uploadProgressPhoto(fotoLadoFile, fecha, 'lado'),
       uploadProgressPhoto(fotoEspaldaFile, fecha, 'espalda')
     ]).then(function(fotoPaths){
+      saveBtn.disabled = false;
+      if(version !== identityVersion) return;
       var entries = loadLog();
       var idx = entries.findIndex(function(e){ return e.date === fecha; });
       var existing = idx >= 0 ? entries[idx] : null;
@@ -3045,7 +3128,10 @@
       // cero (sin marcar) — hay que llamarla antes de loadLogFormForDate()
       // para que sea esta última la que deje marcado lo que corresponde.
       renderLogSection();
-      loadLogFormForDate(fecha);
+      if(document.getElementById('logFecha').value === fecha) loadLogFormForDate(fecha);
+    }).catch(function(){
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'No se pudo guardar. Reintenta el guardado.';
     });
   });
 
@@ -3094,6 +3180,7 @@
   document.getElementById('addExtraBtn').addEventListener('click', function(){
     var desc = document.getElementById('extraDesc').value.trim();
     if(!desc){ document.getElementById('extraDesc').focus(); return; }
+    if(['extraWeight','extraKcal','extraProt','extraCarb','extraFat'].some(function(id){ return !document.getElementById(id).reportValidity(); })) return;
     var kcalPer100 = Math.max(0, parseFloat(document.getElementById('extraKcal').value) || 0);
     var pPer100 = Math.max(0, parseFloat(document.getElementById('extraProt').value) || 0);
     var cPer100 = Math.max(0, parseFloat(document.getElementById('extraCarb').value) || 0);
@@ -3101,6 +3188,7 @@
     var weightVal = parseFloat(document.getElementById('extraWeight').value);
     var weight = (!weightVal || weightVal <= 0) ? 100 : weightVal;
 
+    state.logFormDirty = true;
     state.pendingExtras.push({
       desc: desc, weight: weight,
       kcal: round(kcalPer100 * weight/100), p: round(pPer100 * weight/100), c: round(cPer100 * weight/100), f: round(fPer100 * weight/100)
@@ -3123,6 +3211,7 @@
 
   /* ============ BARCODE SCANNER ============ */
   var barcodeScannerInstance = null;
+  var barcodeStartPromise = null;
 
   function setBarcodeStatus(text, isError){
     var statusEl = document.getElementById('barcodeStatus');
@@ -3132,6 +3221,7 @@
 
   function openBarcodeScanner(){
     document.getElementById('barcodeModal').classList.add('open');
+    document.getElementById('closeBarcodeBtn').focus();
     setBarcodeStatus('Apunta la cámara al código de barras del empaque.', false);
 
     if(typeof Html5Qrcode === 'undefined'){
@@ -3140,6 +3230,7 @@
     }
 
     barcodeScannerInstance = new Html5Qrcode('barcodeReader');
+    document.getElementById('scanBarcodeBtn').disabled = true;
     var config = {
       fps: 10,
       qrbox: { width: 260, height: 150 },
@@ -3152,7 +3243,8 @@
       ]
     };
 
-    barcodeScannerInstance.start({ facingMode: 'environment' }, config, onBarcodeDetected, function(){ /* ignora fallos de escaneo cuadro a cuadro */ })
+    var scannerRef = barcodeScannerInstance;
+    barcodeStartPromise = scannerRef.start({ facingMode: 'environment' }, config, onBarcodeDetected, function(){ /* ignora fallos de escaneo cuadro a cuadro */ })
       .catch(function(){
         setBarcodeStatus('No pudimos acceder a tu cámara. Revisa los permisos del navegador o ingresa el alimento manualmente.', true);
       });
@@ -3162,12 +3254,18 @@
     if(!barcodeScannerInstance) return;
     var scannerRef = barcodeScannerInstance;
     barcodeScannerInstance = null;
-    scannerRef.stop().then(function(){ scannerRef.clear(); }).catch(function(){});
+    // Espera el permiso de cámara antes de detenerla; stop() falla mientras arranca.
+    Promise.resolve(barcodeStartPromise).then(function(){ return scannerRef.stop(); })
+      .catch(function(){})
+      .then(function(){ scannerRef.clear(); })
+      .catch(function(){})
+      .finally(function(){ document.getElementById('scanBarcodeBtn').disabled = false; });
   }
 
   function closeBarcodeScanner(){
     document.getElementById('barcodeModal').classList.remove('open');
     stopBarcodeCamera();
+    document.getElementById('scanBarcodeBtn').focus();
   }
 
   function onBarcodeDetected(decodedText){
@@ -3182,6 +3280,7 @@
           setBarcodeStatus('No encontramos el código ' + decodedText + ' en la base de datos. Ingresa los datos manualmente.', true);
           return;
         }
+        if(!document.getElementById('barcodeModal').classList.contains('open')) return;
         fillExtraFormFromProduct(data.product, decodedText);
         closeBarcodeScanner();
       })
@@ -3196,7 +3295,9 @@
     // Los valores por 100g casi siempre están en Open Food Facts (a diferencia
     // de los "por porción", que muchos productos no traen), así que son la
     // base más confiable; el peso consumido es lo que el usuario ajusta.
-    var kcal = n['energy-kcal_100g'] || 0;
+    var kcal = n['energy-kcal_100g'];
+    if(kcal == null && n['energy-kj_100g'] != null) kcal = Number(n['energy-kj_100g']) / 4.184;
+    if(kcal == null) kcal = 0;
     var p = n['proteins_100g'] || 0;
     var c = n['carbohydrates_100g'] || 0;
     var f = n['fat_100g'] || 0;
@@ -3231,6 +3332,17 @@
     if(e.target.id === 'barcodeModal') closeBarcodeScanner();
   });
 
+  document.addEventListener('keydown', function(e){
+    var modal = document.querySelector('.modal-overlay.open');
+    if(!modal) return;
+    if(e.key === 'Escape') { if(modal.id === 'photoModal') closePhotoModal(); else closeBarcodeScanner(); }
+    if(e.key === 'Tab'){
+      var items = Array.from(modal.querySelectorAll('button, a[href], input, [tabindex="0"]')).filter(function(el){ return !el.disabled && el.getClientRects().length; });
+      var first = items[0], last = items[items.length-1];
+      if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+      else if(!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+    }
+  });
   document.getElementById('closePhotoModalBtn').addEventListener('click', closePhotoModal);
   document.getElementById('photoModal').addEventListener('click', function(e){
     if(e.target.id === 'photoModal') closePhotoModal();
@@ -3240,6 +3352,7 @@
     var btn = e.target.closest ? e.target.closest('.del-btn[data-extra-index]') : null;
     if(!btn) return;
     var idx = parseInt(btn.getAttribute('data-extra-index'), 10);
+    state.logFormDirty = true;
     state.pendingExtras.splice(idx, 1);
     renderExtraList();
     renderLogMacroProgress();
@@ -3286,6 +3399,7 @@
     saveLogEntries(entries);
     deleteLogFromCloud(date);
     renderLogSection();
+    if(document.getElementById('logFecha').value === date) loadLogFormForDate(date);
   });
 
   document.getElementById('authLoginBtn').addEventListener('click', function(){
@@ -3353,7 +3467,6 @@
         state.recoveryMode = false;
         document.getElementById('authNewPassword').value = '';
         setAuthStatus(statusEl, '', null);
-        state.session = res.data.session;
         state.user = res.data.user;
         renderAuthUI();
         if(state.user) hydrateFromCloud();
@@ -3364,10 +3477,8 @@
   function doLogout(){
     var sb = getSupabase();
     if(!sb) return;
-    sb.auth.signOut().then(function(){
-      state.user = null;
-      state.session = null;
-      renderAuthUI();
+    sb.auth.signOut().then(function(res){
+      if(res.error) setAuthStatus(document.getElementById('authStatus2'), 'No se pudo cerrar sesión: ' + res.error.message, 'error');
     });
   }
   document.getElementById('authLogoutBtn').addEventListener('click', doLogout);
@@ -3381,7 +3492,8 @@
 
     if(!parsed.matched.length){
       state.recipes = { desayuno: [], comida: [], cena: [], postre: [] };
-      renderRecipes();
+      state.selected = { desayuno: null, comida: null, cena: null, postre: null };
+      renderRecipes(); renderSummary(); renderLogSection(); renderLogMacroProgress();
       return;
     }
 
@@ -3424,6 +3536,8 @@
 
     renderRecipes();
     renderSummary();
+    renderLogSection();
+    renderLogMacroProgress();
   });
 
   document.querySelectorAll('.tab-btn').forEach(function(btn){
@@ -3443,7 +3557,7 @@
     applyProfileToForm(loadProfile());
 
     var savedPlan = loadPlanMeta();
-    if(savedPlan && savedPlan.targets){
+    if(savedPlan && savedPlan.targets && Array.isArray(savedPlan.phases)){
       state.targets = savedPlan.targets;
       state.originalTargets = savedPlan.originalTargets || savedPlan.targets;
       state.planMeta = savedPlan;
