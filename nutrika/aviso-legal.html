@@ -38,6 +38,7 @@
   .callout strong { color: var(--ink); }
   .medical { border-left-color: var(--gold-dark); }
   footer { text-align: center; padding: 30px 24px; font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
+  .header-doc { color: #b5b5b5; }
 </style>
 </head>
 <body>
@@ -51,7 +52,7 @@
 
 <main>
   <h1>Aviso de Privacidad y Términos de Uso</h1>
-  <p class="updated">Complex Training TFW Chihuahua · Generador de comidas y macros · Última actualización: agosto 2026</p>
+  <p class="updated">Complex Training TFW Chihuahua · Generador de comidas y macros · Última actualización: septiembre 2026</p>
 
   <div class="callout medical">
     <strong>Antes que nada:</strong> esta herramienta es de apoyo informativo y de organización personal. <strong>No sustituye el diagnóstico, consejo o tratamiento de un médico o nutriólogo certificado.</strong> Consulta a un profesional de la salud antes de iniciar cualquier cambio significativo en tu alimentación o entrenamiento, sobre todo si tienes alguna condición médica, estás embarazada o en lactancia, eres menor de edad, o tienes antecedentes de trastornos de la conducta alimentaria.
@@ -64,28 +65,29 @@
 
   <h3>¿Qué información se captura?</h3>
   <ul>
+    <li>Datos de cuenta (si decides crearla): correo electrónico y autenticación mediante Supabase.</li>
     <li>Datos de perfil: sexo, edad, peso, estatura, nivel de actividad y tu meta (bajar grasa, ganar músculo o mantenerte).</li>
-    <li>Registro diario (opcional): peso, si entrenaste, hábitos marcados, notas de texto, y las comidas o alimentos que registras — incluida comida libre o de empaque que captures manualmente o por escaneo de código de barras.</li>
+    <li>Registro diario (opcional): peso, si entrenaste, hábitos marcados, notas de texto, fotografías de progreso opcionales, y las comidas o alimentos que registras — incluida comida libre o de empaque que captures manualmente o por escaneo de código de barras.</li>
   </ul>
   <p>El peso, el % de grasa corporal y los hábitos de salud se consideran <strong>datos personales sensibles</strong> conforme a la Ley Federal de Protección de Datos Personales en Posesión de los Particulares (LFPDPPP). Por eso te lo explicamos con especial claridad: solo captúralos si estás de acuerdo con lo descrito en este aviso.</p>
 
   <h3>¿Dónde se guarda esa información?</h3>
   <div class="callout">
-    <strong>Únicamente en tu propio celular o computadora</strong>, dentro de la memoria local de tu navegador (localStorage). Esta información <strong>nunca se envía ni se guarda en servidores de Complex Training</strong> — no tenemos una base de datos central con tu información y no podemos verla desde nuestro lado.
+    <strong>Sin cuenta:</strong> el perfil, plan e historial se guardan en la memoria local de este navegador (localStorage). <strong>Con sesión iniciada:</strong> estos datos se sincronizan con Supabase; las fotos de progreso se almacenan en Supabase Storage. Tu coach asignado puede consultar tu perfil, plan, registros y fotos desde su vista de seguimiento. El historial de invitado se conserva separado y no se sube automáticamente a una cuenta.
   </div>
-  <p>Esto significa también que si borras los datos de navegación de tu celular, cambias de dispositivo, o desinstalas/limpias el navegador, tu historial se pierde — no hay respaldo en la nube.</p>
+  <p>Si usas la app sin cuenta, borrar los datos del navegador elimina tu historial local. Con cuenta, puedes recuperar los datos que se hayan sincronizado al iniciar sesión; borrar los datos del navegador no elimina las copias en la nube.</p>
 
   <h3>¿Se comparte información con alguien más?</h3>
-  <p>Solo en un caso: si usas la función de <strong>escanear código de barras</strong>, el código del producto (no tu nombre, peso ni ningún otro dato tuyo) se envía a <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a>, una base de datos pública de alimentos, para traer la información nutrimental del producto. Ellos tienen su propio aviso de privacidad como servicio independiente.</p>
+  <p>Supabase proporciona la autenticación y el almacenamiento de la cuenta. Tu coach asignado puede consultar tu progreso para dar seguimiento. Además, si usas la función de <strong>escanear código de barras</strong>, el código del producto (sin enviar tu perfil ni tus registros) se envía a <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a>, una base de datos pública de alimentos, para traer la información nutrimental del producto. Como servicios externos, Open Food Facts, Google Fonts (tipografías) y jsDelivr (bibliotecas de la app) reciben los datos técnicos de sus solicitudes, como la dirección IP. Consulta sus respectivos avisos de privacidad.</p>
 
   <h3>¿Cómo elimino mis datos?</h3>
-  <p>Puedes borrar cualquier registro individual con el botón "Eliminar" en tu historial dentro de la app, o borrar por completo los datos del sitio desde la configuración de tu navegador (Configuración → Privacidad → Borrar datos de navegación, o equivalente). Al no existir un servidor central, esa acción elimina tu información de forma inmediata y total.</p>
+  <p>Puedes eliminar registros individuales desde el historial. Con sesión iniciada, la app solicita también su eliminación en la nube. Borrar los datos del navegador elimina solo las copias locales; no elimina la cuenta ni las fotos almacenadas. Para solicitar la eliminación de tu cuenta, perfil, plan o fotos en la nube, escribe a <a href="mailto:oziel.enriquez@complextraining.mx">oziel.enriquez@complextraining.mx</a>.</p>
 
   <h3>Derechos ARCO</h3>
-  <p>Aunque tus datos no están en un servidor que administremos, tienes derecho a Acceder, Rectificar, Cancelar u Oponerte al uso de tu información. Como toda la información vive en tu propio dispositivo, puedes ejercer estos derechos directamente dentro de la app (editando o eliminando tus registros) en cualquier momento. Si tienes dudas, puedes contactar a Complex Training TFW Chihuahua directamente.</p>
+  <p>Puedes consultar y editar tus registros en la app. Para solicitudes de acceso, rectificación, cancelación u oposición relacionadas con los datos de tu cuenta, contacta a <a href="mailto:oziel.enriquez@complextraining.mx">oziel.enriquez@complextraining.mx</a>. Los datos de contacto del responsable están en el <a href="../aviso-privacidad-complex-training.html">aviso de privacidad integral</a>.</p>
 
   <h3>Cambios a este aviso</h3>
-  <p>Podemos actualizar este aviso conforme la herramienta evolucione (por ejemplo, si en el futuro se agregan cuentas de usuario o almacenamiento en la nube, lo cual cambiaría sustancialmente esta sección y te lo notificaríamos claramente antes de activarlo).</p>
+  <p>Podemos actualizar este aviso conforme la herramienta evolucione y los servicios que utiliza.</p>
 
   <h2>2. Deslinde médico y nutricional</h2>
   <p>Los cálculos de calorías y macronutrientes que genera esta herramienta se basan en fórmulas estándar (Mifflin-St Jeor) y estrategias generales de nutrición deportiva. Son <strong>estimaciones</strong>, no una valoración clínica individualizada. Las recetas y planes de acción son sugerencias generales, no prescripciones médicas.</p>

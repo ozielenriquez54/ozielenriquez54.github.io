@@ -93,6 +93,14 @@
   .photo-modal-grid img { width: 100%; border-radius: 4px; display: block; background: var(--light); }
   .photo-modal-grid figcaption { font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-top: 6px; text-align: center; }
   footer { text-align: center; padding: 30px 24px; font-family: 'Syne Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
+  .btn:not(.secondary), .tab-btn.active, .use-btn.active, .use-btn:hover, .macro-pill.kcal { color: #1c1c1c; }
+  .card-label, .use-btn, .del-btn, .phase-kcal, .error-msg, .goal-estimate .warn { color: #806319; }
+  .header-doc { color: #b5b5b5; }
+  .field, .card, .date-nav input { min-width: 0; }
+  .recipe-grid { grid-template-columns: repeat(auto-fit, minmax(min(270px, 100%), 1fr)); }
+  .recipe-meta, .extra-item, .bar-labels { flex-wrap: wrap; }
+  @media (max-width: 420px) { main { padding-left: 12px; padding-right: 12px; } .card { padding: 20px 16px; } }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -123,7 +131,7 @@
       </div>
       <button class="btn" id="authLoginBtn" type="button">Iniciar sesión</button>
       <button class="btn secondary" id="authSignupBtn" type="button">Crear cuenta nueva</button>
-      <div id="authStatus" class="auth-status"></div>
+      <div id="authStatus" class="auth-status" role="status" aria-live="polite"></div>
       <p class="hint" style="margin:10px 0 0;"><button type="button" class="photo-link" id="authForgotBtn">¿Olvidaste tu contraseña?</button></p>
     </div>
 
@@ -134,12 +142,13 @@
         <input type="password" id="authNewPassword" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
       </div>
       <button class="btn" id="authSetNewPasswordBtn" type="button">Guardar nueva contraseña</button>
-      <div id="authRecoverStatus" class="auth-status"></div>
+      <div id="authRecoverStatus" class="auth-status" role="status" aria-live="polite"></div>
     </div>
 
     <div id="authLoggedIn" style="display:none;">
       <p class="hint" style="margin-top:0;">Sesión iniciada como <strong id="authUserEmail"></strong>.</p>
       <button class="btn secondary" id="authLogoutBtn" type="button">Cerrar sesión</button>
+      <div id="authStatus2" class="auth-status" role="status"></div>
     </div>
   </section>
 
@@ -159,14 +168,14 @@
       <input type="email" id="claimEmail" placeholder="cliente@correo.com">
     </div>
     <button class="btn secondary" id="claimClientBtn" type="button">+ Agregar cliente</button>
-    <div id="claimStatus" class="auth-status"></div>
+    <div id="claimStatus" class="auth-status" role="status" aria-live="polite"></div>
 
     <p class="hint" style="margin-top:24px;">Da clic en un cliente para ver su progreso completo.</p>
     <div id="clientListWrap"><p class="empty-note">Cargando clientes...</p></div>
   </section>
 
   <section class="card" id="clientDetailCard" style="display:none;">
-    <a class="back-link" id="backToListBtn">← Volver a la lista de clientes</a>
+    <a href="#clientListCard" class="back-link" id="backToListBtn">← Volver a la lista de clientes</a>
     <div class="card-label">Detalle</div>
     <h2 id="clientDetailName">Cliente</h2>
     <div id="clientDetailBody"></div>
@@ -174,7 +183,7 @@
 
 </main>
 
-<div class="modal-overlay" id="photoModal">
+<div class="modal-overlay" id="photoModal" role="dialog" aria-modal="true" aria-labelledby="photoModalTitle">
   <div class="modal-card">
     <div class="modal-head">
       <h4 id="photoModalTitle">Fotos de progreso</h4>
@@ -283,7 +292,7 @@
       var d = new Date(e.date+'T00:00:00');
       var weekNum;
       if(startDate){
-        weekNum = Math.floor((d - startDate) / (1000*60*60*24*7)) + 1;
+        weekNum = Math.floor((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())) / (86400000*7)) + 1;
       } else {
         // Sin fecha de inicio de plan: agrupa por semana de calendario (lunes a domingo).
         var monday = new Date(d);
@@ -298,7 +307,7 @@
 
     var weekKeys = Object.keys(groups).sort(function(a,b){
       var na = parseFloat(a), nb = parseFloat(b);
-      if(!isNaN(na) && !isNaN(nb)) return na - nb;
+      if(startDate) return na - nb;
       return a < b ? -1 : (a > b ? 1 : 0);
     });
 
@@ -349,6 +358,10 @@
       loggedOut.style.display = 'block';
       loggedIn.style.display = 'none';
       recoverForm.style.display = 'none';
+      state.clients = [];
+      document.getElementById('clientListWrap').textContent = '';
+      document.getElementById('clientDetailBody').textContent = '';
+      closePhotoModal();
       document.getElementById('notCoachCard').style.display = 'none';
       document.getElementById('clientListCard').style.display = 'none';
       document.getElementById('clientDetailCard').style.display = 'none';
@@ -366,9 +379,10 @@
     var sb = getSupabase();
     if(!sb || !state.user) return;
 
-    sb.from('profiles').select('*').eq('id', state.user.id).maybeSingle().then(function(res){
+    var userId = state.user.id;
+    sb.from('profiles').select('*').eq('id', userId).maybeSingle().then(function(res){
+      if(!state.user || state.user.id !== userId) return;
       if(res.error) console.error('Nutrika coach: error leyendo tu propio perfil', res.error);
-      else console.log('Nutrika coach: tu perfil leído desde Supabase es', res.data);
       if(res.error || !res.data || !res.data.is_coach){
         document.getElementById('notCoachCard').style.display = 'block';
         document.getElementById('clientListCard').style.display = 'none';
@@ -378,7 +392,8 @@
       document.getElementById('clientListCard').style.display = 'block';
 
       sb.from('profiles').select('*').order('email').then(function(res2){
-        if(res2.error){ console.error('Nutrika coach: error leyendo la lista de clientes', res2.error); return; }
+        if(!state.user || state.user.id !== userId) return;
+        if(res2.error){ document.getElementById('clientListWrap').textContent = 'No se pudo cargar la lista. Intenta de nuevo.'; return; }
         state.clients = res2.data.filter(function(p){ return !p.is_coach; });
         renderClientList();
       });
@@ -392,20 +407,23 @@
       return;
     }
     var rows = state.clients.map(function(c){
-      return '<tr class="clickable" data-id="'+c.id+'">' +
+      return '<tr class="clickable" tabindex="0" data-id="'+escapeHtml(c.id)+'">' +
         '<td>'+escapeHtml(c.email || '(sin correo)')+'</td>' +
-        '<td>'+(c.meta ? '<span class="goal-pill">'+(GOAL_LABELS[c.meta]||c.meta)+'</span>' : '–')+'</td>' +
-        '<td>'+(c.peso != null ? c.peso+' kg' : '–')+'</td>' +
-        '<td>'+(c.peso_objetivo != null ? c.peso_objetivo+' kg' : '–')+'</td>' +
+        '<td>'+(c.meta ? '<span class="goal-pill">'+escapeHtml(GOAL_LABELS[c.meta]||c.meta)+'</span>' : '–')+'</td>' +
+        '<td>'+(c.peso != null ? escapeHtml(c.peso)+' kg' : '–')+'</td>' +
+        '<td>'+(c.peso_objetivo != null ? escapeHtml(c.peso_objetivo)+' kg' : '–')+'</td>' +
       '</tr>';
     }).join('');
     wrap.innerHTML = '<div class="client-table-wrap"><table class="client-table"><thead><tr><th>Correo</th><th>Meta</th><th>Peso actual</th><th>Peso objetivo</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
     wrap.querySelectorAll('tr.clickable').forEach(function(tr){
+      tr.addEventListener('keydown', function(e){ if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openClientDetail(tr.getAttribute('data-id')); } });
       tr.addEventListener('click', function(){ openClientDetail(tr.getAttribute('data-id')); });
     });
   }
 
+  var detailRequest = 0;
   function openClientDetail(clientId){
+    var request = ++detailRequest;
     var sb = getSupabase();
     if(!sb) return;
     var client = state.clients.find(function(c){ return c.id === clientId; });
@@ -416,11 +434,14 @@
     document.getElementById('clientDetailName').textContent = client.email || 'Cliente';
     document.getElementById('clientDetailBody').innerHTML = '<p class="empty-note">Cargando...</p>';
 
+    var userId = state.user.id;
     Promise.all([
       sb.from('plan_meta').select('data').eq('user_id', clientId).maybeSingle(),
       sb.from('daily_logs').select('*').eq('user_id', clientId).order('log_date')
     ]).then(function(results){
+      if(!state.user || state.user.id !== userId || request !== detailRequest) return;
       var planRes = results[0], logsRes = results[1];
+      if(planRes.error || logsRes.error){ document.getElementById('clientDetailBody').textContent = 'No se pudo cargar el progreso. Vuelve a la lista e intenta de nuevo.'; return; }
       var plan = (!planRes.error && planRes.data) ? planRes.data.data : null;
       var entries = (!logsRes.error && logsRes.data) ? logsRes.data.map(function(row){
         return { date: row.log_date, peso: row.peso, grasa: row.grasa, entreno: row.entreno, habits: row.habits || [], kcal: row.kcal || 0, p: row.p || 0, c: row.c || 0, f: row.f || 0, foto_frente: row.foto_frente || null, foto_lado: row.foto_lado || null, foto_espalda: row.foto_espalda || null };
@@ -433,10 +454,10 @@
     var html = '';
 
     html += '<div class="stat-grid">' +
-      '<div class="stat-card"><div class="v">'+(client.edad != null ? client.edad : '–')+'</div><div class="l">Edad</div></div>' +
-      '<div class="stat-card"><div class="v">'+(client.estatura != null ? client.estatura+' cm' : '–')+'</div><div class="l">Estatura</div></div>' +
-      '<div class="stat-card"><div class="v">'+(client.grasa_actual != null ? client.grasa_actual+'%' : '–')+'</div><div class="l">Grasa inicial</div></div>' +
-      '<div class="stat-card"><div class="v">'+(client.grasa_objetivo != null ? client.grasa_objetivo+'%' : '–')+'</div><div class="l">Grasa objetivo</div></div>' +
+      '<div class="stat-card"><div class="v">'+(client.edad != null ? escapeHtml(client.edad) : '–')+'</div><div class="l">Edad</div></div>' +
+      '<div class="stat-card"><div class="v">'+(client.estatura != null ? escapeHtml(client.estatura)+' cm' : '–')+'</div><div class="l">Estatura</div></div>' +
+      '<div class="stat-card"><div class="v">'+(client.grasa_actual != null ? escapeHtml(client.grasa_actual)+'%' : '–')+'</div><div class="l">Grasa inicial</div></div>' +
+      '<div class="stat-card"><div class="v">'+(client.grasa_objetivo != null ? escapeHtml(client.grasa_objetivo)+'%' : '–')+'</div><div class="l">Grasa objetivo</div></div>' +
     '</div>';
 
     if(plan && plan.targets){
@@ -470,10 +491,10 @@
     var rows = entries.slice().reverse().slice(0, 30).map(function(e){
       var hasFotos = !!(e.foto_frente || e.foto_lado || e.foto_espalda);
       return '<tr>' +
-        '<td>'+e.date+'</td>' +
-        '<td>'+(e.peso != null ? e.peso+' kg' : '–')+'</td>' +
-        '<td>'+(e.grasa != null ? e.grasa+'%' : '–')+'</td>' +
-        '<td>'+(e.kcal || 0)+' kcal</td>' +
+        '<td>'+escapeHtml(e.date)+'</td>' +
+        '<td>'+(e.peso != null ? escapeHtml(e.peso)+' kg' : '–')+'</td>' +
+        '<td>'+(e.grasa != null ? escapeHtml(e.grasa)+'%' : '–')+'</td>' +
+        '<td>'+escapeHtml(e.kcal || 0)+' kcal</td>' +
         '<td>'+(e.entreno ? '✓' : '–')+'</td>' +
         '<td>'+(e.habits ? e.habits.length : 0)+'/'+Object.keys(HABIT_LABELS).length+'</td>' +
         '<td>'+(hasFotos ? '<button type="button" class="photo-link" data-date="'+escapeHtml(e.date)+'">📷 Ver fotos</button>' : '–')+'</td>' +
@@ -502,15 +523,21 @@
     });
   }
 
+  var photoRequest = 0;
+  var photoReturnFocus = null;
   function openPhotoViewer(entry){
+    var request = ++photoRequest;
+    photoReturnFocus = document.activeElement;
     var modal = document.getElementById('photoModal');
     var body = document.getElementById('photoModalBody');
     document.getElementById('photoModalTitle').textContent = 'Fotos de progreso — ' + entry.date;
     body.innerHTML = '<p class="empty-note">Cargando fotos...</p>';
     modal.classList.add('open');
+    document.getElementById('closePhotoModalBtn').focus();
 
     var slots = [ {key:'foto_frente', label:'Frente'}, {key:'foto_lado', label:'Lado'}, {key:'foto_espalda', label:'Espalda'} ];
     Promise.all(slots.map(function(s){ return getSignedPhotoUrl(entry[s.key]); })).then(function(urls){
+      if(request !== photoRequest) return;
       var htmlOut = slots.map(function(s, i){
         if(!entry[s.key]) return '';
         var url = urls[i];
@@ -522,15 +549,30 @@
   }
 
   function closePhotoModal(){
+    photoRequest++;
+    if(photoReturnFocus && photoReturnFocus.isConnected) photoReturnFocus.focus();
+    photoReturnFocus = null;
     document.getElementById('photoModal').classList.remove('open');
     document.getElementById('photoModalBody').innerHTML = '';
   }
 
   document.getElementById('backToListBtn').addEventListener('click', function(){
+    detailRequest++;
     document.getElementById('clientDetailCard').style.display = 'none';
     document.getElementById('clientListCard').style.display = 'block';
   });
 
+  document.addEventListener('keydown', function(e){
+    var modal = document.querySelector('.modal-overlay.open');
+    if(!modal) return;
+    if(e.key === 'Escape') closePhotoModal();
+    if(e.key === 'Tab'){
+      var items = Array.from(modal.querySelectorAll('button, a[href], input, [tabindex="0"]')).filter(function(el){ return !el.disabled && el.getClientRects().length; });
+      var first = items[0], last = items[items.length-1];
+      if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+      else if(!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+    }
+  });
   document.getElementById('closePhotoModalBtn').addEventListener('click', closePhotoModal);
   document.getElementById('photoModal').addEventListener('click', function(e){
     if(e.target.id === 'photoModal') closePhotoModal();
@@ -548,7 +590,6 @@
     // regla explícita en vez de depender de cómo Postgres combina varias
     // políticas de UPDATE distintas sobre la misma tabla.
     sb.rpc('claim_client', { client_email: email }).then(function(res){
-      console.log('Nutrika coach: respuesta completa al intentar agregar cliente', res);
       if(res.error){ setAuthStatus(statusEl, 'Error: ' + res.error.message, 'error'); return; }
       if(!res.data || !res.data.length){
         setAuthStatus(statusEl, 'No encontramos un cliente sin asignar con ese correo. Verifica que ya haya iniciado sesión al menos una vez en la app, y que no tenga ya otro coach.', 'error');
@@ -635,9 +676,8 @@
   function doLogout(){
     var sb = getSupabase();
     if(!sb) return;
-    sb.auth.signOut().then(function(){
-      state.user = null;
-      renderAuthUI();
+    sb.auth.signOut().then(function(res){
+      if(res.error) setAuthStatus(document.getElementById('authStatus2'), 'No se pudo cerrar sesión: ' + res.error.message, 'error');
     });
   }
   document.getElementById('authLogoutBtn').addEventListener('click', doLogout);
@@ -650,14 +690,11 @@
       return;
     }
     sb.auth.onAuthStateChange(function(event, session){
-      if(event === 'PASSWORD_RECOVERY'){
-        state.recoveryMode = true;
-        renderAuthUI();
-        return;
-      }
+      if(event === 'PASSWORD_RECOVERY') state.recoveryMode = true;
       state.user = session ? session.user : null;
+      if(!state.user) state.recoveryMode = false;
       renderAuthUI();
-      if(state.user) loadClients();
+      if(state.user && !state.recoveryMode && event !== 'TOKEN_REFRESHED') setTimeout(loadClients, 0);
     });
   }
 
