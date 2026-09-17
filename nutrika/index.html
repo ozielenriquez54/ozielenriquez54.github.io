@@ -302,6 +302,7 @@
   }
   .bar-row .bar-labels .remaining { color: var(--muted); }
   .bar-row .bar-labels .remaining.done { color: var(--green); }
+  .bar-row .bar-labels .remaining.over { color: var(--gold-dark); }
 
   .extra-food-list { margin: 12px 0 4px; }
   .extra-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 10px 14px; margin-bottom: 8px; font-size: 13.5px; }
@@ -1993,7 +1994,7 @@
     var lastDate = weightEntries[weightEntries.length-1].date;
     var avgThisWeek = getWeeklyAverage(weightEntries, lastDate, 7);
     var prevEnd = new Date(lastDate+'T00:00:00'); prevEnd.setDate(prevEnd.getDate() - 7);
-    var avgPrevWeek = getWeeklyAverage(weightEntries, prevEnd.toISOString().slice(0,10), 7);
+    var avgPrevWeek = getWeeklyAverage(weightEntries, formatLocalDateStr(prevEnd), 7);
     if(avgThisWeek == null || avgPrevWeek == null) return null;
 
     return {
@@ -2236,8 +2237,12 @@
       saveLogEntries(merged);
       localOnly.forEach(function(e){ upsertLogToCloud(e); });
       renderLogSection();
+      // Si el usuario ya está editando el registro del día (esto puede
+      // dispararse de nuevo mucho después del login, p.ej. cuando Supabase
+      // refresca el token en segundo plano), no lo pisamos con lo recién
+      // sincronizado — se perdería lo que llevaba escrito sin guardar.
       var dateInput = document.getElementById('logFecha');
-      if(dateInput) loadLogFormForDate(dateInput.value || new Date().toISOString().slice(0,10));
+      if(dateInput && !state.logFormDirty) loadLogFormForDate(dateInput.value || todayLocalDateStr());
     });
   }
 
@@ -2276,7 +2281,13 @@
     mealTargets: null,
     session: null,
     user: null,
-    recoveryMode: false
+    recoveryMode: false,
+    // true en cuanto el usuario toca algo del registro del día (peso, hábitos,
+    // comidas, notas...) sin haber guardado — evita que una hidratación desde
+    // la nube en segundo plano (p.ej. al refrescarse el token) sobreescriba
+    // edits sin guardar. Se limpia cada vez que se recarga el formulario para
+    // una fecha (loadLogFormForDate).
+    logFormDirty: false
   };
 
   /* ============ RENDER ============ */
@@ -2499,16 +2510,31 @@
       {name:'Carbohidratos', val: totals.c, target: t.c, unit:'g'},
       {name:'Grasas', val: totals.f, target: t.f, unit:'g'}
     ];
-    var html = bars.map(function(b){
-      var pct = b.target > 0 ? (b.val/b.target*100) : 0;
-      var cls = pct > 110 ? 'over' : (pct >= 85 ? 'good' : '');
-      var w = Math.min(pct, 130);
-      return '<div class="bar-row">' +
-        '<div class="bar-labels"><span class="name">'+b.name+'</span><span>'+round(b.val)+' / '+round(b.target)+' '+b.unit+'</span></div>' +
-        '<div class="bar-track"><div class="bar-fill '+cls+'" style="width:'+w+'%"></div></div>' +
-      '</div>';
-    }).join('');
-    document.getElementById('summaryBars').innerHTML = html;
+    document.getElementById('summaryBars').innerHTML = bars.map(function(b){ return buildMacroBarRow(b, false); }).join('');
+  }
+
+  // Fila de barra de progreso "valor / meta" (usada en el resumen de macros
+  // del plan y en el registro diario) — antes cada vista calculaba por su
+  // cuenta el porcentaje/clase de color, con el riesgo de que se desincronizaran.
+  function buildMacroBarRow(b, showRemaining){
+    var pct = b.target > 0 ? (b.val/b.target*100) : 0;
+    var cls = pct > 110 ? 'over' : (pct >= 85 ? 'good' : '');
+    var w = Math.min(pct, 130);
+    var remainingHtml = '';
+    if(showRemaining){
+      var remaining = b.target - b.val;
+      var remainingLabel = remaining > 0.5
+        ? (round(remaining) + ' ' + b.unit + ' restantes')
+        : (remaining < -0.5 ? (round(-remaining) + ' ' + b.unit + ' de más') : 'Completo');
+      // "de más" (pasado de la meta) usa la misma clase de aviso que la barra
+      // ('over'), no la de "completo" — pasarse no es lo mismo que dar en el blanco.
+      var remainingCls = remaining > 0.5 ? '' : (remaining < -0.5 ? 'over' : 'done');
+      remainingHtml = ' · <span class="remaining '+remainingCls+'">'+remainingLabel+'</span>';
+    }
+    return '<div class="bar-row">' +
+      '<div class="bar-labels"><span class="name">'+b.name+'</span><span>'+round(b.val)+' / '+round(b.target)+' '+b.unit+remainingHtml+'</span></div>' +
+      '<div class="bar-track"><div class="bar-fill '+cls+'" style="width:'+w+'%"></div></div>' +
+    '</div>';
   }
 
   function rollingAverage(vals, window){
@@ -2617,20 +2643,7 @@
       {name:'Carbohidratos', val: totals.c, target: t.c, unit:'g'},
       {name:'Grasas', val: totals.f, target: t.f, unit:'g'}
     ];
-    el.innerHTML = bars.map(function(b){
-      var pct = b.target > 0 ? (b.val/b.target*100) : 0;
-      var cls = pct > 110 ? 'over' : (pct >= 85 ? 'good' : '');
-      var w = Math.min(pct, 130);
-      var remaining = b.target - b.val;
-      var remainingLabel = remaining > 0.5
-        ? (round(remaining) + ' ' + b.unit + ' restantes')
-        : (remaining < -0.5 ? (round(-remaining) + ' ' + b.unit + ' de más') : 'Completo');
-      var remainingCls = remaining <= 0.5 ? 'done' : '';
-      return '<div class="bar-row">' +
-        '<div class="bar-labels"><span class="name">'+b.name+'</span><span>'+round(b.val)+' / '+round(b.target)+' '+b.unit+' · <span class="remaining '+remainingCls+'">'+remainingLabel+'</span></span></div>' +
-        '<div class="bar-track"><div class="bar-fill '+cls+'" style="width:'+w+'%"></div></div>' +
-      '</div>';
-    }).join('');
+    el.innerHTML = bars.map(function(b){ return buildMacroBarRow(b, true); }).join('');
   }
 
   // renderLogSection() reconstruye los checkboxes de "#logMeals" desde cero
@@ -2647,9 +2660,27 @@
     });
   }
 
+  // "YYYY-MM-DD" del calendario local de hoy. NUNCA usar
+  // new Date().toISOString().slice(0,10) para esto: toISOString() siempre
+  // da la fecha en UTC, que puede ser un día distinto al de la fecha local
+  // (p.ej. en cualquier huso horario UTC+, o cerca de medianoche en uno UTC-).
+  function pad2(n){ return (n < 10 ? '0' : '') + n; }
+  function formatLocalDateStr(d){
+    return d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate());
+  }
+  function todayLocalDateStr(){
+    return formatLocalDateStr(new Date());
+  }
+
+  // Suma/resta días de calendario a una fecha "YYYY-MM-DD". Se hace todo en
+  // UTC (Date.UTC + setUTCDate) a propósito: construir la fecha en hora local
+  // y luego formatear con toISOString() (que es UTC) desfasa el resultado un
+  // día completo en cualquier huso horario UTC+ (p.ej. "día siguiente" no
+  // avanzaba nada, y "día anterior" retrocedía dos días).
   function shiftDateStr(dateStr, days){
-    var d = new Date(dateStr + 'T00:00:00');
-    d.setDate(d.getDate() + days);
+    var parts = dateStr.split('-');
+    var d = new Date(Date.UTC(parseInt(parts[0],10), parseInt(parts[1],10) - 1, parseInt(parts[2],10)));
+    d.setUTCDate(d.getUTCDate() + days);
     return d.toISOString().slice(0,10);
   }
 
@@ -2666,6 +2697,10 @@
   // blanco si el día está libre — así se puede tanto revisar/editar un día
   // pasado como pre-programar uno futuro sin perder lo ya registrado.
   function loadLogFormForDate(dateStr){
+    // El formulario ahora refleja exactamente lo guardado para esta fecha —
+    // cualquier edit sin guardar de la fecha anterior queda descartado a
+    // propósito (por eso navegar de fecha también limpia el flag).
+    state.logFormDirty = false;
     var entries = loadLog();
     var entry = entries.find(function(e){ return e.date === dateStr; });
 
@@ -2852,7 +2887,7 @@
       renderPlan(planComputed, goalEstimate, weeksGoal, peso);
 
       var planMeta = {
-        startDate: new Date().toISOString().slice(0,10),
+        startDate: todayLocalDateStr(),
         goal: t.goal, weeksGoal: weeksGoal, peso: peso,
         targets: t, originalTargets: state.originalTargets,
         weeklyTimeline: planComputed.weeklyTimeline, phase1Timeline: planComputed.phase1Timeline,
@@ -2895,7 +2930,7 @@
   });
 
   document.getElementById('saveLogBtn').addEventListener('click', function(){
-    var fecha = document.getElementById('logFecha').value || new Date().toISOString().slice(0,10);
+    var fecha = document.getElementById('logFecha').value || todayLocalDateStr();
     var pesoVal = parseFloat(document.getElementById('logPeso').value);
     var peso = isNaN(pesoVal) ? null : pesoVal;
     var grasaVal = parseFloat(document.getElementById('logGrasa').value);
@@ -3148,22 +3183,32 @@
     if(e.target && e.target.matches('input[type=checkbox]')) renderLogMacroProgress();
   });
 
+  // Marca el registro del día como "con cambios sin guardar" ante cualquier
+  // interacción real del usuario dentro de la sección (el input de fecha se
+  // excluye porque cambiarlo ya dispara su propia recarga del formulario).
+  document.getElementById('logSection').addEventListener('input', function(e){
+    if(e.target && e.target.id !== 'logFecha') state.logFormDirty = true;
+  });
+  document.getElementById('logSection').addEventListener('change', function(e){
+    if(e.target && e.target.id !== 'logFecha') state.logFormDirty = true;
+  });
+
   document.getElementById('logFecha').addEventListener('change', function(){
-    loadLogFormForDate(this.value || new Date().toISOString().slice(0,10));
+    loadLogFormForDate(this.value || todayLocalDateStr());
   });
   document.getElementById('logPrevDayBtn').addEventListener('click', function(){
     var input = document.getElementById('logFecha');
-    input.value = shiftDateStr(input.value || new Date().toISOString().slice(0,10), -1);
+    input.value = shiftDateStr(input.value || todayLocalDateStr(), -1);
     loadLogFormForDate(input.value);
   });
   document.getElementById('logNextDayBtn').addEventListener('click', function(){
     var input = document.getElementById('logFecha');
-    input.value = shiftDateStr(input.value || new Date().toISOString().slice(0,10), 1);
+    input.value = shiftDateStr(input.value || todayLocalDateStr(), 1);
     loadLogFormForDate(input.value);
   });
   document.getElementById('logTodayBtn').addEventListener('click', function(){
     var input = document.getElementById('logFecha');
-    input.value = new Date().toISOString().slice(0,10);
+    input.value = todayLocalDateStr();
     loadLogFormForDate(input.value);
   });
 
@@ -3327,7 +3372,7 @@
   /* ============ INIT ============ */
   (function init(){
     var todayInput = document.getElementById('logFecha');
-    if(todayInput) todayInput.value = new Date().toISOString().slice(0,10);
+    if(todayInput) todayInput.value = todayLocalDateStr();
 
     applyProfileToForm(loadProfile());
 

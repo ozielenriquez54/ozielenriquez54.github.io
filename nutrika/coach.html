@@ -201,6 +201,14 @@
   }
 
   function round(n){ return Math.round(n); }
+  // "YYYY-MM-DD" del calendario local de una fecha. NUNCA usar
+  // toISOString().slice(0,10) para esto: siempre da la fecha en UTC, que
+  // puede ser un día distinto al local (cualquier huso horario UTC+, o cerca
+  // de medianoche en uno UTC-).
+  function pad2(n){ return (n < 10 ? '0' : '') + n; }
+  function formatLocalDateStr(d){
+    return d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate());
+  }
   function escapeHtml(str){
     return String(str==null?'':str).replace(/[&<>"']/g, function(ch){
       return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
@@ -281,7 +289,7 @@
         var monday = new Date(d);
         var dow = (monday.getDay() + 6) % 7;
         monday.setDate(monday.getDate() - dow);
-        weekNum = monday.toISOString().slice(0,10);
+        weekNum = formatLocalDateStr(monday);
       }
       var key = String(weekNum);
       if(!groups[key]) groups[key] = { key: key, entries: [] };
