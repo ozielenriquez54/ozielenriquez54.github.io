@@ -1,0 +1,87 @@
+'use strict';
+(async()=>{
+  const status=document.getElementById('auth-status'),access=document.getElementById('pilot-access');
+  const recovery=document.getElementById('password-form');
+  const messages={SIGNED_OUT:'Inicia sesión con tu cuenta del piloto.',AUTHORIZED:'Sesión verificada y rol autorizado. Las funciones clínicas siguen deshabilitadas.',
+    ROLE_REQUIRED:'Sesión verificada. Falta una membresía activa para esta vista; solicítala al administrador.',AUTH_FAILED:'No se pudo completar la operación. Revisa los datos o solicita un enlace nuevo.',
+    EMAIL_SENT:'Si la cuenta está habilitada, recibirás un enlace. Ábrelo en este mismo perfil de navegador.',RECOVERY:'Define tu nueva contraseña.',LOGOUT_FAILED:'No se pudo confirmar el cierre de sesión. Vuelve a intentarlo.'};
+  let busy=false,updating=false,macrosUI=null,authorized=false,authEpoch=0,diaryUI=null,diaryModel=null,refreshDiary=()=>{};
+  function clearDiary(){diaryModel?.invalidate();diaryUI?.clear();}
+  function render(result){
+    status.textContent=messages[result.status]??messages.AUTH_FAILED;
+    access.hidden=result.status!=='AUTHORIZED';
+    recovery.hidden=result.status!=='RECOVERY';
+    authorized=result.status==='AUTHORIZED';
+    if(authorized&&!document.hidden){macrosUI?.refresh();refreshDiary();}else {macrosUI?.clear();clearDiary();access.hidden=true;}
+  }
+  // Capture credentials in memory and immediately clean the address; never log them.
+  const callback=location.pathname==='/auth/callback.html';
+  const callbackSearch=location.search,callbackHash=location.hash;
+  history.replaceState(null,'',location.pathname);
+  try{
+    const config=await (await fetch('/pilot-config.json',{cache:'no-store'})).json();
+    if(!config.publicKey){status.textContent='Configura PILOT_SUPABASE_PUBLIC_KEY con la clave publicable del proyecto piloto y reinicia el servidor.';return;}
+    const credential=callback?PilotAuth.parseCallback(callbackSearch,callbackHash):null;
+    const invitation=credential?.kind==='invite';
+    const role=invitation?'CLIENT':callback?(sessionStorage.getItem('twogramms-pilot-view')??'CLIENT'):document.body.dataset.role;
+    sessionStorage.setItem('twogramms-pilot-view',role);
+    const client=PilotAuth.createClient(config,supabase,fetch.bind(window));
+    const auth=PilotAuth.controller(client,role,location.origin+'/auth/callback.html',{approvedOrigin:config.publicOrigin??null,readOnly:config.readOnly===true});
+    macrosUI=PilotMacrosUI.mount(document.getElementById('macros-root'),{model:PilotMacrosService.createModel(client,role),role,
+      writer:config.macrosWritable===true&&role==='COACH'?PilotMacrosService.createWriter(client):null});
+    if(role==='CLIENT'&&config.diaryAvailable){
+      diaryModel=PilotDiaryService.createModel(client);
+      diaryUI=PilotDiaryUI.mount(document.getElementById('diary-root'),{model:diaryModel});
+      const own=PilotMacrosService.createModel(client,'CLIENT');
+      refreshDiary=async()=>{const ticket=authEpoch;clearDiary();try{
+        const targets=await own.list();if(ticket!==authEpoch||!authorized||document.hidden||targets.length!==1)return;
+        const d=new Date(),date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
+        await diaryUI.show(targets[0],date);
+      }catch{clearDiary();}};
+    }
+    async function run(fn){
+      if(busy)return;busy=true;access.hidden=true;macrosUI.clear();clearDiary();
+      const ticket=++authEpoch;
+      try{const result=await fn();if(ticket===authEpoch)render(result);}catch{if(ticket===authEpoch)render({status:'AUTH_FAILED'});}
+      finally{busy=false;document.querySelectorAll('input[type=password]').forEach(el=>{el.value='';});}
+    }
+    const email=()=>document.getElementById('auth-email').value.trim();
+    document.getElementById('login-form').addEventListener('submit',event=>{event.preventDefault();run(()=>auth.login(email(),document.getElementById('auth-password').value));});
+    document.getElementById('magic-link').addEventListener('click',()=>run(()=>auth.email(email(),false)));
+    document.getElementById('recover').addEventListener('click',()=>run(()=>auth.email(email(),true)));
+    document.getElementById('logout').addEventListener('click',async()=>{
+      const ticket=++authEpoch;auth.invalidate();updating=false;sessionStorage.removeItem('twogramms-pilot-recovery');render({status:'SIGNED_OUT'});
+      const result=await auth.logout();if(ticket===authEpoch)render(result);
+    });
+    recovery.addEventListener('submit',event=>{event.preventDefault();run(async()=>{
+      if(!updating)return {status:'AUTH_FAILED'};
+      const result=await auth.password(document.getElementById('new-password').value);
+      if(['AUTHORIZED','ROLE_REQUIRED'].includes(result.status)){updating=false;sessionStorage.removeItem('twogramms-pilot-recovery');}
+      return result;
+    });});
+    client.auth.onAuthStateChange(event=>{
+      if(event==='SIGNED_OUT'){authEpoch++;auth.invalidate();updating=false;sessionStorage.removeItem('twogramms-pilot-recovery');render({status:'SIGNED_OUT'});}
+      // Do not await Auth methods inside its event callback (SDK lock).
+      if(event==='TOKEN_REFRESHED'&&!busy&&!updating)setTimeout(()=>run(()=>auth.verify()),0);
+    });
+    window.addEventListener('focus',()=>{if(!busy&&!updating)run(()=>auth.verify());});
+    document.addEventListener('visibilitychange',()=>{
+      if(document.hidden){macrosUI.clear();clearDiary();access.hidden=true;}
+      else if(!busy&&!updating)run(()=>auth.verify());
+    });
+    // Revalidate active roles/relationships while the page is visible; no writes to macros.
+    let checkingMacros=false;
+    setInterval(async()=>{if(authorized&&!document.hidden&&!busy&&!updating&&!checkingMacros){checkingMacros=true;try{await macrosUI.revalidate();}finally{checkingMacros=false;}}},30000);
+    await run(async()=>{
+      if(callback){
+        if(!credential)return {status:'AUTH_FAILED'};
+        const result=invitation?await auth.invitation(credential.value):await auth.callback(credential.value);
+        if(result.status==='RECOVERY'){updating=true;sessionStorage.setItem('twogramms-pilot-recovery','1');}
+        return result;
+      }
+      const result=await auth.verify();
+      if(sessionStorage.getItem('twogramms-pilot-recovery')==='1'&&['AUTHORIZED','ROLE_REQUIRED'].includes(result.status)){updating=true;return {status:'RECOVERY'};}
+      return result;
+    });
+  }catch{render({status:'AUTH_FAILED'});}
+})();

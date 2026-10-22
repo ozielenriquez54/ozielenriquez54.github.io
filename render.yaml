@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: twogramms-pilot
+    runtime: docker
+    plan: free
+    dockerfilePath: ./pilot-backend/deployment/Dockerfile
+    dockerContext: .
+    autoDeployTrigger: off
+    envVars:
+      - key: PILOT_SUPABASE_PUBLIC_KEY
+        sync: false
