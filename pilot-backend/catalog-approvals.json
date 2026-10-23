@@ -1,0 +1,277 @@
+{
+  "schemaVersion": 2,
+  "legacy": [],
+  "usda": [
+    {
+      "foodId": "usda:fdc:171477",
+      "fdcId": 171477,
+      "profileVersion": 1,
+      "profileSha256": "e22c25aa0b7d55d2ea93f05727e5156ea3cd424c79d47ed62c66f6ba94a767ca",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:171496",
+      "fdcId": 171496,
+      "profileVersion": 1,
+      "profileSha256": "5081b59990d4652095895c601714ff01b6845385fd9cd417cec9ee1d981742f7",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:175177",
+      "fdcId": 175177,
+      "profileVersion": 1,
+      "profileSha256": "ef0edb100c618e11507eec559ed94d81f487a70aba478da3329229a5213107ed",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:173424",
+      "fdcId": 173424,
+      "profileVersion": 1,
+      "profileSha256": "121ce5a70d33135e08268fe968620ebde2662a1afd7375c9fc6914ee43faf76c",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:172476",
+      "fdcId": 172476,
+      "profileVersion": 1,
+      "profileSha256": "51df45e51f0d138a3ac7f72735fcc5fbf0e0d1b0f1d128727babafb78a30813e",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:167703",
+      "fdcId": 167703,
+      "profileVersion": 1,
+      "profileSha256": "badffbc00ddbde99dbe3dd442b32d791d85bbb6b4efa210a0314da4385963211",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:173904",
+      "fdcId": 173904,
+      "profileVersion": 1,
+      "profileSha256": "388d3bad6dcc44340e78a1499dbe2910e1d34976bf756ea8362f9fe582826067",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:173241",
+      "fdcId": 173241,
+      "profileVersion": 1,
+      "profileSha256": "abde9ace39c5f75ea3c6b14cad58389a4aef9aa12bf04ef8f3d272ef65136d99",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:172688",
+      "fdcId": 172688,
+      "profileVersion": 1,
+      "profileSha256": "27d34ebc783d40aa6d8c5668fd3c930779e824408fba1c6895cfa70e5fc8c8e8",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:169097",
+      "fdcId": 169097,
+      "profileVersion": 1,
+      "profileSha256": "252c66602676c5c92d4346b0900c74a5294a16282c2653b791c43956acf190d2",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:168201",
+      "fdcId": 168201,
+      "profileVersion": 1,
+      "profileSha256": "b1c1104c2dfba150910d8973f4ef5ef4c6fbf4de785e421ec014caf99a5b1fb2",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:168877",
+      "fdcId": 168877,
+      "profileVersion": 1,
+      "profileSha256": "4a65ec691287fa8b968c135977c5fae6dda0113eedcdb4c8e802365bae1b18b2",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:169703",
+      "fdcId": 169703,
+      "profileVersion": 1,
+      "profileSha256": "514de9f40ebdef752c316f709edbd24bdfea65638dba2adc63cfdffdc1ea1e91",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:171986",
+      "fdcId": 171986,
+      "profileVersion": 1,
+      "profileSha256": "a1d858aed200ae0ad5bd04735483239c0c0bf21215b123b4754baf56d93c95e6",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:170894",
+      "fdcId": 170894,
+      "profileVersion": 1,
+      "profileSha256": "94a4a1b284214ee531efa0d402f34e9ff0646dbdc41ce91ea3f8f3a7d31647fd",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:173735",
+      "fdcId": 173735,
+      "profileVersion": 1,
+      "profileSha256": "b488f1c9395696c2021794c978bd4b5c48ef10c8c8b0be5c20a50b1409f8e419",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:172421",
+      "fdcId": 172421,
+      "profileVersion": 1,
+      "profileSha256": "6bb37e471ba3f5c1473521e3b15bda1d235a502cfca36a181dbe0426808f9d2d",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:173757",
+      "fdcId": 173757,
+      "profileVersion": 1,
+      "profileSha256": "253c87435073af52bff672f1954c2a46a7510ac94c59d4bfed6e0cb50c925faa",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:168917",
+      "fdcId": 168917,
+      "profileVersion": 1,
+      "profileSha256": "8c4d88ec43e08926d35221e41adfe0daac8458b19dc30d8d58159f86520b2b1a",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:168482",
+      "fdcId": 168482,
+      "profileVersion": 1,
+      "profileSha256": "f0aac252065bffa41a4dd2cb01251d205597060b26c77af79232823714b57518",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:170379",
+      "fdcId": 170379,
+      "profileVersion": 1,
+      "profileSha256": "8b143644160a7491721938a67bafb41e7b4c85e94d7c1fa36ece587004b1a710",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:168462",
+      "fdcId": 168462,
+      "profileVersion": 1,
+      "profileSha256": "b409f7bda20bc9fc88ca7e9fc9a88f46fe641038dc94ebb0adc6efe1f3f7efa7",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:170393",
+      "fdcId": 170393,
+      "profileVersion": 1,
+      "profileSha256": "adc4660648efb3803fe49be57afd193fd2474e239b5d200adf4aa25d9aeadcf5",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:169291",
+      "fdcId": 169291,
+      "profileVersion": 1,
+      "profileSha256": "943404716c702662f44475024dc687be57b747b7ddc794611b18e9627a0734f7",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:170457",
+      "fdcId": 170457,
+      "profileVersion": 1,
+      "profileSha256": "c0f48c5bf5f6445b60561ca39a22a1bf29e827e83b143e72f0220b1b51c566ae",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:173944",
+      "fdcId": 173944,
+      "profileVersion": 1,
+      "profileSha256": "3866719e17992b63a507b4fae8f57fc9edc8766fc4f745fcab0b27d70d55ebb9",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:167762",
+      "fdcId": 167762,
+      "profileVersion": 1,
+      "profileSha256": "ff89a3f70a9cd8b4826b8a67d98a70b65dfdaa39605d469cdef76f60278afaa7",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:171705",
+      "fdcId": 171705,
+      "profileVersion": 1,
+      "profileSha256": "25311cb948da2befdf3fd927158810ed8e886c803a418cf28c3393c87d816d39",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:169910",
+      "fdcId": 169910,
+      "profileVersion": 1,
+      "profileSha256": "5febd771a01469f134301a307884d0e230301e7a40d56503add7986e20dad04a",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    },
+    {
+      "foodId": "usda:fdc:171413",
+      "fdcId": 171413,
+      "profileVersion": 1,
+      "profileSha256": "37fbf2cbb76fd33b256bb1e681818461d63c51cf060e8e8526ba7f0a08b96f8e",
+      "validatedBy": "user-reported-nutrition-responsible",
+      "validatedAt": "2026-10-22T21:28:38.205Z",
+      "approvalBasis": "User reported explicit nutrition-responsible approval; COMPLEX-TRAINING-SOURCE-VALIDATION-20261022.md"
+    }
+  ],
+  "datasetSha256": "2c87097dc7ed5b34210c2803d5bf7b79126d8912b06597702cba6f8b16812560"
+}

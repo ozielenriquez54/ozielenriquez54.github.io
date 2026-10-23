@@ -95,7 +95,18 @@ test('isolated deployable starts without either administrative module',()=>{
     // Supply installed SDK asset/dependencies for the smoke test only; Docker uses npm ci.
     const asset='pilot-backend/node_modules/@supabase/supabase-js/dist/umd/supabase.js';
     fs.mkdirSync(path.dirname(path.join(dir,asset)),{recursive:true});fs.copyFileSync(path.join(root,asset),path.join(dir,asset));
-    const result=spawnSync(process.execPath,['-e',`const {prepareRender}=require('./pilot-backend/server/render-readonly.cjs');const a=prepareRender({env:{RENDER_EXTERNAL_URL:'https://test.onrender.com',PILOT_SUPABASE_PUBLIC_KEY:'sb_publishable_test'}});a.server.listen(0,'127.0.0.1',()=>a.server.close());`],{cwd:dir,env:{...process.env,NODE_PATH:path.join(root,'pilot-backend/node_modules')},encoding:'utf8',timeout:15000});
+    const result=spawnSync(process.execPath,['-e',`
+      const assert=require('node:assert/strict');
+      const {prepareRender}=require('./pilot-backend/server/render-readonly.cjs');
+      const {prepareComplexServer}=require('./pilot-backend/activation-drafts/complex-infrastructure.cjs');
+      const {createPilotServer}=require('./pilot-backend/server/pilot-http.cjs');
+      const {loadCatalogApprovalPackage,realFoodCatalog}=require('./pilot-backend/server/real-food-catalog.cjs');
+      const pkg=loadCatalogApprovalPackage();assert.equal(realFoodCatalog(pkg.registry,undefined,pkg.profileManifest).list().length,30);
+      const env={RENDER_EXTERNAL_URL:'https://test.onrender.com',PILOT_SUPABASE_PUBLIC_KEY:'sb_publishable_test'};
+      const a=prepareRender({env});a.server.listen(0,'127.0.0.1',()=>a.server.close());
+      const b=prepareComplexServer({env});b.server.listen(0,'127.0.0.1',()=>b.server.close());
+      const c=createPilotServer({env,diaryService:{},trackingService:{}});c.server.listen(0,'127.0.0.1',()=>c.server.close());
+    `],{cwd:dir,env:{...process.env,NODE_PATH:path.join(root,'pilot-backend/node_modules')},encoding:'utf8',timeout:15000});
     assert.equal(result.status,0,'isolated startup failed');
   }finally{
     const resolved=path.resolve(dir);assert.ok(resolved.startsWith(path.resolve(os.tmpdir())+path.sep)&&path.basename(resolved).startsWith('twogramms-package-'));

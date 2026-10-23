@@ -12,7 +12,8 @@
       if(!response.ok||ticket!==epoch||again.error||again.data?.session?.user?.id!==user.user.id)throw new Error('DIARY_UNAVAILABLE');
       return (await response.json()).data;
     }
-    return {invalidate(){epoch++;},foods:()=>request('/api/diary/foods'),
+    return {invalidate(){epoch++;},foods:target=>request('/api/diary/foods?'+new URLSearchParams({gymId:target.gymId,clientId:target.clientId}),undefined),
+      createFood:(target,food)=>request('/api/diary/personal-foods',{...structuredClone(target),food:structuredClone(food)}),
       read:(target,date)=>request('/api/diary/day?'+new URLSearchParams({gymId:target.gymId,clientId:target.clientId,date})),
       save:command=>request('/api/diary/save',structuredClone(command))};
   }

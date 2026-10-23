@@ -5,14 +5,15 @@
   const messages={SIGNED_OUT:'Inicia sesión con tu cuenta del piloto.',AUTHORIZED:'Sesión verificada y rol autorizado. Las funciones clínicas siguen deshabilitadas.',
     ROLE_REQUIRED:'Sesión verificada. Falta una membresía activa para esta vista; solicítala al administrador.',AUTH_FAILED:'No se pudo completar la operación. Revisa los datos o solicita un enlace nuevo.',
     EMAIL_SENT:'Si la cuenta está habilitada, recibirás un enlace. Ábrelo en este mismo perfil de navegador.',RECOVERY:'Define tu nueva contraseña.',LOGOUT_FAILED:'No se pudo confirmar el cierre de sesión. Vuelve a intentarlo.'};
-  let busy=false,updating=false,macrosUI=null,authorized=false,authEpoch=0,diaryUI=null,diaryModel=null,refreshDiary=()=>{};
+  let busy=false,updating=false,macrosUI=null,authorized=false,authEpoch=0,diaryUI=null,diaryModel=null,trackingUI=null,trackingModel=null,coachHistoryUI=null,refreshDiary=()=>{},refreshTracking=()=>{},refreshCoachHistory=()=>{};
   function clearDiary(){diaryModel?.invalidate();diaryUI?.clear();}
+  function clearTracking(){trackingModel?.invalidate();trackingUI?.clear();coachHistoryUI?.clear();}
   function render(result){
     status.textContent=messages[result.status]??messages.AUTH_FAILED;
     access.hidden=result.status!=='AUTHORIZED';
     recovery.hidden=result.status!=='RECOVERY';
     authorized=result.status==='AUTHORIZED';
-    if(authorized&&!document.hidden){macrosUI?.refresh();refreshDiary();}else {macrosUI?.clear();clearDiary();access.hidden=true;}
+    if(authorized&&!document.hidden){macrosUI?.refresh();refreshDiary();refreshTracking();refreshCoachHistory();}else {macrosUI?.clear();clearDiary();clearTracking();access.hidden=true;}
   }
   // Capture credentials in memory and immediately clean the address; never log them.
   const callback=location.pathname==='/auth/callback.html';
@@ -27,6 +28,7 @@
     sessionStorage.setItem('twogramms-pilot-view',role);
     const client=PilotAuth.createClient(config,supabase,fetch.bind(window));
     const auth=PilotAuth.controller(client,role,location.origin+'/auth/callback.html',{approvedOrigin:config.publicOrigin??null,readOnly:config.readOnly===true});
+    const macrosModel=PilotMacrosService.createModel(client,role);
     macrosUI=PilotMacrosUI.mount(document.getElementById('macros-root'),{model:PilotMacrosService.createModel(client,role),role,
       writer:config.macrosWritable===true&&role==='COACH'?PilotMacrosService.createWriter(client):null});
     if(role==='CLIENT'&&config.diaryAvailable){
@@ -39,8 +41,13 @@
         await diaryUI.show(targets[0],date);
       }catch{clearDiary();}};
     }
+    if(config.trackingAvailable===true){
+      trackingModel=PilotTrackingService.createModel(client);trackingUI=PilotTrackingUI.mount(document.getElementById('tracking-root'),{model:trackingModel,role});
+      if(role==='CLIENT')refreshTracking=async()=>{const ticket=authEpoch;trackingUI.clear();try{const targets=await macrosModel.list();if(ticket!==authEpoch||!authorized||document.hidden||targets.length!==1)return;const d=new Date(),date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');await trackingUI.show(targets[0],date,macrosModel);}catch{trackingUI.clear();}};
+      else{coachHistoryUI=PilotCoachHistoryUI.mount(document.getElementById('coach-history-root'),{model:macrosModel,macros:macrosModel,tracking:trackingUI});refreshCoachHistory=async()=>{if(!authorized||document.hidden)return;await coachHistoryUI.refresh();};}
+    }
     async function run(fn){
-      if(busy)return;busy=true;access.hidden=true;macrosUI.clear();clearDiary();
+      if(busy)return;busy=true;access.hidden=true;macrosUI.clear();clearDiary();clearTracking();
       const ticket=++authEpoch;
       try{const result=await fn();if(ticket===authEpoch)render(result);}catch{if(ticket===authEpoch)render({status:'AUTH_FAILED'});}
       finally{busy=false;document.querySelectorAll('input[type=password]').forEach(el=>{el.value='';});}
@@ -66,7 +73,7 @@
     });
     window.addEventListener('focus',()=>{if(!busy&&!updating)run(()=>auth.verify());});
     document.addEventListener('visibilitychange',()=>{
-      if(document.hidden){macrosUI.clear();clearDiary();access.hidden=true;}
+      if(document.hidden){macrosUI.clear();clearDiary();clearTracking();access.hidden=true;}
       else if(!busy&&!updating)run(()=>auth.verify());
     });
     // Revalidate active roles/relationships while the page is visible; no writes to macros.
