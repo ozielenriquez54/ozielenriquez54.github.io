@@ -6,7 +6,7 @@
   function parseCallback(search,hash){
     const q=new URLSearchParams(search),h=new URLSearchParams((hash??'').replace(/^#/,''));
     if(!hash&&q.size===1&&q.has('code')&&q.get('code'))return {kind:'pkce',value:q.get('code')};
-    if(!search&&h.size===2&&h.get('type')==='invite'&&/^[a-zA-Z0-9_-]{20,2048}$/.test(h.get('token_hash')??''))return {kind:'invite',value:h.get('token_hash')};
+    if(!search&&h.size===2&&['invite','recovery'].includes(h.get('type'))&&/^[a-zA-Z0-9_-]{20,2048}$/.test(h.get('token_hash')??''))return {kind:h.get('type'),value:h.get('token_hash')};
     return null;
   }
   function createClient(config,sdk,fetchImpl,{admin=false,macros=false}={}){
@@ -65,6 +65,14 @@
         return {status:allowed?'AUTHORIZED':'ROLE_REQUIRED'};
       }catch{return {status:'AUTH_FAILED'};}
     }
+    async function passwordLink(tokenHash,type){try{
+      if(typeof tokenHash!=='string'||!/^[a-zA-Z0-9_-]{20,2048}$/.test(tokenHash))fail();
+      const r=await client.auth.verifyOtp({token_hash:tokenHash,type});
+      if(r.error||!r.data?.session)fail();
+      const user=await client.auth.getUser();
+      if(user.error||!user.data?.user?.id||user.data.user.id!==r.data.session.user?.id)fail();
+      return {status:'RECOVERY'};
+    }catch{return {status:'AUTH_FAILED'};}}
     return {
       verify,
       invalidate(){generation++;},
@@ -80,14 +88,8 @@
         const verified=await verify();
         return {status:r.data?.redirectType==='recovery'&&['AUTHORIZED','ROLE_REQUIRED'].includes(verified.status)?'RECOVERY':verified.status};
       }catch{return {status:'AUTH_FAILED'};}},
-      async invitation(tokenHash){try{
-        if(typeof tokenHash!=='string'||!/^[a-zA-Z0-9_-]{20,2048}$/.test(tokenHash))fail();
-        const r=await client.auth.verifyOtp({token_hash:tokenHash,type:'invite'});
-        if(r.error||!r.data?.session)fail();
-        const user=await client.auth.getUser();
-        if(user.error||!user.data?.user?.id||user.data.user.id!==r.data.session.user?.id)fail();
-        return {status:'RECOVERY'};
-      }catch{return {status:'AUTH_FAILED'};}},
+      invitation:tokenHash=>passwordLink(tokenHash,'invite'),
+      recovery:tokenHash=>passwordLink(tokenHash,'recovery'),
       async password(password){try{
         if(typeof password!=='string'||password.length<8)fail();
         const r=await client.auth.updateUser({password});if(r.error)fail();return await verify();

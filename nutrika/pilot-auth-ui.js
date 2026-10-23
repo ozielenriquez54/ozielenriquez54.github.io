@@ -82,7 +82,7 @@
     await run(async()=>{
       if(callback){
         if(!credential)return {status:'AUTH_FAILED'};
-        const result=invitation?await auth.invitation(credential.value):await auth.callback(credential.value);
+        const result=invitation?await auth.invitation(credential.value):credential.kind==='recovery'?await auth.recovery(credential.value):await auth.callback(credential.value);
         if(result.status==='RECOVERY'){updating=true;sessionStorage.setItem('twogramms-pilot-recovery','1');}
         return result;
       }

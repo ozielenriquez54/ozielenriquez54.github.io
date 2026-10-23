@@ -25,8 +25,9 @@ test('Render serves both surfaces, rejects wrong host and keeps business writes 
 });
 test('invite parsing rejects bearer fragments, duplicates, mixed credentials and redirects',()=>{
   assert.deepEqual(parseCallback('','#token_hash='+token+'&type=invite'),{kind:'invite',value:token});
+  assert.deepEqual(parseCallback('','#token_hash='+token+'&type=recovery'),{kind:'recovery',value:token});
   assert.deepEqual(parseCallback('?code=abc',''),{kind:'pkce',value:'abc'});
-  for(const [s,h] of [['?token_hash='+token+'&type=invite',''],['?code=x','#token_hash='+token+'&type=invite'],['','#access_token=x'],['','#token_hash='+token+'&type=invite&type=invite'],['','#token_hash='+token+'&type=recovery'],['?code=x&next=https://evil.test','']])assert.equal(parseCallback(s,h),null);
+  for(const [s,h] of [['?token_hash='+token+'&type=invite',''],['?code=x','#token_hash='+token+'&type=invite'],['','#access_token=x'],['','#token_hash='+token+'&type=invite&type=invite'],['','#token_hash='+token+'&type=signup'],['?code=x&next=https://evil.test','']])assert.equal(parseCallback(s,h),null);
 });
 test('invite verifies OTP and server user; expired or mismatched credentials fail without profile writes',async()=>{
   let otp=0,rpc=0;
