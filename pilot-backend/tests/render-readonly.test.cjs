@@ -35,7 +35,7 @@ test('invite verifies OTP and server user; expired or mismatched credentials fai
   const auth=controller(client,'CLIENT',origin+'/auth/callback.html',{approvedOrigin:origin,readOnly:true});
   assert.equal((await auth.invitation(token)).status,'RECOVERY');assert.equal(rpc,0);
   assert.equal((await auth.invitation('bad')).status,'AUTH_FAILED');assert.equal(otp,1);
-  client.auth.getUser=async()=>({data:{user:{id:'other'}}});assert.equal((await auth.invitation(token)).status,'AUTH_FAILED');
+  client.auth.getUser=async()=>({data:{user:{id:'other'}}});assert.equal((await auth.invitation(token)).status,'RECOVERY_SESSION_MISMATCH');
   client.auth.verifyOtp=async()=>({error:{message:'SECRET'}});assert.deepEqual(await auth.invitation(token),{status:'AUTH_FAILED'});
 });
 test('read-only auth does not create profile and transport blocks application RPCs',async()=>{

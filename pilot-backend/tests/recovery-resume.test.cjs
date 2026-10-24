@@ -10,6 +10,8 @@ function fixture(){
  const storage=new Map(),calls={otp:0,user:0,password:0};
  const state={user:id,expired:false};
  const client={auth:{onAuthStateChange(){},
+  async setSession(){return {data:{session:{user:{id}}}};},
+  async exchangeCodeForSession(){return {data:{session:{user:{id}},redirectType:'recovery'}};},
   async verifyOtp(){calls.otp++;return state.expired?{error:{message:token,code:'otp_expired'}}:{data:{session:{user:{id}}}};},
   async getUser(){calls.user++;if(state.network)return {error:{name:'AuthRetryableFetchError',status:503}};return {data:{user:state.user?{id:state.user}:null},error:state.user?null:{message:'Session missing'}};},
   async updateUser(input){calls.password++;assert.deepEqual(input,{password});return {data:{user:{id}}};}
@@ -30,6 +32,20 @@ function fixture(){
  }
  return {storage,state,calls,page};
 }
+for(const type of ['invite','recovery'])test('implicit '+type+': UI cleans URL, verifies session and shows password form',async()=>{
+ const f=fixture(),page=await f.page('#access_token=synthetic.payload.signature&refresh_token='+token+'&token_type=bearer&type='+type);
+ assert.equal(page.els['password-form'].hidden,false);assert.equal(page.els['login-form'].hidden,true);
+ await page.submit();assert.equal(f.calls.password,1);assert.equal(f.calls.otp,0);assert.equal(f.storage.has(key),false);
+});
+test('PKCE recovery shows password UI after authenticated exchange',async()=>{
+ const f=fixture(),page=await f.page('','?code=synthetic-code');assert.equal(page.els['password-form'].hidden,false);
+ await page.submit();assert.equal(f.calls.password,1);assert.equal(f.calls.otp,0);
+});
+test('Auth error redirect shows safe expiry message and cannot resume an old session',async()=>{
+ const f=fixture();f.storage.set(key,id);const page=await f.page('#error=access_denied&error_code=otp_expired&error_description=private-detail');
+ assert.equal(page.els['password-form'].hidden,true);assert.equal(f.storage.has(key),false);assert.match(page.els['auth-status'].textContent,/utilizado/);
+ assert.ok(!page.els['auth-status'].textContent.includes('private-detail'));assert.equal(f.calls.user,0);
+});
 for(const type of ['invite','recovery'])test(type+': reload resumes validated identity without reusing OTP or requiring membership',async()=>{
  const f=fixture();let page=await f.page('#token_hash='+token+'&type='+type);
  assert.equal(page.els['password-form'].hidden,false);assert.equal(f.storage.get(key),id);

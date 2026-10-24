@@ -6,12 +6,13 @@
     ROLE_REQUIRED:'Sesión verificada. Falta una membresía activa para esta vista; solicítala al administrador.',AUTH_FAILED:'No se pudo completar la operación. Revisa los datos o solicita un enlace nuevo.',
     EMAIL_SENT:'Si la cuenta está habilitada, recibirás un enlace. Ábrelo en este mismo perfil de navegador.',RECOVERY:'Define tu nueva contraseña.',PASSWORD_UPDATED:'Contraseña actualizada. Ya puedes iniciar sesión.',LOGOUT_FAILED:'No se pudo confirmar el cierre de sesión. Vuelve a intentarlo.'};
   Object.assign(messages,{
+    LINK_INVALID:'El enlace está incompleto o no es válido. Usa el enlace completo del correo.',
     LINK_EXPIRED:'El enlace ha expirado. Solicita asistencia para recuperar el acceso.',
     LINK_EXPIRED_OR_USED:'El enlace ha expirado o ya fue utilizado. No es posible distinguir ambas causas con la respuesta recibida.',
     RECOVERY_NETWORK:'No se pudo verificar la sesión por un problema de conexión. Reintenta la verificación sin volver a abrir el enlace.',
     RECOVERY_SESSION_MISSING:'No hay una sesión de recuperación válida en este navegador.',
     RECOVERY_SESSION_MISMATCH:'La sesión corresponde a otra cuenta. No se permite cambiar la contraseña.',
-    AUTH_FAILED:'No se pudo verificar la recuperación o completar la operación. Error desconocido; solicita asistencia.'
+    AUTH_FAILED:'No se pudo verificar la recuperación o completar la operación. Solicita asistencia sin compartir el enlace.',
   });
   let recoveryMode=location.pathname==='/auth/callback.html';
   function recoveryLayout(){
@@ -43,7 +44,7 @@
     const config=await (await fetch('/pilot-config.json',{cache:'no-store'})).json();
     if(!config.publicKey){status.textContent='Configura PILOT_SUPABASE_PUBLIC_KEY con la clave publicable del proyecto piloto y reinicia el servidor.';return;}
     const credential=callback?PilotAuth.parseCallback(callbackSearch,callbackHash):null;
-    const invitation=credential?.kind==='invite';
+    const invitation=credential?.kind==='invite'||credential?.kind==='implicit'&&credential.type==='invite';
     const role=invitation?'CLIENT':callback?(sessionStorage.getItem('twogramms-pilot-view')??'CLIENT'):document.body.dataset.role;
     sessionStorage.setItem('twogramms-pilot-view',role);
     const client=PilotAuth.createClient(config,supabase,fetch.bind(window));
@@ -103,8 +104,9 @@
     setInterval(async()=>{if(authorized&&!document.hidden&&!busy&&!updating&&!recoveryMode&&!checkingMacros){checkingMacros=true;try{await macrosUI.revalidate();}finally{checkingMacros=false;}}},30000);
     await run(async()=>{
       if(callback){
-        if(!credential&&(callbackSearch||callbackHash)){auth.invalidate();return {status:'AUTH_FAILED'};}
-        const result=!credential?await auth.resumeRecovery():invitation?await auth.invitation(credential.value):credential.kind==='recovery'?await auth.recovery(credential.value):await auth.callback(credential.value);
+        if(!credential&&(callbackSearch||callbackHash)){auth.invalidate();return {status:'LINK_INVALID'};}
+        if(credential?.kind==='error'){auth.invalidate();return {status:credential.status};}
+        const result=!credential?await auth.resumeRecovery():credential.kind==='implicit'?await auth.implicit(credential.value,credential.type):invitation?await auth.invitation(credential.value):credential.kind==='recovery'?await auth.recovery(credential.value):await auth.callback(credential.value);
         if(result.status==='RECOVERY')updating=true;
         return result;
       }
