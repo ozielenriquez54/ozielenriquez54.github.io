@@ -57,7 +57,7 @@ test('invitation UI cleans URL before requests, uses CLIENT and enables password
     history:{replaceState(){clean=true;}},sessionStorage:{getItem:()=> 'COACH',setItem(){},removeItem(){}},
     fetch:async()=>{assert.ok(clean);return {json:async()=>({publicKey:'sb_publishable_test',publicOrigin:origin,readOnly:true})};},supabase:{},
     PilotAuth:{parseCallback,createClient:()=>({auth:{onAuthStateChange(){}}}),controller:(_c,role,_u,opts)=>{
-      selected=role;assert.equal(opts.readOnly,true);return {invitation:async value=>{assert.ok(clean);assert.equal(value,token);accepted++;return {status:'RECOVERY'};},password:async()=>({status:'ROLE_REQUIRED'})};}},
+      selected=role;assert.equal(opts.readOnly,true);return {invitation:async value=>{assert.ok(clean);assert.equal(value,token);accepted++;return {status:'RECOVERY'};},password:async()=>({status:'PASSWORD_UPDATED'})};}},
     PilotMacrosService:{createModel:()=>({})},PilotMacrosUI:{mount:()=>({clear(){},refresh(){},revalidate(){}})},setInterval(){},setTimeout(){}};
   await vm.runInNewContext(fs.readFileSync(require.resolve('../../nutrika/pilot-auth-ui.js'),'utf8'),context);
   assert.equal(selected,'CLIENT');assert.equal(accepted,1);assert.equal(els['password-form'].hidden,false);assert.equal(els['pilot-access'].hidden,true);

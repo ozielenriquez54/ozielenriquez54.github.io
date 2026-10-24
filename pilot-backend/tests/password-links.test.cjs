@@ -17,7 +17,7 @@ for(const type of ['invite','recovery']){
 
  for(const scenario of ['valid','expired','used','mismatch','missing-session','network']){
   test(type+': UI '+scenario+' keeps credentials private and business writes closed',async()=>{
-   let clean=false,verified=0,updates=0,profileReads=0;const els={};
+   let clean=false,verified=0,updates=0,profileReads=0;const els={},storage=new Map();
    const element=id=>els[id]??={hidden:false,value:'',textContent:'',addEventListener(k,f){this[k]=f;}};
    const client={auth:{
     onAuthStateChange(){},
@@ -34,7 +34,7 @@ for(const type of ['invite','recovery']){
      querySelectorAll:()=>[element('new-password')],addEventListener(){}},window:{addEventListener(){}},
     location:{pathname:'/auth/callback.html',origin,search:'',hash:'#token_hash='+token+'&type='+type},
     history:{replaceState(_state,_title,url){assert.equal(url,'/auth/callback.html');clean=true;}},
-    sessionStorage:{getItem(){return 'CLIENT';},setItem(k,v){assert.ok(!String(v).includes(token));},removeItem(){}},
+    sessionStorage:{getItem:k=>storage.get(k)??null,setItem(k,v){assert.ok(!String(v).includes(token));storage.set(k,v);},removeItem:k=>storage.delete(k)},
     fetch:async url=>{assert.ok(clean);assert.equal(url,'/pilot-config.json');return {json:async()=>({publicKey:'sb_publishable_test',publicOrigin:origin,readOnly:true,macrosWritable:false,diaryAvailable:false,trackingAvailable:false})};},
     supabase:{},PilotAuth:{...auth,createClient:()=>client},
     PilotMacrosService:{createModel:()=>({})},PilotMacrosUI:{mount:(_el,options)=>{assert.equal(options.writer,null);return {clear(){},refresh(){},revalidate(){}};}},
@@ -45,7 +45,7 @@ for(const type of ['invite','recovery']){
    element('new-password').value='synthetic-new-password';
    els['password-form'].submit({preventDefault(){}});await new Promise(r=>setImmediate(r));
    assert.equal(updates,scenario==='valid'?1:0);assert.equal(els['new-password'].value,'');
-   assert.equal(els['pilot-access'].hidden,true);
+   assert.equal(els['pilot-access'].hidden,true);assert.equal(profileReads,0);
    assert.ok(!els['auth-status'].textContent.includes(token));
   });
  }

@@ -14,7 +14,7 @@ function fixture({roles=['COACH'],active=true,error=false,recovery=false}={}){
     signOut:async args=>{calls.push(['logout',args]);signedIn=false;return result();},
     resetPasswordForEmail:async(...args)=>{calls.push(['recover',...args]);return result();},
     signInWithOtp:async args=>{calls.push(['magic',args]);return result();},
-    exchangeCodeForSession:async()=>error?result():{data:{redirectType:recovery?'recovery':null}},
+    exchangeCodeForSession:async()=>error?result():{data:{redirectType:recovery?'recovery':null,session:{user:{id:'synthetic-user'}}}},
     updateUser:async args=>{calls.push(['password',args]);return result();}
   },rpc:async name=>{calls.push(['rpc',name]);return error?result():{data:{id:'synthetic-user'}};},
   from:name=>{calls.push(['table',name]);const q={select:()=>q,eq:(key,value)=>{calls.push(['filter',key,value]);return key==='active'?Promise.resolve(error?result():{data:[{user_id:'synthetic-user',roles,active}]}):q;}};return q;}};
@@ -46,7 +46,8 @@ test('magic link never creates users; recovery uses fixed local PKCE callback',a
   assert.equal(f.calls[0][1].options.emailRedirectTo,'http://127.0.0.1:3000/auth/callback.html');
   await f.auth.email('synthetic@example.test',true);
   assert.equal((await f.auth.callback('synthetic-code')).status,'RECOVERY');
-  assert.equal((await f.auth.password('synthetic-password')).status,'AUTHORIZED');
+  assert.equal((await f.auth.password('synthetic-password')).status,'PASSWORD_UPDATED');
+  assert.equal(f.calls.filter(c=>['rpc','table'].includes(c[0])).length,0);
   assert.throws(()=>controller(f.client,'COACH','https://other.example/auth/callback.html'));
 });
 test('profile RPC accepts a single composite row and rejects missing, foreign or ambiguous rows',async()=>{

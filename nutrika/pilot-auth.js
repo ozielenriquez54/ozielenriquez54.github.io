@@ -41,13 +41,32 @@
       }}
     });
   }
-  function controller(client,role,redirectTo,{approvedOrigin=null,readOnly=false}={}){
+  function controller(client,role,redirectTo,{approvedOrigin=null,readOnly=false,recoveryState=null}={}){
     if(!['COACH','CLIENT'].includes(role))fail();
     const url=new URL(redirectTo);
     const local=url.protocol==='http:'&&['127.0.0.1','localhost'].includes(url.hostname);
     const published=approvedOrigin&&url.protocol==='https:'&&url.origin===approvedOrigin;
     if(!(local&&!approvedOrigin||published)||url.username||url.password||url.pathname!=='/auth/callback.html'||url.search||url.hash)fail();
-    let generation=0;
+    let generation=0,pendingUser=null,passwordUser=null;
+    const recovery=recoveryState??{get:()=>pendingUser,set:id=>{pendingUser=id;},clear:()=>{pendingUser=null;}};
+    function clearRecovery(){passwordUser=null;recovery.clear();}
+    async function resumeRecovery(){
+      const ticket=generation;
+      try{
+        const expected=recovery.get();
+        // Old boolean flags cannot establish the expected identity.
+        if(typeof expected!=='string'||!/^[a-zA-Z0-9-]{3,128}$/.test(expected))fail();
+        const user=await client.auth.getUser();
+        if(ticket!==generation||user.error||user.data?.user?.id!==expected)fail();
+        passwordUser=expected;return {status:'RECOVERY'};
+      }catch{clearRecovery();return {status:'AUTH_FAILED'};}
+    }
+    async function passwordSession(session){
+      const id=session?.user?.id;
+      if(typeof id!=='string'||!/^[a-zA-Z0-9-]{3,128}$/.test(id))fail();
+      // Only an Auth exchange can establish this reference; never store its tokens.
+      recovery.set(id);return resumeRecovery();
+    }
     async function verify(){
       const ticket=++generation;
       try{
@@ -66,33 +85,38 @@
       }catch{return {status:'AUTH_FAILED'};}
     }
     async function passwordLink(tokenHash,type){try{
+      clearRecovery();
+      const ticket=generation;
       if(typeof tokenHash!=='string'||!/^[a-zA-Z0-9_-]{20,2048}$/.test(tokenHash))fail();
       const r=await client.auth.verifyOtp({token_hash:tokenHash,type});
-      if(r.error||!r.data?.session)fail();
-      const user=await client.auth.getUser();
-      if(user.error||!user.data?.user?.id||user.data.user.id!==r.data.session.user?.id)fail();
-      return {status:'RECOVERY'};
+      if(ticket!==generation||r.error||!r.data?.session)fail();
+      return await passwordSession(r.data.session);
     }catch{return {status:'AUTH_FAILED'};}}
     return {
       verify,
-      invalidate(){generation++;},
-      async login(email,password){try{const r=await client.auth.signInWithPassword({email,password});if(r.error)fail();return await verify();}catch{return {status:'AUTH_FAILED'};}},
-      async logout(){generation++;try{const r=await client.auth.signOut({scope:'local'});return {status:r.error?'LOGOUT_FAILED':'SIGNED_OUT'};}catch{return {status:'LOGOUT_FAILED'};}},
+      resumeRecovery,
+      invalidate(){generation++;clearRecovery();},
+      async login(email,password){try{clearRecovery();const r=await client.auth.signInWithPassword({email,password});if(r.error)fail();return await verify();}catch{return {status:'AUTH_FAILED'};}},
+      async logout(){generation++;clearRecovery();try{const r=await client.auth.signOut({scope:'local'});return {status:r.error?'LOGOUT_FAILED':'SIGNED_OUT'};}catch{return {status:'LOGOUT_FAILED'};}},
       async email(email,recovery){try{
         const r=recovery?await client.auth.resetPasswordForEmail(email,{redirectTo}):await client.auth.signInWithOtp({email,options:{emailRedirectTo:redirectTo,shouldCreateUser:false}});
         if(r.error)fail();return {status:'EMAIL_SENT'};
       }catch{return {status:'AUTH_FAILED'};}},
       async callback(code){try{
+        clearRecovery();
+        const ticket=generation;
         if(typeof code!=='string'||!code||code.length>2048)fail();
-        const r=await client.auth.exchangeCodeForSession(code);if(r.error)fail();
-        const verified=await verify();
-        return {status:r.data?.redirectType==='recovery'&&['AUTHORIZED','ROLE_REQUIRED'].includes(verified.status)?'RECOVERY':verified.status};
+        const r=await client.auth.exchangeCodeForSession(code);if(ticket!==generation||r.error)fail();
+        if(r.data?.redirectType==='recovery')return await passwordSession(r.data.session);
+        return await verify();
       }catch{return {status:'AUTH_FAILED'};}},
       invitation:tokenHash=>passwordLink(tokenHash,'invite'),
       recovery:tokenHash=>passwordLink(tokenHash,'recovery'),
       async password(password){try{
-        if(typeof password!=='string'||password.length<8)fail();
-        const r=await client.auth.updateUser({password});if(r.error)fail();return await verify();
+        if(typeof password!=='string'||password.length<8||!passwordUser||recovery.get()!==passwordUser)fail();
+        if((await resumeRecovery()).status!=='RECOVERY')fail();
+        const r=await client.auth.updateUser({password});if(r.error)fail();
+        clearRecovery();return {status:'PASSWORD_UPDATED'};
       }catch{return {status:'AUTH_FAILED'};}}
     };
   }

@@ -4,7 +4,7 @@
   const recovery=document.getElementById('password-form');
   const messages={SIGNED_OUT:'Inicia sesión con tu cuenta del piloto.',AUTHORIZED:'Sesión verificada y rol autorizado. Las funciones clínicas siguen deshabilitadas.',
     ROLE_REQUIRED:'Sesión verificada. Falta una membresía activa para esta vista; solicítala al administrador.',AUTH_FAILED:'No se pudo completar la operación. Revisa los datos o solicita un enlace nuevo.',
-    EMAIL_SENT:'Si la cuenta está habilitada, recibirás un enlace. Ábrelo en este mismo perfil de navegador.',RECOVERY:'Define tu nueva contraseña.',LOGOUT_FAILED:'No se pudo confirmar el cierre de sesión. Vuelve a intentarlo.'};
+    EMAIL_SENT:'Si la cuenta está habilitada, recibirás un enlace. Ábrelo en este mismo perfil de navegador.',RECOVERY:'Define tu nueva contraseña.',PASSWORD_UPDATED:'Contraseña actualizada. Ya puedes iniciar sesión.',LOGOUT_FAILED:'No se pudo confirmar el cierre de sesión. Vuelve a intentarlo.'};
   let busy=false,updating=false,macrosUI=null,authorized=false,authEpoch=0,diaryUI=null,diaryModel=null,trackingUI=null,trackingModel=null,coachHistoryUI=null,refreshDiary=()=>{},refreshTracking=()=>{},refreshCoachHistory=()=>{};
   function clearDiary(){diaryModel?.invalidate();diaryUI?.clear();}
   function clearTracking(){trackingModel?.invalidate();trackingUI?.clear();coachHistoryUI?.clear();}
@@ -27,7 +27,8 @@
     const role=invitation?'CLIENT':callback?(sessionStorage.getItem('twogramms-pilot-view')??'CLIENT'):document.body.dataset.role;
     sessionStorage.setItem('twogramms-pilot-view',role);
     const client=PilotAuth.createClient(config,supabase,fetch.bind(window));
-    const auth=PilotAuth.controller(client,role,location.origin+'/auth/callback.html',{approvedOrigin:config.publicOrigin??null,readOnly:config.readOnly===true});
+    const recoveryState={get:()=>sessionStorage.getItem('twogramms-pilot-recovery'),set:id=>sessionStorage.setItem('twogramms-pilot-recovery',id),clear:()=>sessionStorage.removeItem('twogramms-pilot-recovery')};
+    const auth=PilotAuth.controller(client,role,location.origin+'/auth/callback.html',{approvedOrigin:config.publicOrigin??null,readOnly:config.readOnly===true,recoveryState});
     const macrosModel=PilotMacrosService.createModel(client,role);
     macrosUI=PilotMacrosUI.mount(document.getElementById('macros-root'),{model:PilotMacrosService.createModel(client,role),role,
       writer:config.macrosWritable===true&&role==='COACH'?PilotMacrosService.createWriter(client):null});
@@ -63,11 +64,11 @@
     recovery.addEventListener('submit',event=>{event.preventDefault();run(async()=>{
       if(!updating)return {status:'AUTH_FAILED'};
       const result=await auth.password(document.getElementById('new-password').value);
-      if(['AUTHORIZED','ROLE_REQUIRED'].includes(result.status)){updating=false;sessionStorage.removeItem('twogramms-pilot-recovery');}
+      if(result.status==='PASSWORD_UPDATED'){updating=false;recoveryState.clear();}
       return result;
     });});
     client.auth.onAuthStateChange(event=>{
-      if(event==='SIGNED_OUT'){authEpoch++;auth.invalidate();updating=false;sessionStorage.removeItem('twogramms-pilot-recovery');render({status:'SIGNED_OUT'});}
+      if(event==='SIGNED_OUT'){authEpoch++;auth.invalidate();updating=false;recoveryState.clear();render({status:'SIGNED_OUT'});}
       // Do not await Auth methods inside its event callback (SDK lock).
       if(event==='TOKEN_REFRESHED'&&!busy&&!updating)setTimeout(()=>run(()=>auth.verify()),0);
     });
@@ -81,13 +82,15 @@
     setInterval(async()=>{if(authorized&&!document.hidden&&!busy&&!updating&&!checkingMacros){checkingMacros=true;try{await macrosUI.revalidate();}finally{checkingMacros=false;}}},30000);
     await run(async()=>{
       if(callback){
-        if(!credential)return {status:'AUTH_FAILED'};
-        const result=invitation?await auth.invitation(credential.value):credential.kind==='recovery'?await auth.recovery(credential.value):await auth.callback(credential.value);
-        if(result.status==='RECOVERY'){updating=true;sessionStorage.setItem('twogramms-pilot-recovery','1');}
+        if(!credential&&(callbackSearch||callbackHash)){auth.invalidate();return {status:'AUTH_FAILED'};}
+        const result=!credential?await auth.resumeRecovery():invitation?await auth.invitation(credential.value):credential.kind==='recovery'?await auth.recovery(credential.value):await auth.callback(credential.value);
+        if(result.status==='RECOVERY')updating=true;
         return result;
       }
+      if(recoveryState.get()){
+        const result=await auth.resumeRecovery();updating=result.status==='RECOVERY';return result;
+      }
       const result=await auth.verify();
-      if(sessionStorage.getItem('twogramms-pilot-recovery')==='1'&&['AUTHORIZED','ROLE_REQUIRED'].includes(result.status)){updating=true;return {status:'RECOVERY'};}
       return result;
     });
   }catch{render({status:'AUTH_FAILED'});}
