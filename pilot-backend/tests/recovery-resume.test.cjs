@@ -11,7 +11,7 @@ function fixture(){
  const state={user:id,expired:false};
  const client={auth:{onAuthStateChange(){},
   async verifyOtp(){calls.otp++;return state.expired?{error:{message:token,code:'otp_expired'}}:{data:{session:{user:{id}}}};},
-  async getUser(){calls.user++;return {data:{user:state.user?{id:state.user}:null},error:state.user?null:{message:'Session missing'}};},
+  async getUser(){calls.user++;if(state.network)return {error:{name:'AuthRetryableFetchError',status:503}};return {data:{user:state.user?{id:state.user}:null},error:state.user?null:{message:'Session missing'}};},
   async updateUser(input){calls.password++;assert.deepEqual(input,{password});return {data:{user:{id}}};}
  },from(){assert.fail('No membership/profile dependency');},rpc(){assert.fail('No business RPC');}};
  async function page(hash='',search=''){
@@ -86,4 +86,15 @@ test('Auth password failure exposes no server details and permits a validated re
  assert.deepEqual(await c.password(password),{status:'AUTH_FAILED'});
  assert.equal((await c.password(password)).status,'PASSWORD_UPDATED');assert.equal(updates,2);
  assert.equal((await c.resumeRecovery()).status,'AUTH_FAILED');
+});
+
+test('network failure keeps recovery screen separate; retry validates session without another OTP',async()=>{
+ const f=fixture();f.state.network=true;
+ const page=await f.page('#token_hash='+token+'&type=recovery');
+ assert.equal(f.storage.get(key),id);assert.equal(page.els['login-form'].hidden,true);
+ assert.equal(page.els['password-form'].hidden,true);assert.equal(page.els['recovery-retry'].hidden,false);
+ assert.equal(page.els['recovery-title'].hidden,false);assert.match(page.els['auth-status'].textContent,/conexi/);
+ f.state.network=false;page.els['recovery-retry'].click();await new Promise(r=>setImmediate(r));
+ assert.equal(page.els['password-form'].hidden,false);assert.equal(page.els['login-form'].hidden,true);
+ assert.equal(f.calls.otp,1);assert.equal(f.calls.user,2);assert.equal(f.calls.password,0);
 });

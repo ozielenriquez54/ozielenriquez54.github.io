@@ -23,6 +23,9 @@ function page(kind,config){
   <p id="auth-status" role="status" aria-live="polite">Preparando autenticación…</p>
   <form id="login-form"><label>Correo <input id="auth-email" type="email" autocomplete="username" required></label><label>Contraseña <input id="auth-password" type="password" autocomplete="current-password"></label><button type="submit">Iniciar sesión</button></form>
   <button id="magic-link" type="button">Enviar Magic Link</button><button id="recover" type="button">Recuperar contraseña</button><button id="logout" type="button">Cerrar sesión</button>
+  <h2 id="recovery-title" hidden>Recuperación de contraseña</h2>
+  <button id="recovery-retry" type="button" hidden>Reintentar verificación de sesión</button>
+  <a id="recovery-login" href="/index.html" hidden>Ir al inicio de sesión</a>
   <form id="password-form" hidden><label>Nueva contraseña <input id="new-password" type="password" autocomplete="new-password" minlength="8" required></label><button type="submit">Guardar contraseña</button></form>
   <section id="pilot-access" hidden><div id="macros-root"></div><div id="diary-root"></div><div id="tracking-root"></div><div id="coach-history-root"></div></section>
   <nav aria-label="Vistas del piloto"><a href="/index.html">Cliente</a><a href="/coach.html">Coach</a></nav></main><script src="/vendor/supabase.js" defer></script><script src="/pilot-auth.js" defer></script><script src="/manual-macros-domain.js" defer></script><script src="/pilot-macros-service.js" defer></script><script src="/pilot-macros-ui.js" defer></script><script src="/pilot-diary-service.js" defer></script><script src="/pilot-diary-ui.js" defer></script>${trackingScripts}<script src="/pilot-auth-ui.js" defer></script></body></html>`;

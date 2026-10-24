@@ -3,10 +3,16 @@
   const REF='otswebncqidqthqplztj',URL_ROOT='https://'+REF+'.supabase.co';
   const STORAGE_KEY='twogramms-pilot-auth-'+REF;
   function fail(){throw new Error('PILOT_AUTH_FAILED');}
+  function recoveryError(error){
+    if(error?.code==='otp_expired')return {status:'LINK_EXPIRED_OR_USED'};
+    if(error?.code==='flow_state_expired')return {status:'LINK_EXPIRED'};
+    if(error?.code==='PILOT_NETWORK_ERROR'||error?.name==='AuthRetryableFetchError'||error?.name==='TypeError'||error?.status>=500)return {status:'RECOVERY_NETWORK'};
+    return {status:'AUTH_FAILED'};
+  }
   function parseCallback(search,hash){
     const q=new URLSearchParams(search),h=new URLSearchParams((hash??'').replace(/^#/,''));
-    if(!hash&&q.size===1&&q.has('code')&&q.get('code'))return {kind:'pkce',value:q.get('code')};
-    if(!search&&h.size===2&&['invite','recovery'].includes(h.get('type'))&&/^[a-zA-Z0-9_-]{20,2048}$/.test(h.get('token_hash')??''))return {kind:h.get('type'),value:h.get('token_hash')};
+    if(!hash&&Array.from(q).length===1&&q.has('code')&&q.get('code'))return {kind:'pkce',value:q.get('code')};
+    if(!search&&Array.from(h).length===2&&['invite','recovery'].includes(h.get('type'))&&/^[a-zA-Z0-9_-]{20,2048}$/.test(h.get('token_hash')??''))return {kind:h.get('type'),value:h.get('token_hash')};
     return null;
   }
   function createClient(config,sdk,fetchImpl,{admin=false,macros=false}={}){
@@ -28,16 +34,20 @@
           const rpc=url.pathname.startsWith('/rest/v1/rpc/');
           if(rpc?method!=='POST':!['GET','HEAD'].includes(method))fail();
         }
+        const abort=new AbortController(),caller=init.signal??input?.signal;
+        const cancel=()=>abort.abort();
+        const timer=setTimeout(cancel,10000);
+        if(caller?.aborted)cancel();else caller?.addEventListener('abort',cancel,{once:true});
         try{
-          const response=await fetchImpl(input,{...init,redirect:'error',signal:init.signal?AbortSignal.any([init.signal,AbortSignal.timeout(10000)]):AbortSignal.timeout(10000)});
+          const response=await fetchImpl(input,{...init,redirect:'error',signal:abort.signal});
           // SDK errors must never carry a server message, echoed input or URL.
           if(!response.ok){
             let code;
-            try{const body=await response.json();if(['42501','40001','23503','23514'].includes(body.code))code=body.code;}catch{}
-            return new Response(JSON.stringify({message:'PILOT_REQUEST_FAILED',error:'PILOT_REQUEST_FAILED',code}),{status:response.status,headers:{'Content-Type':'application/json'}});
+            try{const body=await response.json();const candidate=body.code??body.error_code;if(['42501','40001','23503','23514'].includes(candidate)||(url.pathname.startsWith('/auth/v1/')&&['otp_expired','flow_state_expired','session_not_found','refresh_token_not_found'].includes(candidate)))code=candidate;}catch{}
+            return new Response(JSON.stringify({message:'PILOT_REQUEST_FAILED',error:'PILOT_REQUEST_FAILED',code,error_code:code}),{status:response.status,headers:{'Content-Type':'application/json'}});
           }
           return response;
-        }catch{fail();}
+        }catch{const error=new Error('PILOT_NETWORK_ERROR');error.code='PILOT_NETWORK_ERROR';throw error;}finally{clearTimeout(timer);caller?.removeEventListener('abort',cancel);}
       }}
     });
   }
@@ -51,15 +61,22 @@
     const recovery=recoveryState??{get:()=>pendingUser,set:id=>{pendingUser=id;},clear:()=>{pendingUser=null;}};
     function clearRecovery(){passwordUser=null;recovery.clear();}
     async function resumeRecovery(){
-      const ticket=generation;
+      const ticket=generation;passwordUser=null;
       try{
         const expected=recovery.get();
-        // Old boolean flags cannot establish the expected identity.
         if(typeof expected!=='string'||!/^[a-zA-Z0-9-]{3,128}$/.test(expected))fail();
         const user=await client.auth.getUser();
-        if(ticket!==generation||user.error||user.data?.user?.id!==expected)fail();
+        if(ticket!==generation)return {status:'AUTH_FAILED'};
+        if(user.error)throw user.error;
+        if(!user.data?.user?.id){clearRecovery();return {status:'RECOVERY_SESSION_MISSING'};}
+        if(user.data.user.id!==expected){clearRecovery();return {status:'RECOVERY_SESSION_MISMATCH'};}
         passwordUser=expected;return {status:'RECOVERY'};
-      }catch{clearRecovery();return {status:'AUTH_FAILED'};}
+      }catch(error){
+        if(ticket!==generation)return {status:'AUTH_FAILED'};
+        const result=recoveryError(error);
+        if(result.status!=='RECOVERY_NETWORK')clearRecovery();
+        return result;
+      }
     }
     async function passwordSession(session){
       const id=session?.user?.id;
@@ -89,9 +106,9 @@
       const ticket=generation;
       if(typeof tokenHash!=='string'||!/^[a-zA-Z0-9_-]{20,2048}$/.test(tokenHash))fail();
       const r=await client.auth.verifyOtp({token_hash:tokenHash,type});
-      if(ticket!==generation||r.error||!r.data?.session)fail();
+      if(ticket!==generation)fail();if(r.error)throw r.error;if(!r.data?.session)fail();
       return await passwordSession(r.data.session);
-    }catch{return {status:'AUTH_FAILED'};}}
+    }catch(error){return recoveryError(error);}}
     return {
       verify,
       resumeRecovery,
@@ -106,15 +123,15 @@
         clearRecovery();
         const ticket=generation;
         if(typeof code!=='string'||!code||code.length>2048)fail();
-        const r=await client.auth.exchangeCodeForSession(code);if(ticket!==generation||r.error)fail();
+        const r=await client.auth.exchangeCodeForSession(code);if(ticket!==generation)fail();if(r.error)throw r.error;
         if(r.data?.redirectType==='recovery')return await passwordSession(r.data.session);
         return await verify();
-      }catch{return {status:'AUTH_FAILED'};}},
+      }catch(error){return recoveryError(error);}},
       invitation:tokenHash=>passwordLink(tokenHash,'invite'),
       recovery:tokenHash=>passwordLink(tokenHash,'recovery'),
       async password(password){try{
         if(typeof password!=='string'||password.length<8||!passwordUser||recovery.get()!==passwordUser)fail();
-        if((await resumeRecovery()).status!=='RECOVERY')fail();
+        const check=await resumeRecovery();if(check.status!=='RECOVERY')return check;
         const r=await client.auth.updateUser({password});if(r.error)fail();
         clearRecovery();return {status:'PASSWORD_UPDATED'};
       }catch{return {status:'AUTH_FAILED'};}}
