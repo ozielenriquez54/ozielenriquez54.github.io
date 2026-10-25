@@ -31,13 +31,25 @@ test('only pilot config and publishable key accepted; PKCE storage isolated from
   await options.global.fetch(config.supabaseUrl+'/auth/v1/token');assert.equal(requests,1);
 });
 test('login creates own profile then checks actual active role; metadata is not authority',async()=>{
-  for(const [roles,active,expected] of [[['COACH'],true,'AUTHORIZED'],[['OWNER'],true,'ROLE_REQUIRED'],[['CLIENT'],true,'ROLE_REQUIRED'],[['COACH'],false,'ROLE_REQUIRED'],[[],true,'ROLE_REQUIRED']]){
+  // La vista Coach acepta COACH/OWNER/ADMIN (permiso administrativo separado
+  // del clínico); nunca CLIENT. Esto NO otorga el rol COACH en los datos —
+  // solo decide qué roles reales dan acceso a esta página en particular.
+  for(const [roles,active,expected] of [[['COACH'],true,'AUTHORIZED'],[['OWNER'],true,'AUTHORIZED'],[['ADMIN'],true,'AUTHORIZED'],[['CLIENT'],true,'ROLE_REQUIRED'],[['COACH'],false,'ROLE_REQUIRED'],[[],true,'ROLE_REQUIRED']]){
     const f=fixture({roles,active});assert.equal((await f.auth.login('synthetic@example.test','synthetic-password')).status,expected);
-    assert.deepEqual(f.calls.filter(c=>c[0]==='rpc'),[['rpc','pilot_ensure_profile']]);
+    // pilot_ensure_profile (autoservicio, siempre) y luego
+    // pilot_resume_pending_activation (autoservicio, tolerante a que no
+    // exista nada pendiente o que la función todavía no exista).
+    assert.deepEqual(f.calls.filter(c=>c[0]==='rpc'),[['rpc','pilot_ensure_profile'],['rpc','pilot_resume_pending_activation']]);
     assert.deepEqual(f.calls.find(c=>c[0]==='table'),['table','gym_memberships']);
   }
   const f=fixture({roles:['CLIENT']});const auth=controller(f.client,'CLIENT','http://127.0.0.1:3000/auth/callback.html');
   assert.equal((await auth.verify()).status,'AUTHORIZED');
+  // La vista Cliente NO se amplía: ni OWNER ni ADMIN la satisfacen por sí
+  // solos — evita que el permiso administrativo cuele acceso clínico.
+  for(const roles of [['OWNER'],['ADMIN'],['COACH']]){
+    const g=fixture({roles});const clientAuth=controller(g.client,'CLIENT','http://127.0.0.1:3000/auth/callback.html');
+    assert.equal((await clientAuth.verify()).status,'ROLE_REQUIRED');
+  }
 });
 test('magic link never creates users; recovery uses fixed local PKCE callback',async()=>{
   const f=fixture({recovery:true});

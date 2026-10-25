@@ -14,7 +14,10 @@ function fixture(){
   setSession:async input=>{calls.set++;assert.deepEqual(input,tokens);return {data:{session:session()}};},
   updateUser:async({password})=>{calls.updates++;saved=password;return {data:{user:{id:state.id}}};},
   signInWithPassword:async({password})=>password===saved?{data:{session:session()}}:{error:{}}
- },from(table){const q={select:()=>q,eq:()=>table==='profiles'?Promise.resolve({data:[{id:state.id}]}):q,then(resolve){resolve({data:[{user_id:state.id,roles:['CLIENT'],active:true}]});}};return q;}};
+ },
+ // pilot_ensure_profile(): autoservicio, siempre disponible aun en readOnly.
+ rpc:async()=>state.error?{error:state.error}:{data:{id:state.id}},
+ from(table){const q={select:()=>q,eq:()=>table==='profiles'?Promise.resolve({data:[{id:state.id}]}):q,then(resolve){resolve({data:[{user_id:state.id,roles:['CLIENT'],active:true}]});}};return q;}};
  const make=()=>controller(client,'CLIENT','http://localhost:3000/auth/callback.html',{readOnly:true,recoveryState:{get:()=>marker,set:v=>{marker=v;},clear:()=>{marker=null;}}});
  return {make,state,calls,client,marker:()=>marker};
 }

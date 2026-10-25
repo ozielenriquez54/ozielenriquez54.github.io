@@ -33,8 +33,14 @@
       global:{fetch:async(input,init={})=>{
         const url=new URL(typeof input==='string'?input:input.url??input.href);
         if(url.origin!==URL_ROOT||url.username||url.password)fail();
-        const allowed=['/rest/v1/profiles','/rest/v1/gym_memberships'];
-        if(!config.readOnly)allowed.push('/rest/v1/rpc/pilot_ensure_profile');
+        // pilot_ensure_profile() y pilot_resume_pending_activation() son
+        // excepciones de identidad/autoservicio — la segunda, de
+        // autoservicio también, completa (si existía) la ÚNICA solicitud
+        // de activación ya autorizada por un OWNER/ADMIN para auth.uid();
+        // nunca actúa sobre otro usuario ni otorga privilegios
+        // administrativos. Ambas se permiten siempre, incluso en readOnly,
+        // que sigue cerrando toda función clínica (diario/macros/tracking).
+        const allowed=['/rest/v1/profiles','/rest/v1/gym_memberships','/rest/v1/rpc/pilot_ensure_profile','/rest/v1/rpc/pilot_resume_pending_activation'];
         if(macros)allowed.push('/rest/v1/clients','/rest/v1/coach_clients','/rest/v1/manual_macro_targets','/rest/v1/manual_macro_target_versions');
         if(admin&&!config.readOnly)allowed.push('/rest/v1/coach_clients','/rest/v1/rpc/pilot_set_membership','/rest/v1/rpc/pilot_set_coach_client');
         if(!url.pathname.startsWith('/auth/v1/')&&!allowed.includes(url.pathname))fail();
@@ -101,14 +107,35 @@
         const user=await client.auth.getUser();
         if(user.error||!user.data?.user?.id)return {status:'SIGNED_OUT'};
         const id=user.data.user.id;
-        const profile=readOnly?await client.from('profiles').select('id').eq('id',id):await client.rpc('pilot_ensure_profile');
-        if(readOnly&&!profile.error&&Array.isArray(profile.data)&&profile.data.length===0)return {status:'ROLE_REQUIRED'};
+        // Siempre por autoservicio (auth.uid() interno a la RPC, nunca un
+        // id ajeno) y siempre, incluso en readOnly: es una excepción de
+        // identidad, no una función clínica. Necesario para que un cliente
+        // recién invitado tenga profiles.id en su propio primer login —
+        // no existe ningún trigger que lo cree por otra vía.
+        const profile=await client.rpc('pilot_ensure_profile');
+        // PostgREST puede envolver el resultado en un arreglo según cómo
+        // esté declarada la función; se acepta un objeto o un arreglo de
+        // exactamente una fila, nunca cero ni más de una (ambiguo).
         const ownProfile=Array.isArray(profile.data)?(profile.data.length===1?profile.data[0]:null):profile.data;
         if(profile.error||ownProfile?.id!==id)fail();
+        if(ticket!==generation)return {status:'SIGNED_OUT'};
+        // Autoservicio, tolerante a propósito: completa automáticamente la
+        // única solicitud de activación ya autorizada por un OWNER/ADMIN
+        // para este usuario, si existía. Si la función todavía no existe
+        // en Supabase real (infraestructura propuesta no aplicada) o no
+        // había nada pendiente, esto no debe romper la verificación normal
+        // — por eso se ignora cualquier error aquí, nunca se usa fail().
+        try{await client.rpc('pilot_resume_pending_activation');}catch{}
         const memberships=await client.from('gym_memberships').select('user_id,roles,active').eq('user_id',id).eq('active',true);
         if(memberships.error||!Array.isArray(memberships.data))fail();
         if(ticket!==generation)return {status:'SIGNED_OUT'};
-        const allowed=memberships.data.some(m=>m.user_id===id&&m.active===true&&Array.isArray(m.roles)&&m.roles.includes(role));
+        // La vista Coach también es accesible para OWNER/ADMIN (permisos
+        // administrativos), no solo COACH (permiso clínico/de coacheo) —
+        // esto NUNCA otorga el rol COACH en los datos, solo amplía qué
+        // roles reales dan acceso a ESTA página. La vista Cliente sigue
+        // exigiendo literalmente CLIENT, sin cambios.
+        const acceptedRoles=role==='COACH'?['COACH','OWNER','ADMIN']:[role];
+        const allowed=memberships.data.some(m=>m.user_id===id&&m.active===true&&Array.isArray(m.roles)&&m.roles.some(r=>acceptedRoles.includes(r)));
         return {status:allowed?'AUTHORIZED':'ROLE_REQUIRED'};
       }catch{return {status:'AUTH_FAILED'};}
     }

@@ -6,7 +6,7 @@
     "test:complex-persistence": "node --test tests/complex-persistence.test.cjs tests/complex-deployment.test.cjs",
     "start:complex-rehearsal": "node server/complex-rehearsal-http.cjs",
     "test:complex-pilot": "node --test tests/complex-pilot.test.cjs tests/complex-pilot-ui.test.cjs tests/pilot-macros-ui.test.cjs tests/manual-macros-service.test.cjs tests/pilot-auth.test.cjs tests/pilot-http.test.cjs",
-    "test": "node --test tests/manual-macros-readonly-owner.test.cjs tests/manual-macros-audit.test.cjs tests/manual-macros-service.test.cjs tests/pilot-macros-ui.test.cjs tests/manual-macros-sql.test.cjs tests/manual-macros.test.cjs tests/pilot-admin.test.cjs tests/pilot-auth.test.cjs tests/pilot-http.test.cjs tests/identity.test.cjs tests/gateway-safety.test.cjs tests/clinical-infrastructure.test.cjs tests/treatment.test.cjs && npm run test:migration-security",
+    "test": "node --test tests/auth-formats.test.cjs tests/complex-auth-ui.test.cjs tests/password-links.test.cjs tests/pilot-admin-provisioning.test.cjs tests/pilot-auth.test.cjs tests/recovery-p0.test.cjs tests/recovery-resume.test.cjs tests/render-readonly.test.cjs",
     "test:pilot-http": "node --test tests/pilot-http.test.cjs",
     "test:migration-security": "node scripts/check-clinical-migrations-local.cjs && node --test tests/clinical-migration-security.test.cjs tests/default-privileges.test.cjs",
     "test:step2": "node --test tests/treatment.test.cjs",

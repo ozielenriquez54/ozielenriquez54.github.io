@@ -2,53 +2,119 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const vm = require('node:vm');
+const fs = require('node:fs');
 const { createProvisioningService, ProvisioningError } = require('../server/pilot-admin-provisioning-service.cjs');
 const { createPilotServer } = require('../server/pilot-http.cjs');
 
 const uuid = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
-const COACH = uuid(1), OTHER_COACH = uuid(2), NON_COACH = uuid(3);
+// OWNER/ADMIN son los únicos roles autorizados a EJECUTAR el alta (ver
+// PROVISIONER_ROLES en el servicio). COACH solo puede ser el DESTINO de la
+// asignación — nunca el llamador autorizado.
+const OWNER = uuid(1), COACH = uuid(2), NON_COACH = uuid(3), ADMIN_ACTOR = uuid(4), OTHER_OWNER = uuid(5), OTHER_COACH = uuid(6);
 const GYM = uuid(100), OTHER_GYM = uuid(101);
 const ANA_ID = uuid(200), OZIEL_ID = uuid(201);
 const OZIEL_EMAIL = 'oziel.enriquez@complextraining.mx';
 
 // ---------------------------------------------------------------------------
-// Base de datos simulada en memoria: nunca toca la red. Modela EXACTAMENTE
-// el comportamiento confirmado de las dos RPC reales (gym_id real,
-// concurrencia optimista con `revision`, y pilot_set_membership creando la
-// fila de membresía por su cuenta — esta capa de pruebas nunca modela ni
-// toca una tabla `clients` separada, igual que el código bajo prueba).
+// Base de datos simulada en memoria: nunca toca la red. Modela el
+// comportamiento confirmado de las dos RPC reales (gym_id real, concurrencia
+// optimista con `revision`) y la relación real (2ª corrección, revierte la
+// 1ª): `pilot_set_coach_client` recibe por escritura el id en
+// `gym_memberships` del cliente, pero `coach_clients` se consulta por su
+// columna `client_id`, que referencia `clients.id` — y `clients.id` se
+// resuelve por (gym_id, membership_id), nunca al revés. Los rangos de id
+// (memberships 0-7/1000+, clients 8000+, coachClients 5000+) son
+// deliberadamente distintos entre sí para que una prueba que confunda dos
+// de estos ids falle de inmediato, no silenciosamente.
+//
+// `db.missingProfiles` modela que `profiles.id` de un usuario todavía no
+// existe (invitación nunca aceptada, o cuenta recién creada): mientras su
+// user_id esté en ese set, pilot_set_membership responde 23503 — nunca se
+// asume un trigger ni un tiempo de espera. Los tests "aceptan" la
+// invitación simulando el primer login con `db.missingProfiles.delete(id)`.
+// Esto es un mock: no prueba que PostgreSQL/RLS/triggers reales se
+// comporten así — ver el contrato no verificado en
+// pilot-admin-provisioning-service.cjs.
 // ---------------------------------------------------------------------------
 function freshDb(extraMemberships = []) {
   return {
-    memberships: [{ id: uuid(1), gym_id: GYM, user_id: COACH, roles: ['COACH'], active: true, revision: 1 }, ...extraMemberships],
+    memberships: [
+      { id: uuid(1), gym_id: GYM, user_id: OWNER, roles: ['OWNER'], active: true, revision: 1 },
+      { id: uuid(2), gym_id: GYM, user_id: COACH, roles: ['COACH'], active: true, revision: 1 },
+      ...extraMemberships,
+    ],
     coachClients: [],
+    clients: [],
+    missingProfiles: new Set(),
+    pendingActivations: [], // modela pilot_pending_activations (propuesta, ver PENDING-ACTIVATION-MIGRATION.sql)
+    lockedActivations: new Set(), // simula FOR UPDATE SKIP LOCKED para las pruebas de concurrencia
   };
 }
 
+// Simula pilot_resume_pending_activation(): autoservicio, solo actúa sobre
+// la solicitud pendiente de ESTE userId, revalida en vivo que created_by
+// sigue siendo OWNER/ADMIN activo y que el coach destino sigue siendo
+// válido, y nunca aplica nada si otra "transacción" ya tiene la fila
+// bloqueada (lockedActivations simula FOR UPDATE SKIP LOCKED).
+function applyResumePendingActivation(db, userId) {
+  const request = db.pendingActivations.find(r => r.user_id === userId && r.status === 'pending' && !db.lockedActivations.has(r.id));
+  if (!request) return { data: null, error: null };
+  db.lockedActivations.add(request.id);
+  try {
+    const authorizerStillValid = db.memberships.some(m => m.gym_id === request.gym_id && m.user_id === request.created_by && m.active && PROVISIONER_ROLES_FOR_TESTS.some(r => m.roles.includes(r)));
+    const coachStillValid = db.memberships.some(m => m.id === request.coach_membership_id && m.gym_id === request.gym_id && m.active && ['COACH', 'OWNER', 'ADMIN'].some(r => m.roles.includes(r)));
+    if (!authorizerStillValid || !coachStillValid) {
+      request.status = 'cancelled';
+      return { data: { status: 'cancelled', gym_id: request.gym_id, coach_membership_id: request.coach_membership_id }, error: null };
+    }
+    applySetMembership(db, { p_gym_id: request.gym_id, p_user_id: userId, p_roles: ['CLIENT'], p_active: true, p_expected_revision: (db.memberships.find(m => m.gym_id === request.gym_id && m.user_id === userId)?.revision) ?? 0 });
+    const membershipId = db.memberships.find(m => m.gym_id === request.gym_id && m.user_id === userId).id;
+    applySetCoachClient(db, { p_gym_id: request.gym_id, p_coach_membership_id: request.coach_membership_id, p_client_membership_id: membershipId, p_active: true, p_expected_revision: 0 });
+    request.status = 'completed';
+    return { data: { status: 'completed', gym_id: request.gym_id, coach_membership_id: request.coach_membership_id }, error: null };
+  } finally { db.lockedActivations.delete(request.id); }
+}
+const PROVISIONER_ROLES_FOR_TESTS = ['OWNER', 'ADMIN'];
+
 function applySetMembership(db, { p_gym_id, p_user_id, p_roles, p_active, p_expected_revision }) {
+  if (db.missingProfiles?.has(p_user_id)) {
+    return { data: null, error: { code: '23503', message: 'profiles.id ausente (secreto interno)' } };
+  }
   const row = db.memberships.find(m => m.gym_id === p_gym_id && m.user_id === p_user_id);
   const current = row ? row.revision : 0;
   if (p_expected_revision !== current) return { data: null, error: { code: '40001', message: 'revision conflict (secreto interno)' } };
   if (row) { row.roles = p_roles; row.active = p_active; row.revision = current + 1; }
   else db.memberships.push({ id: uuid(1000 + db.memberships.length), gym_id: p_gym_id, user_id: p_user_id, roles: p_roles, active: p_active, revision: 1 });
+  // pilot_set_membership crea `clients` por su cuenta al activar CLIENT.
+  // Su id y su `membership_id` (FK a gym_memberships.id) son columnas
+  // DISTINTAS, a propósito, para que una confusión entre ambas falle ya.
+  const membershipRow = db.memberships.find(m => m.gym_id === p_gym_id && m.user_id === p_user_id);
+  if (p_roles.includes('CLIENT') && p_active && !db.clients.some(c => c.gym_id === p_gym_id && c.membership_id === membershipRow.id)) {
+    db.clients.push({ id: uuid(8000 + db.clients.length), gym_id: p_gym_id, membership_id: membershipRow.id });
+  }
   return { data: { ok: true }, error: null };
 }
 
 function applySetCoachClient(db, { p_gym_id, p_coach_membership_id, p_client_membership_id, p_active, p_expected_revision }) {
   const coach = db.memberships.find(m => m.id === p_coach_membership_id && m.gym_id === p_gym_id);
-  const clientRow = db.memberships.find(m => m.id === p_client_membership_id && m.gym_id === p_gym_id);
-  if (!coach || !clientRow || !clientRow.roles?.includes('CLIENT') || !clientRow.active) {
-    return { data: null, error: { code: '23503', message: 'cliente sin registro (secreto interno)' } };
+  // La RPC recibe el id de gym_memberships del cliente (p_client_membership_id)
+  // y resuelve `clients` internamente — el mock hace lo mismo para decidir
+  // si la relación es válida, pero guarda `client_id` (no la membresía) en
+  // coach_clients, igual que el esquema real descrito por la auditoría.
+  const clientRecord = db.clients.find(c => c.gym_id === p_gym_id && c.membership_id === p_client_membership_id);
+  if (!coach || !clientRecord) {
+    return { data: null, error: { code: '23503', message: 'relación inválida (secreto interno)' } };
   }
-  const row = db.coachClients.find(c => c.gym_id === p_gym_id && c.coach_membership_id === p_coach_membership_id && c.client_membership_id === p_client_membership_id);
+  const row = db.coachClients.find(c => c.gym_id === p_gym_id && c.coach_membership_id === p_coach_membership_id && c.client_id === clientRecord.id);
   const current = row ? row.revision : 0;
   if (p_expected_revision !== current) return { data: null, error: { code: '40001', message: 'revision conflict (secreto interno)' } };
   if (row) { row.active = p_active; row.revision = current + 1; }
-  else db.coachClients.push({ id: uuid(5000 + db.coachClients.length), gym_id: p_gym_id, coach_membership_id: p_coach_membership_id, client_membership_id: p_client_membership_id, active: p_active, revision: 1 });
+  else db.coachClients.push({ id: uuid(5000 + db.coachClients.length), gym_id: p_gym_id, coach_membership_id: p_coach_membership_id, client_id: clientRecord.id, active: p_active, revision: 1 });
   return { data: { ok: true }, error: null };
 }
 
-function fakeClient({ actor = COACH, db, rpcOverride = null, rpcCalls = [] }) {
+function fakeClient({ actor = OWNER, db, rpcOverride = null, rpcCalls = [] }) {
   function tableOps(rows) {
     let filters = [];
     const q = {
@@ -61,11 +127,25 @@ function fakeClient({ actor = COACH, db, rpcOverride = null, rpcCalls = [] }) {
   return {
     auth: { getUser: async () => (actor ? { data: { user: { id: actor } } } : { error: new Error('no session') }) },
     from(table) {
-      // Requisito: pilot_set_membership crea `clients` por su cuenta — esta
-      // capa nunca debe leer ni escribir esa tabla directamente.
+      // Lectura permitida en las tres tablas reales del dominio. Como
+      // tableOps() solo expone select/eq/then (nunca insert/update/delete),
+      // cualquier intento de ESCRIBIR en `clients` desde este código haría
+      // fallar la prueba con un TypeError, no silenciosamente.
       if (table === 'gym_memberships') return tableOps(db.memberships);
       if (table === 'coach_clients') return tableOps(db.coachClients);
-      assert.fail('tabla inesperada (no debe tocarse directamente): ' + table);
+      if (table === 'clients') return tableOps(db.clients);
+      if (table === 'pilot_pending_activations') {
+        const q = tableOps(db.pendingActivations);
+        q.upsert = async (row, { onConflict } = {}) => {
+          const keys = (onConflict ?? 'id').split(',');
+          const existing = db.pendingActivations.find(r => keys.every(k => r[k] === row[k]));
+          if (existing) Object.assign(existing, row);
+          else db.pendingActivations.push({ id: uuid(7000 + db.pendingActivations.length), revision: 0, ...row });
+          return { data: null, error: null };
+        };
+        return q;
+      }
+      assert.fail('tabla inesperada: ' + table);
     },
     rpc(name, args) {
       rpcCalls.push([name, args]);
@@ -112,10 +192,33 @@ test('provisiona un cliente que ya tiene cuenta Auth pero aún no es miembro del
   assert.equal(rpcCalls[0][0], 'pilot_set_membership');
   assert.deepEqual(rpcCalls[0][1], { p_gym_id: GYM, p_user_id: ANA_ID, p_roles: ['CLIENT'], p_active: true, p_expected_revision: 0 });
   const coachMembershipId = db.memberships.find(m => m.user_id === COACH).id;
-  const clientMembershipId = db.memberships.find(m => m.user_id === ANA_ID).id;
-  assert.notEqual(clientMembershipId, ANA_ID); // el ID real de membresía NUNCA es el user_id
+  const anaMembershipId = db.memberships.find(m => m.user_id === ANA_ID).id;
+  const anaClientRecord = db.clients.find(c => c.membership_id === anaMembershipId);
+  assert.notEqual(anaClientRecord.id, ANA_ID); // el ID real de `clients` nunca es el user_id
+  assert.notEqual(anaClientRecord.id, anaMembershipId); // ni el id de `gym_memberships`
   assert.equal(rpcCalls[1][0], 'pilot_set_coach_client');
-  assert.deepEqual(rpcCalls[1][1], { p_gym_id: GYM, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId, p_active: true, p_expected_revision: 0 });
+  // p_client_membership_id debe ser el id en gym_memberships del cliente,
+  // NUNCA el id de su fila en `clients` — esa es la relación corregida.
+  assert.deepEqual(rpcCalls[1][1], { p_gym_id: GYM, p_coach_membership_id: coachMembershipId, p_client_membership_id: anaMembershipId, p_active: true, p_expected_revision: 0 });
+  // Pero la fila de coach_clients SÍ debe quedar guardada con client_id
+  // apuntando a `clients.id`, no a gym_memberships.id — así se consultará
+  // después para detectar asignaciones existentes.
+  assert.equal(db.coachClients[0].client_id, anaClientRecord.id);
+  assert.notEqual(db.coachClients[0].client_id, anaMembershipId);
+});
+
+test('COACH por sí solo NO tiene permiso para dar de alta clientes (solo OWNER/ADMIN), aunque el coach destino sea válido', async () => {
+  const db = freshDb();
+  const { api, rpcCalls } = service({ db, actor: COACH, findUserByEmail: findAna }); // el propio COACH intenta ejecutar el alta
+  await assert.rejects(api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } }), e => e.code === '42501' && e.status === 403);
+  assert.equal(rpcCalls.length, 0);
+});
+
+test('ADMIN activo SÍ tiene permiso para dar de alta clientes', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: ADMIN_ACTOR, roles: ['ADMIN'], active: true, revision: 1 }]);
+  const { api } = service({ db, actor: ADMIN_ACTOR, findUserByEmail: findAna });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PROVISIONED');
 });
 
 test('reintentar la misma alta es idempotente: lee la revisión real y no duplica filas', async () => {
@@ -132,10 +235,11 @@ test('reintentar la misma alta es idempotente: lee la revisión real y no duplic
   assert.equal(membershipCalls[1][1].p_expected_revision, 1); // segunda vez: lee la revisión real ya existente
 });
 
-test('nunca inserta directamente en `clients`: cualquier intento de tocar esa tabla hace fallar la prueba', async () => {
+test('nunca inserta directamente en `clients`: cualquier intento de tocar otra tabla hace fallar la prueba', async () => {
   // Cubierto estructuralmente por fakeClient.from() en todas las pruebas de
   // este archivo (lanza assert.fail si se pide una tabla distinta de
-  // gym_memberships/coach_clients) — se deja como caso explícito también.
+  // gym_memberships/coach_clients/clients, y tableOps() solo expone
+  // select/eq/then — nunca insert/update) — se deja como caso explícito.
   const db = freshDb();
   const { api } = service({ db, findUserByEmail: findAna });
   await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
@@ -145,31 +249,31 @@ test('nunca inserta directamente en `clients`: cualquier intento de tocar esa ta
 // Aislamiento y permisos por gimnasio.
 // ---------------------------------------------------------------------------
 
-test('rechaza al llamador sin membresía COACH/OWNER activa EN ESE gimnasio, sin llegar a escribir', async () => {
-  const db = freshDb([{ id: uuid(2), gym_id: GYM, user_id: NON_COACH, roles: ['CLIENT'], active: true, revision: 1 }]);
+test('rechaza al llamador sin membresía OWNER/ADMIN activa EN ESE gimnasio, sin llegar a escribir', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: NON_COACH, roles: ['CLIENT'], active: true, revision: 1 }]);
   const { api, rpcCalls } = service({ db, actor: NON_COACH, findUserByEmail: findAna });
   await assert.rejects(api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } }), e => e.code === '42501' && e.status === 403);
   assert.equal(rpcCalls.length, 0);
 });
 
-test('un coach activo en OTRO gimnasio no puede operar en este, aunque sea coach en general', async () => {
-  const db = freshDb([{ id: uuid(2), gym_id: OTHER_GYM, user_id: COACH, roles: ['COACH'], active: true, revision: 1 }]);
-  // El único registro de COACH en GYM se quita; solo existe en OTHER_GYM.
-  db.memberships = db.memberships.filter(m => !(m.user_id === COACH && m.gym_id === GYM));
+test('un OWNER activo en OTRO gimnasio no puede operar en este, aunque sea owner en general', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: OTHER_GYM, user_id: OWNER, roles: ['OWNER'], active: true, revision: 1 }]);
+  // El único registro de OWNER en GYM se quita; solo existe en OTHER_GYM.
+  db.memberships = db.memberships.filter(m => !(m.user_id === OWNER && m.gym_id === GYM));
   const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
   await assert.rejects(api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } }), e => e.code === '42501' && e.status === 403);
   assert.equal(rpcCalls.length, 0);
 });
 
-test('rechaza coach destino sin rol de coach activo en ese gimnasio, sin llegar a escribir', async () => {
-  const db = freshDb([{ id: uuid(2), gym_id: GYM, user_id: NON_COACH, roles: ['CLIENT'], active: true, revision: 1 }]);
+test('rechaza coach destino sin rol que pueda coachear en ese gimnasio, sin llegar a escribir', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: NON_COACH, roles: ['CLIENT'], active: true, revision: 1 }]);
   const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
   await assert.rejects(api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: NON_COACH, gymId: GYM } }), e => e.code === 'INVALID_COACH' && e.status === 422);
   assert.equal(rpcCalls.length, 0);
 });
 
 test('rechaza coach destino que SÍ es coach activo pero en otro gimnasio', async () => {
-  const db = freshDb([{ id: uuid(2), gym_id: OTHER_GYM, user_id: OTHER_COACH, roles: ['COACH'], active: true, revision: 1 }]);
+  const db = freshDb([{ id: uuid(3), gym_id: OTHER_GYM, user_id: OTHER_COACH, roles: ['COACH'], active: true, revision: 1 }]);
   const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
   await assert.rejects(api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: OTHER_COACH, gymId: GYM } }), e => e.code === 'INVALID_COACH' && e.status === 422);
   assert.equal(rpcCalls.length, 0);
@@ -205,17 +309,26 @@ test('REVISION_CONFLICT persistente se reporta tras un número acotado de reinte
   assert.ok(!JSON.stringify(membershipCalls).includes('secreto')); // no se filtra el mensaje crudo
 });
 
-test('un 23503 inesperado en pilot_set_coach_client se reporta como RELATED_RECORD_NOT_FOUND, sin mensaje crudo', async () => {
+test('un 23503 inesperado en pilot_set_coach_client también se trata como pendiente (nunca se filtra el mensaje crudo)', async () => {
   const db = freshDb();
   const rpcOverride = (name) => name === 'pilot_set_coach_client' ? { data: null, error: { code: '23503', message: 'detalle-interno-secreto' } } : null;
   const { api } = service({ db, findUserByEmail: findAna, rpcOverride });
-  try {
-    await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
-    assert.fail('debía rechazar');
-  } catch (e) {
-    assert.equal(e.code, 'RELATED_RECORD_NOT_FOUND');
-    assert.ok(!JSON.stringify(e.message).includes('secreto'));
-  }
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PENDING_PROFILE');
+  assert.ok(!JSON.stringify(result).includes('secreto'));
+});
+
+test('setCoachClient rechaza de inmediato (sin llamar la RPC) si `clients` todavía no tiene la fila del cliente', async () => {
+  const db = freshDb();
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
+  // Fuerza que, tras la membresía, NUNCA aparezca la fila en `clients`
+  // (simula justo el instante en que pilot_set_membership aún no la creó).
+  const realPush = db.clients.push.bind(db.clients);
+  db.clients.push = () => {}; // absorbe cualquier intento de "crearla" en el mock
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PENDING_PROFILE');
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 0); // nunca llega a llamar la RPC sin resolver `clients` antes
+  db.clients.push = realPush;
 });
 
 // ---------------------------------------------------------------------------
@@ -249,6 +362,259 @@ test('correo nuevo: busca por email (sin encontrarlo), crea la cuenta vía Admin
   const membershipCalls = rpcCalls.filter(c => c[0] === 'pilot_set_membership');
   assert.equal(membershipCalls.length, 1); // ya se sabe el user_id real antes de llamar; no hace falta reintentar por "no encontrado"
   assert.equal(membershipCalls[0][1].p_user_id, admin.createdIds[0]);
+});
+
+// ---------------------------------------------------------------------------
+// Profiles: ni se asume un trigger ni se reintenta con esperas. Si
+// `profiles.id` todavía no existe (invitación nunca aceptada, o cuenta
+// recién creada), addClient() devuelve PENDING_PROFILE como resultado
+// NORMAL (no como error), sin invitar dos veces, y una llamada posterior
+// idéntica retoma y completa sin duplicar nada en cuanto el perfil exista.
+// ---------------------------------------------------------------------------
+
+test('usuario nuevo: si su perfil ya está disponible de inmediato, se provisiona en un solo intento (sin reintentos)', async () => {
+  const db = freshDb();
+  const admin = fakeAdminInvite();
+  const { api, rpcCalls } = service({ db, findUserByEmail: () => null, createAdminInvite: admin.invite });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Cliente Nuevo', email: 'nuevo@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PROVISIONED');
+  assert.equal(result.createdUser, true);
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_membership').length, 1); // un solo intento, nada de reintentos artificiales
+});
+
+test('usuario existente con invitación pendiente (nunca inició sesión): PENDING_PROFILE, sin reenviar invitación', async () => {
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID); // existe en Auth, pero su perfil todavía no
+  const admin = fakeAdminInvite();
+  const { api, rpcCalls } = service({ db, findUserByEmail: findOziel, createAdminInvite: admin.invite });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PENDING_PROFILE');
+  assert.equal(result.createdUser, false);
+  assert.equal(admin.calls.length, 0); // encontrado vía listUsers: nunca se invita
+  assert.equal(db.memberships.some(m => m.user_id === OZIEL_ID), false); // no quedó a medias
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 0); // nunca se intenta asignar sin membresía
+});
+
+test('reanudación idempotente: tras aceptar la invitación (perfil listo), repetir addClient completa sin duplicar ni reinvitar', async () => {
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID);
+  const admin = fakeAdminInvite();
+  const { api, rpcCalls } = service({ db, findUserByEmail: findOziel, createAdminInvite: admin.invite });
+  const command = { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM };
+  const pending = await api.addClient({ token: 'tok', command });
+  assert.equal(pending.status, 'PENDING_PROFILE');
+  // Simula que Oziel inició sesión por primera vez (lo que sea que cree su
+  // perfil en la base real ya ocurrió) — nunca lo fuerza este módulo.
+  db.missingProfiles.delete(OZIEL_ID);
+  const resumed = await api.addClient({ token: 'tok', command });
+  assert.equal(resumed.status, 'PROVISIONED');
+  assert.equal(resumed.createdUser, false);
+  assert.equal(admin.calls.length, 0); // en NINGÚN momento se reenvía la invitación
+  assert.equal(db.memberships.filter(m => m.user_id === OZIEL_ID).length, 1); // sin duplicar
+  assert.equal(db.coachClients.length, 1);
+});
+
+// Simula la sesión del propio cliente para pilot-auth.js (nunca el
+// servicio de alta): solo auth.getUser / rpc('pilot_ensure_profile') /
+// rpc('pilot_resume_pending_activation') / gym_memberships, exactamente lo
+// que controller().verify() usa. La reanudación automática se simula con
+// applyResumePendingActivation() — ver advertencia en
+// PENDING-ACTIVATION-MIGRATION.sql: esto prueba la LÓGICA de este módulo
+// contra el contrato SQL PROPUESTO, nunca contra Supabase real.
+function fakeAuthClient(db, userId) {
+  function tableOps(rows) {
+    let filters = [];
+    const q = { select: () => q, eq(k, v) { filters.push([k, v]); return q; }, then(resolve) { resolve({ data: rows.filter(r => filters.every(([k, v]) => r[k] === v)).map(r => ({ ...r })), error: null }); } };
+    return q;
+  }
+  return {
+    auth: { getUser: async () => ({ data: { user: { id: userId } } }) },
+    rpc: async name => {
+      // pilot_ensure_profile(): autoservicio, crea EXCLUSIVAMENTE el
+      // propio perfil del llamador — simulado quitándolo de
+      // missingProfiles, igual que hace applySetMembership para decidir
+      // si una RPC administrativa debe fallar con "registro no encontrado".
+      if (name === 'pilot_ensure_profile') { db.missingProfiles.delete(userId); return { data: { id: userId }, error: null }; }
+      if (name === 'pilot_resume_pending_activation') return applyResumePendingActivation(db, userId);
+      return { data: null, error: { code: '42883' } };
+    },
+    from: table => tableOps(table === 'gym_memberships' ? db.memberships : db.clients),
+  };
+}
+
+test('activación automática: invitación → primer login → perfil → reanudación automática → autorizado, sin segunda acción del OWNER/ADMIN', async () => {
+  const { controller } = require('../../nutrika/pilot-auth.js');
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID); // invitación nunca aceptada todavía
+  const admin = fakeAdminInvite();
+  const { api } = service({ db, findUserByEmail: findOziel, createAdminInvite: admin.invite });
+  const command = { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM };
+
+  // 1) Alta inicial (una sola vez): el OWNER da de alta, pero el perfil de
+  // Oziel no existe todavía — se guarda la solicitud pendiente persistente.
+  const invited = await api.addClient({ token: 'tok', command });
+  assert.equal(invited.status, 'PENDING_PROFILE');
+  assert.equal(invited.autoResumable, true); // la solicitud SÍ quedó guardada
+  assert.equal(db.pendingActivations.length, 1);
+  assert.equal(db.pendingActivations[0].gym_id, GYM);
+  assert.equal(db.pendingActivations[0].user_id, OZIEL_ID);
+  assert.equal(db.pendingActivations[0].created_by, OWNER);
+
+  // 2) Primer inicio de sesión de Oziel: SU PROPIA sesión (vista Cliente,
+  // incluso en readOnly) ejecuta pilot_ensure_profile() y, en la MISMA
+  // verificación, pilot_resume_pending_activation() — sin que ningún
+  // OWNER/ADMIN haga nada más.
+  const clientAuth = controller(fakeAuthClient(db, OZIEL_ID), 'CLIENT', 'http://127.0.0.1:3000/auth/callback.html', { readOnly: true });
+  const afterFirstLogin = await clientAuth.verify();
+
+  // 3) Activación automática: perfil creado, membresía y asignación
+  // completadas en el mismo login — queda AUTORIZADO de inmediato.
+  assert.equal(afterFirstLogin.status, 'AUTHORIZED');
+  assert.equal(db.missingProfiles.has(OZIEL_ID), false);
+  const membership = db.memberships.find(m => m.user_id === OZIEL_ID);
+  assert.ok(membership); assert.deepEqual(membership.roles, ['CLIENT']); assert.equal(membership.active, true);
+  assert.equal(db.coachClients.length, 1);
+  assert.equal(db.pendingActivations[0].status, 'completed');
+  assert.equal(admin.calls.length, 0); // nunca se reenvía la invitación; el OWNER no volvió a actuar
+});
+
+test('reanudación automática es idempotente: un segundo login no duplica nada ni reintenta la solicitud ya completada', async () => {
+  const { controller } = require('../../nutrika/pilot-auth.js');
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID);
+  const { api } = service({ db, findUserByEmail: findOziel });
+  await api.addClient({ token: 'tok', command: { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM } });
+  const clientAuth = controller(fakeAuthClient(db, OZIEL_ID), 'CLIENT', 'http://127.0.0.1:3000/auth/callback.html', { readOnly: true });
+  await clientAuth.verify();
+  await clientAuth.verify(); // segundo login: nada pendiente ya (status 'completed')
+  assert.equal(db.memberships.filter(m => m.user_id === OZIEL_ID).length, 1);
+  assert.equal(db.coachClients.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Sesiones expiradas, solicitudes manipuladas y concurrencia.
+// ---------------------------------------------------------------------------
+
+test('sesión expirada/inválida: verify() nunca intenta reanudar nada (SIGNED_OUT antes de tocar ninguna RPC)', async () => {
+  const { controller } = require('../../nutrika/pilot-auth.js');
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID);
+  const { api } = service({ db, findUserByEmail: findOziel });
+  await api.addClient({ token: 'tok', command: { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM } });
+  let rpcCalls = 0;
+  const expiredClient = { auth: { getUser: async () => ({ error: new Error('token expirado (secreto interno)') }) }, rpc: async () => { rpcCalls++; return { data: null, error: null }; }, from: () => ({ select: () => ({ eq: () => Promise.resolve({ data: [] }) }) }) };
+  const clientAuth = controller(expiredClient, 'CLIENT', 'http://127.0.0.1:3000/auth/callback.html', { readOnly: true });
+  assert.equal((await clientAuth.verify()).status, 'SIGNED_OUT');
+  assert.equal(rpcCalls, 0); // sin sesión válida, nunca se llega a pilot_ensure_profile ni a la reanudación
+  assert.equal(db.pendingActivations[0].status, 'pending'); // la solicitud sigue intacta, sin tocar
+});
+
+test('solicitud manipulada: created_by ya NO es OWNER/ADMIN activo en el gimnasio → se cancela, nunca se aplica', async () => {
+  const { controller } = require('../../nutrika/pilot-auth.js');
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID);
+  const { api } = service({ db, findUserByEmail: findOziel });
+  await api.addClient({ token: 'tok', command: { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM } });
+  // El OWNER que autorizó la solicitud fue removido/desactivado después.
+  const owner = db.memberships.find(m => m.user_id === OWNER);
+  owner.active = false;
+  const clientAuth = controller(fakeAuthClient(db, OZIEL_ID), 'CLIENT', 'http://127.0.0.1:3000/auth/callback.html', { readOnly: true });
+  const result = await clientAuth.verify();
+  assert.equal(result.status, 'ROLE_REQUIRED'); // nunca se aplica una autorización que ya no es válida
+  assert.equal(db.pendingActivations[0].status, 'cancelled');
+  assert.equal(db.memberships.some(m => m.user_id === OZIEL_ID), false); // sin membresía otorgada
+  assert.equal(db.coachClients.length, 0);
+});
+
+test('solicitud manipulada: el coach destino ya no es válido en ese gimnasio → se cancela, nunca se aplica', async () => {
+  const { controller } = require('../../nutrika/pilot-auth.js');
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID);
+  const { api } = service({ db, findUserByEmail: findOziel });
+  await api.addClient({ token: 'tok', command: { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM } });
+  // El coach destino fue desactivado después de autorizar la solicitud.
+  db.memberships.find(m => m.user_id === COACH).active = false;
+  const clientAuth = controller(fakeAuthClient(db, OZIEL_ID), 'CLIENT', 'http://127.0.0.1:3000/auth/callback.html', { readOnly: true });
+  const result = await clientAuth.verify();
+  assert.equal(result.status, 'ROLE_REQUIRED');
+  assert.equal(db.pendingActivations[0].status, 'cancelled');
+  assert.equal(db.coachClients.length, 0);
+});
+
+test('solicitud manipulada: una fila apuntando a otro gimnasio nunca se aplica por error en el propio', async () => {
+  const { controller } = require('../../nutrika/pilot-auth.js');
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID);
+  const { api } = service({ db, findUserByEmail: findOziel });
+  await api.addClient({ token: 'tok', command: { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM } });
+  // Manipulación directa de la fila persistida: apunta a OTHER_GYM, donde
+  // ni created_by ni el coach tienen ninguna membresía.
+  db.pendingActivations[0].gym_id = OTHER_GYM;
+  const clientAuth = controller(fakeAuthClient(db, OZIEL_ID), 'CLIENT', 'http://127.0.0.1:3000/auth/callback.html', { readOnly: true });
+  const result = await clientAuth.verify();
+  assert.equal(result.status, 'ROLE_REQUIRED');
+  assert.equal(db.pendingActivations[0].status, 'cancelled');
+  assert.equal(db.memberships.some(m => m.user_id === OZIEL_ID && m.gym_id === OTHER_GYM), false);
+});
+
+test('concurrencia: dos intentos de reanudación "simultáneos" nunca duplican la membresía ni la asignación', async () => {
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID);
+  const { api } = service({ db, findUserByEmail: findOziel });
+  await api.addClient({ token: 'tok', command: { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM } });
+  db.missingProfiles.delete(OZIEL_ID); // "aceptó" la invitación
+  // Simula FOR UPDATE SKIP LOCKED: la primera llamada toma el candado antes
+  // de que la segunda intente leer la misma fila.
+  const first = applyResumePendingActivation(db, OZIEL_ID);
+  const second = applyResumePendingActivation(db, OZIEL_ID); // ya no encuentra nada 'pending': la primera la completó
+  assert.equal(first.data.status, 'completed');
+  assert.equal(second.data, null); // nada que hacer: ya no había solicitud pendiente
+  assert.equal(db.memberships.filter(m => m.user_id === OZIEL_ID).length, 1);
+  assert.equal(db.coachClients.length, 1);
+});
+
+test('concurrencia: una fila ya bloqueada (SKIP LOCKED) no se procesa dos veces en la misma ventana', async () => {
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID);
+  const { api } = service({ db, findUserByEmail: findOziel });
+  await api.addClient({ token: 'tok', command: { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM } });
+  db.missingProfiles.delete(OZIEL_ID);
+  db.lockedActivations.add(db.pendingActivations[0].id); // otra "transacción" ya la tiene tomada
+  const result = applyResumePendingActivation(db, OZIEL_ID);
+  assert.equal(result.data, null); // SKIP LOCKED: no espera, no aplica, no falla
+  assert.equal(db.memberships.some(m => m.user_id === OZIEL_ID), false);
+  assert.equal(db.pendingActivations[0].status, 'pending'); // intacta para el próximo intento
+});
+
+test('correo nuevo con perfil pendiente tras crear la cuenta: PENDING_PROFILE, la Admin API se llama una sola vez incluso tras varios intentos', async () => {
+  const db = freshDb();
+  // Cualquier id recién creado por la Admin API se trata como "perfil
+  // todavía no listo" hasta que la prueba decida lo contrario.
+  db.missingProfiles = { has: () => true };
+  const admin = fakeAdminInvite();
+  // findUserByEmail con estado: una vez que admin.invite "crea" la cuenta,
+  // las siguientes búsquedas la encuentran (como listUsers real lo haría) —
+  // así ningún intento posterior vuelve a invitar.
+  const byEmail = new Map();
+  const findUserByEmail = email => byEmail.get(email) ?? null;
+  const createAdminInvite = async (...args) => { const created = await admin.invite(...args); byEmail.set(args[0], { id: created.id }); return created; };
+  const { api } = service({ db, findUserByEmail, createAdminInvite });
+  const command = { name: 'Cliente Nuevo', email: 'pendiente@example.com', coachId: COACH, gymId: GYM };
+
+  const first = await api.addClient({ token: 'tok', command });
+  assert.equal(first.status, 'PENDING_PROFILE');
+  assert.equal(first.createdUser, true);
+  assert.equal(admin.calls.length, 1); // la invitación SÍ se envió una vez
+
+  const second = await api.addClient({ token: 'tok', command });
+  assert.equal(second.status, 'PENDING_PROFILE'); // sigue pendiente
+
+  db.missingProfiles = new Set(); // ahora "acepta la invitación": el perfil ya existe
+  const third = await api.addClient({ token: 'tok', command });
+  assert.equal(third.status, 'PROVISIONED'); // se completa en el 3er intento
+
+  assert.equal(admin.calls.length, 1); // en NINGÚN momento se reenvía la invitación
+  assert.equal(third.createdUser, false); // ya existía en Auth (encontrado vía listUsers, no se reinvita)
 });
 
 test('sin capacidad admin configurada, un correo nuevo reporta USER_NOT_FOUND sin llamar ninguna RPC', async () => {
@@ -286,14 +652,14 @@ test('límite de solicitudes: bloquea al mismo actor tras el máximo configurado
       list.push(now); hits.set(actor, list);
     };
   })();
-  const db = freshDb([{ id: uuid(2), gym_id: GYM, user_id: OTHER_COACH, roles: ['COACH'], active: true, revision: 1 }]);
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: OTHER_OWNER, roles: ['OWNER'], active: true, revision: 1 }]);
   const command = { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM };
   const { api } = service({ db, findUserByEmail: findAna, rateLimiter: limiter });
   await api.addClient({ token: 'tok', command });
   await api.addClient({ token: 'tok', command });
   await assert.rejects(api.addClient({ token: 'tok', command }), e => e.code === 'RATE_LIMIT_EXCEEDED' && e.status === 429);
-  const { api: otherApi } = service({ db, actor: OTHER_COACH, findUserByEmail: findAna, rateLimiter: limiter });
-  const ok = await otherApi.addClient({ token: 'tok', command: { ...command, coachId: OTHER_COACH } });
+  const { api: otherApi } = service({ db, actor: OTHER_OWNER, findUserByEmail: findAna, rateLimiter: limiter });
+  const ok = await otherApi.addClient({ token: 'tok', command });
   assert.equal(ok.status, 'PROVISIONED');
 });
 
@@ -339,7 +705,7 @@ test('resendInvite sin capacidad admin configurada reporta ADMIN_INVITE_UNAVAILA
 });
 
 test('clientStatus es de solo lectura, exige gymId y autorización del llamador en ese gimnasio', async () => {
-  const db = freshDb([{ id: uuid(2), gym_id: GYM, user_id: NON_COACH, roles: ['CLIENT'], active: true, revision: 1 }]);
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: NON_COACH, roles: ['CLIENT'], active: true, revision: 1 }]);
   const { api } = service({ db });
   const result = await api.clientStatus({ token: 'tok', email: 'ana@example.com', gymId: GYM });
   assert.equal(result.email, 'ana@example.com');
@@ -397,20 +763,37 @@ test('createProvisioningInfrastructure: resuelve un correo existente paginando l
     fetchImpl: async () => ({ ok: true, status: 200 }),
     createClient: (_url, key) => {
       if (key === 'sb_publishable_test') {
-        const rows = [{ id: uuid(1), gym_id: GYM, user_id: COACH, roles: ['COACH'], active: true, revision: 1 }];
+        const memberships = [
+          { id: uuid(1), gym_id: GYM, user_id: OWNER, roles: ['OWNER'], active: true, revision: 1 },
+          { id: uuid(2), gym_id: GYM, user_id: COACH, roles: ['COACH'], active: true, revision: 1 },
+        ];
+        const clients = [];
+        const coachClients = [];
+        function tableOps(rows) {
+          let filters = [];
+          const q = {
+            select: () => q,
+            eq(k, v) { filters.push([k, v]); return q; },
+            then(resolve) { resolve({ data: rows.filter(r => filters.every(([k, v]) => r[k] === v)), error: null }); },
+          };
+          return q;
+        }
         return {
-          auth: { getUser: async () => ({ data: { user: { id: COACH } } }) },
-          from: () => {
-            let filters = [];
-            const q = {
-              select: () => q,
-              eq(k, v) { filters.push([k, v]); return q; },
-              then(resolve) { resolve({ data: rows.filter(r => filters.every(([k, v]) => r[k] === v)), error: null }); },
-            };
-            return q;
-          },
+          auth: { getUser: async () => ({ data: { user: { id: OWNER } } }) },
+          from: table => table === 'gym_memberships' ? tableOps(memberships) : table === 'clients' ? tableOps(clients) : tableOps(coachClients),
           rpc: (name, args) => {
-            if (name === 'pilot_set_membership') rows.push({ id: uuid(2), gym_id: args.p_gym_id, user_id: args.p_user_id, roles: args.p_roles, active: args.p_active, revision: 1 });
+            if (name === 'pilot_set_membership') {
+              let row = memberships.find(m => m.gym_id === args.p_gym_id && m.user_id === args.p_user_id);
+              if (row) { row.roles = args.p_roles; row.active = args.p_active; }
+              else { row = { id: uuid(9000), gym_id: args.p_gym_id, user_id: args.p_user_id, roles: args.p_roles, active: args.p_active, revision: 1 }; memberships.push(row); }
+              if (args.p_roles.includes('CLIENT') && args.p_active && !clients.some(c => c.gym_id === args.p_gym_id && c.membership_id === row.id)) {
+                clients.push({ id: uuid(9999), gym_id: args.p_gym_id, membership_id: row.id });
+              }
+            }
+            if (name === 'pilot_set_coach_client') {
+              const existing = coachClients.find(c => c.gym_id === args.p_gym_id && c.coach_membership_id === args.p_coach_membership_id && c.client_id === args.p_client_membership_id);
+              if (!existing) coachClients.push({ id: uuid(9998), gym_id: args.p_gym_id, coach_membership_id: args.p_coach_membership_id, client_id: clients.find(c => c.membership_id === args.p_client_membership_id)?.id, active: args.p_active, revision: 1 });
+            }
             return Promise.resolve({ data: { ok: true }, error: null });
           },
         };
@@ -425,10 +808,8 @@ test('createProvisioningInfrastructure: resuelve un correo existente paginando l
       } } };
     },
   });
-  // No podemos invocar authorizeTargetCoach/setCoachClient con este rpc
-  // simplificado (siempre responde ok), pero sí verificamos que la
-  // resolución del usuario se detuvo en la página 2 sin invitar a nadie.
   const result = await infra.addClient({ token: 'tok', command: { name: 'X', email: target.email, coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PROVISIONED'); // la relación clients/gym_memberships también es correcta a través de la infraestructura real
   assert.equal(result.createdUser, false);
   assert.deepEqual(listUsersCalls, [1, 2]); // se detiene al encontrarlo; nunca pide la página 3
   assert.equal(inviteCalls, 0);
@@ -508,6 +889,124 @@ test('HTTP: rechaza sin bearer, método incorrecto u origen cruzado antes de lla
     assert.equal(res.statusCode, 403); // origen no coincide
     assert.equal(svc.calls.length, 0);
   } finally { await new Promise(r => app.server.close(r)); }
+});
+
+// ---------------------------------------------------------------------------
+// Integración real (punto 5 de la auditoría): el script de UI de verdad
+// (nutrika/pilot-admin-provisioning-ui.js, SIN copiar su lógica a mano),
+// corriendo contra un servidor HTTP real en loopback y un
+// createProvisioningService real (con un Supabase simulado en el límite,
+// nunca red real). Esto prueba que la interfaz y el backend corregido
+// realmente encajan, no solo que cada uno por separado pasa sus pruebas.
+// ---------------------------------------------------------------------------
+function fakeDom() {
+  function el(tag) {
+    const node = {
+      tagName: tag, _children: [], _listeners: {}, _text: '', hidden: false, disabled: false, value: '', required: false, maxLength: 0, type: '',
+      get textContent() { return this._text; }, set textContent(v) { this._text = v; },
+      append(...nodes) { this._children.push(...nodes); },
+      replaceChildren() { this._children = []; },
+      setAttribute() {},
+      addEventListener(type, fn) { this._listeners[type] = fn; },
+      reset() { this.value = ''; },
+    };
+    return node;
+  }
+  const container = el('div');
+  return { container, document: { createElement: el } };
+}
+
+test('Integración UI real + HTTP real + servicio real: Agregar cliente funciona de punta a punta', async () => {
+  const db = freshDb();
+  const api = createProvisioningService({ createSession: async () => fakeClient({ actor: OWNER, db }), findUserByEmail: findAna });
+  // Sin PILOT_PUBLIC_ORIGIN: el host permitido pasa a ser exactamente
+  // 127.0.0.1:<puerto>, que es lo que un fetch real a loopback envía de
+  // todas formas (no se puede falsear el header Host vía fetch — node
+  // reescribe a Host real; sí se puede fijar Origin, que es lo único que
+  // necesita coincidir aquí).
+  const app = createPilotServer({ env: { PORT: '10000', PILOT_SUPABASE_PUBLIC_KEY: 'sb_publishable_test' }, readOnly: true, adminProvisioningService: api });
+  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
+  try {
+    const base = 'http://127.0.0.1:' + app.server.address().port;
+    // "client" del navegador: simula el SDK de Supabase que la UI consulta
+    // para su propia sesión y su propia membresía — NUNCA el servicio real.
+    const browserClient = fakeClient({ actor: OWNER, db });
+    browserClient.auth.getSession = async () => ({ data: { session: { access_token: 'owner-session-token', user: { id: OWNER } } } });
+    const { container, document: doc } = fakeDom();
+    const context = {
+      module: { exports: {} },
+      fetch: (path, init) => globalThis.fetch(base + path, { ...init, headers: { ...init.headers, origin: base } }),
+    };
+    vm.createContext(context);
+    vm.runInContext(fs.readFileSync(require.resolve('../../nutrika/pilot-admin-provisioning-ui.js'), 'utf8'), context);
+    const ui = context.module.exports.mount(container, { client: browserClient, document: doc });
+    await ui.refresh();
+    const form = container._children.find(c => c.tagName === 'form');
+    assert.ok(form, 'el formulario debía montarse: OWNER con membresía activa está autorizado');
+    const [nameField, emailField, coachField] = form._children;
+    nameField._children[0].value = 'Ana Integración';
+    emailField._children[0].value = 'ana@example.com';
+    coachField._children[0].value = COACH;
+    await form._listeners.submit({ preventDefault() {} });
+    const status = container._children.find(c => c.tagName === 'p');
+    assert.ok(status.textContent.includes('Cliente agregado'), 'la UI real debía reportar éxito: ' + status.textContent);
+
+    // Confirma que el backend real (no un doble) de verdad escribió el
+    // estado esperado, usando las relaciones reales corregidas.
+    const anaMembershipId = db.memberships.find(m => m.user_id === ANA_ID).id;
+    const anaClient = db.clients.find(c => c.membership_id === anaMembershipId && c.gym_id === GYM);
+    assert.ok(anaClient, 'pilot_set_membership debía crear la fila en clients');
+    const coachMembershipId = db.memberships.find(m => m.user_id === COACH).id;
+    assert.equal(db.coachClients.length, 1);
+    assert.equal(db.coachClients[0].coach_membership_id, coachMembershipId);
+    assert.equal(db.coachClients[0].client_id, anaClient.id); // la fila de coach_clients referencia clients.id, no gym_memberships.id
+  } finally { await new Promise(r => app.server.close(r)); }
+});
+
+test('Integración UI real: invitación pendiente reporta PENDING_PROFILE con honestidad, no "Cliente agregado"', async () => {
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID);
+  const api = createProvisioningService({ createSession: async () => fakeClient({ actor: OWNER, db }), findUserByEmail: findOziel });
+  const app = createPilotServer({ env: { PORT: '10000', PILOT_SUPABASE_PUBLIC_KEY: 'sb_publishable_test' }, readOnly: true, adminProvisioningService: api });
+  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
+  try {
+    const base = 'http://127.0.0.1:' + app.server.address().port;
+    const browserClient = fakeClient({ actor: OWNER, db });
+    browserClient.auth.getSession = async () => ({ data: { session: { access_token: 'owner-session-token', user: { id: OWNER } } } });
+    const { container, document: doc } = fakeDom();
+    const context = { module: { exports: {} }, fetch: (path, init) => globalThis.fetch(base + path, { ...init, headers: { ...init.headers, origin: base } }) };
+    vm.createContext(context);
+    vm.runInContext(fs.readFileSync(require.resolve('../../nutrika/pilot-admin-provisioning-ui.js'), 'utf8'), context);
+    const ui = context.module.exports.mount(container, { client: browserClient, document: doc });
+    await ui.refresh();
+    const form = container._children.find(c => c.tagName === 'form');
+    const [nameField, emailField, coachField] = form._children;
+    nameField._children[0].value = 'Oziel Enríquez';
+    emailField._children[0].value = OZIEL_EMAIL;
+    coachField._children[0].value = COACH;
+    await form._listeners.submit({ preventDefault() {} });
+    const status = container._children.find(c => c.tagName === 'p');
+    assert.ok(!status.textContent.includes('Cliente agregado'), 'no debe afirmar éxito cuando sigue pendiente: ' + status.textContent);
+    assert.ok(status.textContent.toLowerCase().includes('inicie sesión'), status.textContent);
+    assert.equal(db.memberships.some(m => m.user_id === OZIEL_ID), false); // no quedó a medias en el backend real
+  } finally { await new Promise(r => app.server.close(r)); }
+});
+
+test('Integración UI real: un COACH sin OWNER/ADMIN ve un mensaje claro, nunca un formulario que el servidor rechazaría', async () => {
+  const db = freshDb();
+  const api = createProvisioningService({ createSession: async () => fakeClient({ actor: COACH, db }) });
+  const browserClient = fakeClient({ actor: COACH, db });
+  browserClient.auth.getSession = async () => ({ data: { session: { access_token: 'coach-session-token', user: { id: COACH } } } });
+  const { container, document: doc } = fakeDom();
+  const context = { module: { exports: {} }, fetch: () => assert.fail('no debía llegar a llamar al backend') };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(require.resolve('../../nutrika/pilot-admin-provisioning-ui.js'), 'utf8'), context);
+  const ui = context.module.exports.mount(container, { client: browserClient, document: doc });
+  await ui.refresh();
+  assert.equal(container._children.some(c => c.tagName === 'form'), false);
+  const status = container._children.find(c => c.tagName === 'p');
+  assert.ok(status.textContent.toLowerCase().includes('owner/admin'), status.textContent);
+  void api; // el servicio real existe para simetría con el otro caso, pero nunca se invoca
 });
 
 function httpRequest(app, origin, path, method, jsonBody, authorization = undefined) {

@@ -38,15 +38,32 @@ test('invite verifies OTP and server user; expired or mismatched credentials fai
   client.auth.getUser=async()=>({data:{user:{id:'other'}}});assert.equal((await auth.invitation(token)).status,'RECOVERY_SESSION_MISMATCH');
   client.auth.verifyOtp=async()=>({error:{message:'SECRET'}});assert.deepEqual(await auth.invitation(token),{status:'AUTH_FAILED'});
 });
-test('read-only auth does not create profile and transport blocks application RPCs',async()=>{
-  let rpc=0,transport;
-  const q={select:()=>q,eq:async()=>({data:[]})};
-  const client={auth:{getUser:async()=>({data:{user:{id:'client'}}})},from:()=>q,rpc:()=>rpc++};
-  assert.equal((await controller(client,'CLIENT',origin+'/auth/callback.html',{approvedOrigin:origin,readOnly:true}).verify()).status,'ROLE_REQUIRED');assert.equal(rpc,0);
+test('read-only auth still ensures the caller\'s own profile (identity exception) but transport blocks every other RPC',async()=>{
+  // pilot_ensure_profile() crea EXCLUSIVAMENTE profiles.id de quien llama
+  // (auth.uid() interno, ON CONFLICT DO NOTHING) — se permite siempre,
+  // incluso en readOnly, porque no existe trigger que cree profiles por
+  // otra vía y es una excepción de identidad, no una función clínica.
+  let rpc=0;const rpcNames=[];
+  const q={select:()=>q,eq:()=>q,then:resolve=>resolve({data:[]})};
+  const client={auth:{getUser:async()=>({data:{user:{id:'client'}}})},from:()=>q,rpc:name=>{rpc++;rpcNames.push(name);return {data:{id:'client'},error:null};}};
+  assert.equal((await controller(client,'CLIENT',origin+'/auth/callback.html',{approvedOrigin:origin,readOnly:true}).verify()).status,'ROLE_REQUIRED');
+  // pilot_ensure_profile (crea/confirma el propio perfil) y luego
+  // pilot_resume_pending_activation (autoservicio, tolerante) — ambas
+  // excepciones de identidad permitidas incluso en readOnly.
+  assert.equal(rpc,2);assert.deepEqual(rpcNames,['pilot_ensure_profile','pilot_resume_pending_activation']);
   const base='https://otswebncqidqthqplztj.supabase.co';
-  createClient({projectRef:'otswebncqidqthqplztj',supabaseUrl:base,publicKey:'sb_publishable_test',readOnly:true},{createClient:(_u,_k,o)=>{transport=o.global.fetch;}},()=>assert.fail('network must remain unused'),{admin:true});
-  for(const name of ['pilot_ensure_profile','pilot_set_membership','pilot_set_coach_client','pilot_assign_manual_macros'])await assert.rejects(transport(base+'/rest/v1/rpc/'+name,{method:'POST'}));
-  await assert.rejects(transport(base+'/auth/v1/signup',{method:'POST'}));
+  let transport,allowedCalls=0;
+  // El allowlist deja pasar ambas RPC de identidad hasta el fetch real: se
+  // prueba con un fetchImpl que SÍ responde, para distinguir "lo deja
+  // pasar" de "lo deja pasar pero igual falla por otra razón".
+  createClient({projectRef:'otswebncqidqthqplztj',supabaseUrl:base,publicKey:'sb_publishable_test',readOnly:true},{createClient:(_u,_k,o)=>{transport=o.global.fetch;}},()=>{allowedCalls++;return new Response('{}',{status:200});},{admin:true});
+  await assert.doesNotReject(transport(base+'/rest/v1/rpc/pilot_ensure_profile',{method:'POST'}));
+  await assert.doesNotReject(transport(base+'/rest/v1/rpc/pilot_resume_pending_activation',{method:'POST'}));
+  assert.equal(allowedCalls,2);
+  let rejectedTransport;
+  createClient({projectRef:'otswebncqidqthqplztj',supabaseUrl:base,publicKey:'sb_publishable_test',readOnly:true},{createClient:(_u,_k,o)=>{rejectedTransport=o.global.fetch;}},()=>assert.fail('network must remain unused'),{admin:true});
+  for(const name of ['pilot_set_membership','pilot_set_coach_client','pilot_assign_manual_macros'])await assert.rejects(rejectedTransport(base+'/rest/v1/rpc/'+name,{method:'POST'}));
+  await assert.rejects(rejectedTransport(base+'/auth/v1/signup',{method:'POST'}));
 });
 
 test('invitation UI cleans URL before requests, uses CLIENT and enables password form only after verification',async()=>{

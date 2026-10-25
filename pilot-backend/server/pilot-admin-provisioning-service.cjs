@@ -34,33 +34,122 @@
 //    crear) — nunca para las RPC de arriba, nunca en el navegador, y el
 //    cliente admin que las usa no se expone fuera de su función.
 //
-// ======================= CONTRATO NO VERIFICADO =========================
-// Lo siguiente sigue sin poder confirmarse contra el esquema real:
+// Autorización (corregido tras 2ª auditoría): dar de alta clientes requiere
+// membresía OWNER o ADMIN activa en ESE gimnasio — COACH por sí solo NO
+// tiene permiso para esta operación; COACH solo puede ser el DESTINO de la
+// asignación (PROVISIONER_ROLES vs. COACH_CAPABLE_ROLES, más abajo). El
+// backend valida esto ANTES de tocar la Admin API de Supabase (ver
+// addClient: authorizeCaller/authorizeTargetCoach corren antes que
+// resolveOrCreateAuthUser). La discrepancia con pilot-auth.js (que exigía
+// literalmente el rol 'COACH' para acceder a la página Coach, dejando
+// inalcanzable esta función para un OWNER/ADMIN sin ese rol) se corrigió
+// ahí: la vista Coach ahora acepta COACH/OWNER/ADMIN para su propio acceso
+// de página — esto NUNCA otorga el rol COACH en los datos, solo amplía qué
+// roles reales pueden ver esa página; el permiso administrativo de ESTE
+// módulo sigue siendo exclusivamente OWNER/ADMIN, separado del permiso
+// clínico/de coacheo.
 //
-//  1) Nombres exactos de las columnas `revision` en `gym_memberships` y
-//     `coach_clients`, y de `coach_membership_id`/`client_membership_id` en
-//     `coach_clients`. Se infieren 1:1 de los parámetros de las RPC
-//     (p_expected_revision -> revision, p_coach_membership_id ->
-//     coach_membership_id, etc.), con el mismo criterio que ya está
-//     confirmado para p_gym_id -> gym_id y p_user_id -> user_id en este
-//     mismo proyecto. Si algún nombre real difiere, Postgres/PostgREST lo
-//     señala de inmediato al leer (columna inexistente) y el único cambio
-//     necesario es el nombre en el `.select()` correspondiente — el resto
-//     del flujo no cambia.
+// Relaciones (corregido tras 2ª auditoría — la 1ª corrección fue
+// incorrecta y se revierte aquí):
+//   - `pilot_set_coach_client` recibe `p_client_membership_id` = el id en
+//     `gym_memberships` del cliente (NO el id de su fila en `clients`).
+//     setCoachClient() pasa `clientMembershipId` tal cual a la RPC.
+//   - Para CONSULTAR una asignación existente (antes de escribir, para la
+//     concurrencia optimista), hay que resolver primero `clients.id` a
+//     partir de `(gym_id, membership_id)` — `clients` es la tabla que
+//     `pilot_set_membership` crea automáticamente al activar CLIENT, con
+//     su propio id y una columna `membership_id` que referencia
+//     `gym_memberships.id`. Con ese `clients.id` resuelto, la consulta a
+//     `coach_clients` filtra por su columna `client_id` — NUNCA por una
+//     columna `client_membership_id` (esa columna no existe en
+//     `coach_clients`; solo existía en la implementación anterior de este
+//     archivo, que confundía el id de escritura con el de lectura).
+//
+// Profiles (rediseñado tras 2ª auditoría — NO es un reintento con espera):
+//   - `pilot_ensure_profile()` es estrictamente de autoservicio: se llama
+//     SIN argumentos y opera sobre quien la invoca (ver pilot-auth.js:
+//     `client.rpc('pilot_ensure_profile')`, sin parámetros). Esta capa
+//     JAMÁS la ejecuta con la sesión del OWNER/ADMIN pretendiendo crear el
+//     perfil de otra persona — sería un uso incorrecto de esa RPC, no una
+//     forma válida de "forzar" el perfil del invitado.
+//   - Esta capa tampoco asume que existe un trigger en `auth.users` que
+//     cree `profiles` automáticamente al invitar. Si existe, no lo
+//     reemplaza ni lo desactiva. Si no existe, el único momento en que
+//     `profiles.id` del invitado puede llegar a existir es cuando ESA
+//     persona inicia sesión por primera vez y su PROPIA sesión pasa por el
+//     flujo normal de `pilot-auth.js` (que si puede llamar
+//     `pilot_ensure_profile()` en autoservicio, en modo no-solo-lectura).
+//   - Por eso `pilot_set_membership` puede fallar (FK, `23503`) la primera
+//     vez para un correo recién invitado o para uno existente que nunca
+//     inició sesión. Esto NO se reintenta con esperas artificiales (eso
+//     asumiría un trigger). Se reporta como resultado normal
+//     `PENDING_PROFILE` (no como error): la invitación ya se envió (o ya
+//     existía la cuenta), y repetir la MISMA llamada a `addClient` más
+//     adelante — después de que esa persona inicie sesión al menos una
+//     vez — retoma y completa membresía + asignación de forma idempotente,
+//     sin reenviar ninguna invitación (resolveOrCreateAuthUser encuentra la
+//     cuenta ya existente vía `listUsers` y nunca vuelve a invitar).
+//
+// Activación automática (nueva, sobre infraestructura PROPUESTA, NO
+// aplicada a Supabase real — ver pilot-backend/deployment/
+// PENDING-ACTIVATION-MIGRATION.sql):
+//   - Cuando addClient() cae en PENDING_PROFILE, además guarda (upsert,
+//     por `(gym_id, user_id)` — nunca duplica) una fila persistente en
+//     `pilot_pending_activations` con quién la autorizó (`created_by`,
+//     el propio OWNER/ADMIN que llamó) y a qué coach quedó destinada.
+//   - Esa fila la consume, EN SU PROPIO NOMBRE, el cliente cuando inicia
+//     sesión por primera vez — vía `pilot_resume_pending_activation()`
+//     (RPC de autoservicio, llamada desde `pilot-auth.js`, NUNCA desde
+//     este servicio) — sin que ningún OWNER/ADMIN tenga que repetir la
+//     acción manualmente.
+//   - Esta capa NUNCA llama a `pilot_resume_pending_activation()`: esa RPC
+//     es exclusiva de la sesión del propio cliente. Este archivo solo
+//     ESCRIBE la solicitud pendiente, con la sesión del OWNER/ADMIN que ya
+//     se autorizó más arriba — no con service_role, no saltándose nada.
+//   - Si `pilot_pending_activations` todavía no existe (la migración
+//     propuesta no se aplicó), el intento de guardar la solicitud falla
+//     silenciosamente (se captura, no se relanza): PENDING_PROFILE se
+//     sigue reportando igual, simplemente sin el beneficio de la
+//     reanudación automática — nunca se simula que la migración ya está
+//     aplicada cuando no lo está.
+//
+// ======================= CONTRATO NO VERIFICADO =========================
+// Ninguno de estos puntos se puede cerrar con mocks en memoria: hace falta
+// una base de datos Postgres desechable y separada de producción (p. ej.
+// una réplica del esquema en un proyecto de Supabase aparte, o un Postgres
+// local con las mismas funciones/triggers aplicados) para observar el
+// comportamiento real de las RPC, triggers y RLS.
+//
+//  1) Nombres exactos de columna: `revision` en `gym_memberships`,
+//     `coach_clients` y `clients`; `coach_membership_id` y `client_id` en
+//     `coach_clients`; `membership_id` en `clients`. Se infieren de la
+//     descripción textual confirmada de las RPC (p_expected_revision ->
+//     revision, etc.), con el mismo criterio que ya está confirmado para
+//     p_gym_id -> gym_id. Si algún nombre real difiere, Postgres/PostgREST
+//     lo señala de inmediato al leer (columna inexistente) y el único
+//     cambio necesario es ese nombre en el `.select()` correspondiente.
 //  2) Qué `p_expected_revision` espera la RPC la PRIMERA vez que se crea una
 //     fila que nunca existió. Se usa 0. Si el valor real esperado es otro,
 //     la RPC devuelve 40001 en el primer intento y el mecanismo de
-//     reintento ya implementado se autocorrige leyendo la revisión real —
-//     no hace falta confirmar esto de antemano para que el sistema termine
-//     en el estado correcto.
+//     reintento ya implementado se autocorrige leyendo la revisión real.
 //  3) Resolución de una cuenta Auth EXISTENTE por correo: la Admin API de
 //     Supabase instalada aquí (@supabase/auth-js, confirmado localmente en
 //     node_modules) no expone un filtro por correo en `listUsers()`, solo
 //     paginación (`GET /auth/v1/admin/users?page=&per_page=`). Se buscan
 //     hasta 5 páginas de 200 usuarios (1000 en total) antes de darse por
-//     vencido. Correcto para el tamaño actual del piloto; si la base de
-//     usuarios del proyecto crece mucho esto deja de escalar y conviene
-//     sustituirlo por una función dedicada en Postgres.
+//     vencido.
+//  4) Si existe un trigger en `auth.users` que cree `profiles`
+//     automáticamente. Deliberadamente NO se asume (ver sección Profiles
+//     arriba) — si existe, `PENDING_PROFILE` se resuelve solo en el
+//     siguiente intento; si no existe, requiere que la persona invitada
+//     inicie sesión primero (lo cual, en este despliegue, también depende
+//     de si `pilot-auth.js` corre en modo `readOnly` — ver nota de
+//     PROVISIONING-GAP.md sobre esto, que NO se modifica en este módulo).
+//  5) Si RLS permite que un OWNER/ADMIN lea la fila de `clients` de otro
+//     usuario del mismo gimnasio (necesario para resolver la consulta de
+//     `coach_clients` antes de escribir). Si RLS lo bloquea, el error es
+//     inmediato y explícito (PROVISIONING_RESULT_UNKNOWN), nunca una
+//     asignación incorrecta o silenciosa.
 // ==========================================================================
 
 const {snapshotCommand} = require('./gateway-safety.cjs');
@@ -77,6 +166,11 @@ const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,24}$/;
 // 40001 (conflicto de revisión) y 23503 (llave foránea) tienen su propio
 // mapeo explícito en mapRpcError, abajo.
 const PG_STATUS = { '42501': 403, '23514': 422, '22023': 400 };
+// Quién puede EJECUTAR el alta de clientes (corregido: COACH no tiene este
+// permiso, solo puede ser el destino de la asignación).
+const PROVISIONER_ROLES = ['OWNER', 'ADMIN'];
+// Quién puede ser el COACH destino de una asignación.
+const COACH_CAPABLE_ROLES = ['COACH', 'OWNER', 'ADMIN'];
 
 function object(value, keys) {
   if (!value || Array.isArray(value) || typeof value !== 'object' ||
@@ -156,38 +250,53 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
     });
   }
 
-  // Confirma del lado del servidor que quien llama tiene membresía COACH u
-  // OWNER activa EN ESE gimnasio exacto — nunca en cualquier gimnasio.
+  // Confirma del lado del servidor que quien llama tiene membresía OWNER o
+  // ADMIN activa EN ESE gimnasio exacto — COACH no tiene este permiso.
   async function authorizeCaller(client, actor, gymId, check) {
     const membership = await client.from('gym_memberships').select('user_id,gym_id,roles,active').eq('user_id', actor).eq('gym_id', gymId).eq('active', true);
     check();
     if (membership.error) fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
     const roles = membership.data?.[0]?.roles ?? [];
-    if (!roles.includes('COACH') && !roles.includes('OWNER')) fail('42501', 403);
+    if (!PROVISIONER_ROLES.some(r => roles.includes(r))) fail('42501', 403);
   }
 
-  // Confirma que el coach objetivo también tiene membresía COACH/OWNER
-  // activa en EL MISMO gimnasio, y devuelve el id real de esa membresía
-  // (lo exige pilot_set_coach_client como p_coach_membership_id — nunca un
-  // user_id).
+  // Confirma que el coach objetivo tiene una membresía activa EN EL MISMO
+  // gimnasio con un rol que puede coachear (COACH, OWNER o ADMIN), y
+  // devuelve el id real de esa membresía (lo exige pilot_set_coach_client
+  // como p_coach_membership_id — nunca un user_id).
   async function authorizeTargetCoach(client, coachId, gymId, check) {
     const membership = await client.from('gym_memberships').select('id,user_id,gym_id,roles,active').eq('user_id', coachId).eq('gym_id', gymId).eq('active', true);
     check();
     if (membership.error) fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
     const row = membership.data?.[0];
-    if (!row || (!row.roles?.includes('COACH') && !row.roles?.includes('OWNER'))) fail('INVALID_COACH', 422);
+    if (!row || !COACH_CAPABLE_ROLES.some(r => row.roles?.includes(r))) fail('INVALID_COACH', 422);
     return row.id;
   }
 
   async function readMembershipRow(client, gymId, userId, check) {
-    const r = await client.from('gym_memberships').select('id,revision').eq('gym_id', gymId).eq('user_id', userId);
+    const r = await client.from('gym_memberships').select('id,roles,active,revision').eq('gym_id', gymId).eq('user_id', userId);
     check();
     if (r.error) fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
     return r.data?.[0] ?? null;
   }
 
-  async function readCoachClientRow(client, gymId, coachMembershipId, clientMembershipId, check) {
-    const r = await client.from('coach_clients').select('id,revision').eq('gym_id', gymId).eq('coach_membership_id', coachMembershipId).eq('client_membership_id', clientMembershipId);
+  // `clients` es la tabla que `pilot_set_membership` crea automáticamente
+  // al activar el rol CLIENT. Se lee (nunca se escribe) para resolver su id
+  // a partir de (gym_id, membership_id) — necesario SOLO para poder
+  // consultar `coach_clients` antes de escribir (ver nota de "Relaciones"
+  // al inicio del archivo). La propia escritura de pilot_set_coach_client
+  // sigue usando el id de gym_memberships, no el de `clients`.
+  async function readClientRecordByMembership(client, gymId, membershipId, check) {
+    const r = await client.from('clients').select('id').eq('gym_id', gymId).eq('membership_id', membershipId);
+    check();
+    if (r.error) fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
+    return r.data?.[0] ?? null;
+  }
+
+  // Filtra por `client_id` (la fila de `clients`), NUNCA por una columna
+  // `client_membership_id` — esa columna no existe en `coach_clients`.
+  async function readCoachClientRow(client, gymId, coachMembershipId, clientRecordId, check) {
+    const r = await client.from('coach_clients').select('id,revision').eq('gym_id', gymId).eq('coach_membership_id', coachMembershipId).eq('client_id', clientRecordId);
     check();
     if (r.error) fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
     return r.data?.[0] ?? null;
@@ -240,8 +349,11 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   // Asegura la membresía CLIENT activa del usuario en el gimnasio dado —
   // idempotente, con reintento de revisión. pilot_set_membership crea el
   // registro en `clients` por su cuenta: esta función nunca escribe ahí.
-  // Devuelve la fila resultante (incluye el id real de la membresía, que
-  // pilot_set_coach_client exige como p_client_membership_id).
+  // Si la RPC falla por "registro relacionado no encontrado" (23503) —
+  // típicamente porque `profiles.id` del usuario todavía no existe — NO se
+  // reintenta aquí con esperas (ver nota de "Profiles" al inicio del
+  // archivo): el error se deja subir tal cual para que addClient() lo
+  // traduzca en un resultado PENDING_PROFILE, nunca en un bucle.
   async function setMembership(client, { gymId, userId }, check) {
     await withRevisionRetry(
       () => readMembershipRow(client, gymId, userId, check),
@@ -253,16 +365,27 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
       },
       check,
     );
-    const after = await readMembershipRow(client, gymId, userId, check);
-    if (!after) fail('PROVISIONING_RESULT_UNKNOWN', 503);
-    return after;
+    const membership = await readMembershipRow(client, gymId, userId, check);
+    // No basta con que exista una fila: debe reflejar lo que acabamos de
+    // pedir. Si no, algo más (otra solicitud concurrente, un error parcial)
+    // dejó el estado en algo distinto de lo esperado.
+    if (!membership || !membership.roles?.includes('CLIENT') || !membership.active) fail('PROVISIONING_RESULT_UNKNOWN', 503);
+    return { membershipId: membership.id };
   }
 
-  // Vincula coach y cliente por sus IDs REALES de membresía (nunca por
-  // user_id) — idempotente, con el mismo reintento de revisión.
+  // Vincula coach y cliente. p_client_membership_id es el id en
+  // gym_memberships del cliente (NUNCA el de `clients`) — pero para
+  // CONSULTAR si ya existe una asignación (y su revisión real) hay que
+  // resolver primero `clients.id` vía (gym_id, membership_id) y filtrar
+  // `coach_clients` por su columna `client_id`. Si esa fila en `clients`
+  // todavía no existe, es la misma situación de "perfil no listo todavía"
+  // que setMembership — se deja subir como RELATED_RECORD_NOT_FOUND para
+  // que addClient() la traduzca en PENDING_PROFILE, nunca con reintentos.
   async function setCoachClient(client, { gymId, coachMembershipId, clientMembershipId }, check) {
+    const clientRecord = await readClientRecordByMembership(client, gymId, clientMembershipId, check);
+    if (!clientRecord) fail('RELATED_RECORD_NOT_FOUND', 404);
     return withRevisionRetry(
-      () => readCoachClientRow(client, gymId, coachMembershipId, clientMembershipId, check),
+      () => readCoachClientRow(client, gymId, coachMembershipId, clientRecord.id, check),
       async expectedRevision => {
         const call = await client.rpc('pilot_set_coach_client', { p_gym_id: gymId, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId, p_active: true, p_expected_revision: expectedRevision });
         check();
@@ -273,6 +396,24 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
     );
   }
 
+  // Guarda (upsert por gym_id+user_id, nunca duplica) la solicitud de
+  // activación pendiente que `pilot_resume_pending_activation()` consumirá
+  // automáticamente en el primer login del cliente. Deliberadamente NUNCA
+  // lanza: si la tabla propuesta todavía no existe en Supabase real (la
+  // migración no se aplicó), PENDING_PROFILE sigue siendo el resultado —
+  // solo se pierde el beneficio de la reanudación automática, nunca se
+  // rompe el alta ni se simula una infraestructura que no está ahí.
+  async function savePendingActivation(client, { gymId, userId, coachMembershipId, createdBy }, check) {
+    try {
+      const result = await client.from('pilot_pending_activations').upsert(
+        { gym_id: gymId, user_id: userId, coach_membership_id: coachMembershipId, created_by: createdBy, status: 'pending' },
+        { onConflict: 'gym_id,user_id' },
+      );
+      check();
+      return !result?.error;
+    } catch { return false; }
+  }
+
   return {
     // Da de alta (o reutiliza) a un cliente dentro de un gimnasio concreto.
     // 1) autoriza al llamador y al coach destino EN ESE gimnasio;
@@ -281,6 +422,14 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
     // 4) vincula coach-cliente por IDs de membresía (pilot_set_coach_client).
     // Repetir la misma solicitud no duplica nada: ambos pasos 3 y 4 son
     // upserts idempotentes por (gym_id, user_id) / (gym_id, coach, cliente).
+    //
+    // Si el paso 3 o 4 falla porque `profiles.id` del usuario todavía no
+    // existe (ver "Profiles" al inicio del archivo), esto NO es un error:
+    // se reporta como PENDING_PROFILE. La invitación (si correspondía) ya
+    // se envió; repetir esta misma llamada después de que esa persona
+    // inicie sesión por primera vez retoma y completa membresía/asignación
+    // sin reenviar ninguna invitación (resolveOrCreateAuthUser la encuentra
+    // vía listUsers en ese segundo intento).
     async addClient({ token, command, signal }) {
       const input = validateAddClientCommand(command);
       return run(token, signal, async ({ client, actor, check }) => {
@@ -293,9 +442,18 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
         const { id: userId, createdUser } = await resolveOrCreateAuthUser(input.email, input.name, check);
         check();
 
-        const membership = await setMembership(client, { gymId: input.gymId, userId }, check);
-        check();
-        await setCoachClient(client, { gymId: input.gymId, coachMembershipId, clientMembershipId: membership.id }, check);
+        let membership;
+        try {
+          membership = await setMembership(client, { gymId: input.gymId, userId }, check);
+          check();
+          await setCoachClient(client, { gymId: input.gymId, coachMembershipId, clientMembershipId: membership.membershipId }, check);
+        } catch (e) {
+          if (e instanceof ProvisioningError && e.code === 'RELATED_RECORD_NOT_FOUND') {
+            const autoResumable = await savePendingActivation(client, { gymId: input.gymId, userId, coachMembershipId, createdBy: actor }, check);
+            return { status: 'PENDING_PROFILE', email: input.email, coachId: input.coachId, gymId: input.gymId, createdUser, invite: createdUser, autoResumable };
+          }
+          throw e;
+        }
 
         return { status: 'PROVISIONED', email: input.email, coachId: input.coachId, gymId: input.gymId, createdUser, invite: createdUser };
       });
@@ -371,9 +529,13 @@ function createProvisioningInfrastructure({ env = process.env, fetchImpl = globa
         fetch: async (input, init = {}) => {
           const url = new URL(typeof input === 'string' ? input : input.url ?? input.href);
           const method = (init.method ?? (typeof input === 'object' ? input.method : undefined) ?? 'GET').toUpperCase();
-          const allowed = ['/auth/v1/user', '/rest/v1/gym_memberships', '/rest/v1/coach_clients', '/rest/v1/rpc/pilot_set_membership', '/rest/v1/rpc/pilot_set_coach_client'];
+          const allowed = ['/auth/v1/user', '/rest/v1/gym_memberships', '/rest/v1/coach_clients', '/rest/v1/clients', '/rest/v1/pilot_pending_activations', '/rest/v1/rpc/pilot_set_membership', '/rest/v1/rpc/pilot_set_coach_client'];
           const rpc = url.pathname.startsWith('/rest/v1/rpc/');
-          const methodOk = rpc ? method === 'POST' : ['GET', 'HEAD'].includes(method);
+          // pilot_pending_activations es la ÚNICA tabla que este cliente
+          // puede ESCRIBIR (upsert de la solicitud pendiente) — el resto
+          // de las tablas siguen siendo de solo lectura desde aquí.
+          const writableTable = url.pathname === '/rest/v1/pilot_pending_activations';
+          const methodOk = rpc ? method === 'POST' : writableTable ? ['GET', 'HEAD', 'POST', 'PATCH'].includes(method) : ['GET', 'HEAD'].includes(method);
           if (signal.aborted || url.origin !== config.supabaseUrl || url.username || url.password || !allowed.includes(url.pathname) || !methodOk) {
             fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
           }

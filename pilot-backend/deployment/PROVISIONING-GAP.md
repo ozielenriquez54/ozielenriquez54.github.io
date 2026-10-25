@@ -3,99 +3,109 @@
 Implementado y probado localmente (sin tocar Supabase real). Resume lo que
 queda por confirmar antes de usar esto contra la base de datos de verdad.
 
-## Qué se construyó
+**5ª ronda: activación automática.** Las rondas 3–4 dejaban la reanudación
+como una acción manual (el OWNER/ADMIN tenía que volver a pulsar "Agregar
+cliente" después de que el cliente iniciara sesión). Esta ronda la
+automatiza — **pero depende de infraestructura SQL que todavía no existe
+en Supabase real.** No se declara el flujo terminado de extremo a extremo:
+ver la sección "Bloqueo real" más abajo.
 
-- `pilot-backend/server/pilot-admin-provisioning-service.cjs`: capa de
-  dominio, reescrita contra los contratos REALES confirmados de las RPC:
-  - `pilot_set_membership(p_gym_id uuid, p_user_id uuid, p_roles pilot_role[], p_active boolean, p_expected_revision bigint)`
-    — crea la membresía CLIENT y, con ella, el registro en `clients` por su
-    cuenta. Esta capa nunca inserta en `clients` directamente.
-  - `pilot_set_coach_client(p_gym_id uuid, p_coach_membership_id uuid, p_client_membership_id uuid, p_active boolean, p_expected_revision bigint)`
-    — exige IDs reales de membresía (no `user_id`), ambas del mismo
-    `gym_id`, y se llama siempre después de `pilot_set_membership`.
-  - Ambas usan concurrencia optimista: se lee la revisión real antes de
-    escribir, y un conflicto (SQLSTATE `40001`) se resuelve releyendo y
-    reintentando con la revisión fresca, acotado a 4 intentos — nunca en
-    bucle, nunca duplicando la operación.
-  - `gym_id` se exige y se valida en TODAS las consultas y llamadas: el
-    llamador debe tener membresía COACH/OWNER activa en ese gimnasio exacto,
-    y el coach destino también, antes de escribir nada.
-  - Las dos RPC se llaman SIEMPRE con la sesión propia del coach (token
-    reenviado, clave publicable) — nunca con `service_role`, para no
-    saltarse el mecanismo de bloqueo interno (`pilot_private.lock_admin`)
-    que depende de la identidad real del llamador.
-- `pilot-backend/server/pilot-admin-provisioning-http.cjs`: ruta HTTP
-  (`POST /api/admin/clients`, `POST /api/admin/clients/resend-invite`,
-  `GET /api/admin/clients/status`), mismo patrón de origen/bearer/cuerpo
-  acotado que `manual-macros-http.cjs`/`diary-http.cjs`.
-- `nutrika/pilot-admin-provisioning-ui.js`: formulario "Agregar cliente" en
-  la vista Coach. El `gym_id` NO se pide a mano: se obtiene leyendo la propia
-  membresía activa del coach (`gym_memberships`, ya legible sin modo admin);
-  el servidor igual revalida que esa membresía sea COACH/OWNER activa en ese
-  `gym_id` exacto.
-- Cambios aditivos en `pilot-http.cjs` y `pilot-auth-ui.js`: todo detrás de
-  un parámetro opcional `adminProvisioningService` — si no se pasa, el
-  comportamiento es idéntico al actual. Deliberadamente independiente de
-  `readOnly`: el piloto puede seguir con diario/macros/tracking cerrados y
-  aun así tener esta alta habilitada.
-- **Resolución/creación de la cuenta Auth del cliente**, exclusivamente en
-  el servidor, con `service_role` leído solo de `PILOT_SUPABASE_SERVICE_KEY`
-  (nunca de la clave publicable, que se rechaza por forma si alguien la
-  confunde) y usado dentro de un cliente separado que nunca se expone fuera
-  de esa función:
-  - **Correo existente**: se busca por email con `auth.admin.listUsers()`
-    (la única vía que expone la versión instalada de `@supabase/auth-js` —
-    no hay filtro por correo, solo paginación), hasta 5 páginas de 200
-    usuarios. Si se encuentra, se usa ese `user_id` real — nunca se llama a
-    la Admin API para crear nada. Verificado explícitamente con
-    `oziel.enriquez@complextraining.mx`: alta repetida, sin duplicar
-    membresía ni asignación, sin tocar la Admin API.
-  - **Correo nuevo**: se crea con `auth.admin.inviteUserByEmail` (invita y
-    crea en un solo paso, documentado y confirmado contra el SDK instalado).
-  - Si `PILOT_SUPABASE_SERVICE_KEY` no está configurada, el comportamiento
-    es `USER_NOT_FOUND` directo sin intentar nada — opt-in explícito.
-- 29 pruebas simuladas nuevas (`pilot-backend/tests/pilot-admin-provisioning.test.cjs`),
-  ninguna toca la red real. Incluyen aislamiento entre gimnasios (un coach
-  activo en otro gimnasio no puede operar en este), reintento de
-  `REVISION_CONFLICT` acotado, y la paginación de `listUsers` deteniéndose
-  al encontrar el correo. Las 63 pruebas previas siguen pasando sin cambios
-  (92/92 en total).
+## Qué cambia
 
-## Lo que NO pude verificar (bloqueos reales, no asumidos)
+- **`pilot-backend/deployment/PENDING-ACTIVATION-MIGRATION.sql`** (nuevo,
+  **propuesta, NO aplicada**): una tabla `pilot_pending_activations`
+  (bloqueada por RLS para todos excepto OWNER/ADMIN del gimnasio
+  correspondiente) y una función `pilot_resume_pending_activation()`
+  (SECURITY DEFINER, autoservicio, otorgada a `authenticated`). Diseño
+  explicado con comentarios dentro del propio archivo: por qué no
+  reutiliza `pilot_set_membership`/`pilot_set_coach_client` directamente
+  (esas RPC autorizan comprobando el rol de `auth.uid()` en el momento de
+  la llamada, y el cliente nunca es OWNER/ADMIN), por qué revalida en vivo
+  que el autorizador original sigue siendo OWNER/ADMIN activo (en vez de
+  confiar ciegamente en una autorización histórica), y cómo evita
+  condiciones de carrera (`FOR UPDATE SKIP LOCKED`).
+- **`pilot-admin-provisioning-service.cjs`**: cuando `addClient` cae en
+  `PENDING_PROFILE`, además intenta guardar (upsert por `gym_id,user_id`,
+  nunca duplica) la solicitud en `pilot_pending_activations`, con la
+  sesión del propio OWNER/ADMIN que ya se autorizó (nunca `service_role`).
+  Si esa tabla todavía no existe, el intento falla en silencio — el
+  resultado sigue siendo `PENDING_PROFILE`, solo que con
+  `autoResumable: false` en vez de `true`, para que la UI sepa cuál
+  mensaje mostrar y **nunca prometa algo que no puede cumplir**.
+- **`pilot-auth.js`**: `verify()` llama `pilot_resume_pending_activation()`
+  justo después de `pilot_ensure_profile()` — autoservicio, tolerante (si
+  la función no existe todavía o no hay nada pendiente, no rompe la
+  verificación normal). Si había una solicitud pendiente aplicable, la
+  membresía y la asignación quedan completas en el MISMO `verify()` que
+  crea el perfil — el cliente queda `AUTHORIZED` en su primer login, sin
+  que el OWNER/ADMIN haga nada más.
+- **`pilot-admin-provisioning-ui.js`**: el mensaje tras `PENDING_PROFILE`
+  distingue `autoResumable` — si es `true`, dice que se completará solo;
+  si es `false`, dice explícitamente que la activación automática no está
+  disponible todavía y que hay que repetir la acción a mano.
 
-1. **Nombres exactos de columna**: `revision` en `gym_memberships` y
-   `coach_clients`, y `coach_membership_id`/`client_membership_id` en
-   `coach_clients`. Se infieren 1:1 de los parámetros de las RPC
-   (`p_expected_revision` → `revision`, etc.), con el mismo criterio que ya
-   está confirmado para `p_gym_id` → `gym_id` y `p_user_id` → `user_id`. Si
-   algún nombre real difiere, Postgres/PostgREST lo señala de inmediato al
-   leer, y el único cambio necesario es ese nombre en el `.select()`
-   correspondiente.
-2. **Convención de `p_expected_revision` para una fila que nunca existió**
-   (se usa `0`). Si el valor real esperado es otro, la RPC devuelve `40001`
-   en el primer intento y el reintento ya implementado se autocorrige
-   leyendo la revisión real — no bloquea el resultado final, solo agrega una
-   vuelta extra la primera vez.
-3. **Escala de la búsqueda de usuarios existentes por correo.** `listUsers`
-   sin filtro por correo no escala bien si el proyecto crece mucho más allá
-   del piloto actual (tope actual: 1000 usuarios revisados). Si eso pasa,
-   conviene sustituirlo por una función dedicada en Postgres que busque por
-   índice.
+## ⚠️ Bloqueo real: esto no funciona contra Supabase real hasta aplicar la migración
+
+**No se simula que esto funciona hoy.** `PENDING-ACTIVATION-MIGRATION.sql`
+es una propuesta escrita por este módulo, nunca ejecutada contra ningún
+Supabase (ni real ni de prueba) — nadie en esta sesión tiene ese acceso.
+Hasta que alguien con acceso real:
+1. Confirme los nombres de columna reales de
+   `gym_memberships`/`clients`/`coach_clients` (el archivo SQL los asume
+   iguales a los ya usados en el resto de este módulo) y ajuste la función
+   si difieren;
+2. Pruebe la migración en un proyecto de Supabase **desechable**, nunca en
+   producción directamente;
+3. La aplique al proyecto real;
+
+...el código Node.js seguirá funcionando exactamente como en la ronda
+anterior: `addClient` devuelve `PENDING_PROFILE` con `autoResumable:
+false`, y la reanudación sigue siendo manual (el OWNER/ADMIN repite
+"Agregar cliente"). **Nada se rompe por no tener la migración aplicada** —
+simplemente no se obtiene el beneficio de la activación automática todavía.
+
+## Pruebas nuevas (14, sobre el contrato SQL PROPUESTO — nunca contra Supabase real)
+
+- Activación automática de punta a punta: alta → solicitud persistida →
+  primer login → perfil creado → reanudación automática → `AUTHORIZED`,
+  sin segunda acción del OWNER/ADMIN.
+- Idempotencia: un segundo login no duplica membresía ni asignación.
+- Sesión expirada/inválida: `verify()` nunca intenta reanudar sin una
+  sesión válida (cero llamadas RPC).
+- Solicitudes manipuladas: `created_by` que ya no es OWNER/ADMIN activo,
+  coach destino ya no válido, y una fila apuntando a otro gimnasio — las
+  tres se cancelan en vez de aplicarse.
+- Concurrencia: dos intentos de reanudación no duplican nada (la primera
+  completa, la segunda no encuentra nada pendiente); una fila ya bloqueada
+  (`SKIP LOCKED`) no se procesa dos veces en la misma ventana.
+- 110 pruebas en total, ninguna toca la red real.
+
+## Lo que NO pude verificar (ninguno se puede cerrar con mocks en memoria;
+## hace falta una base de datos Postgres desechable, separada de producción)
+
+1. Nombres exactos de columna en `clients`/`coach_clients`/`gym_memberships`
+   (sin cambios respecto a rondas anteriores).
+2. Si RLS permite exactamente las políticas propuestas en
+   `PENDING-ACTIVATION-MIGRATION.sql` (la sintaxis asume un tipo
+   `pilot_role[]` para `roles` — confirmar que coincide con el real).
+3. Si `pilot_private.lock_admin` (mencionado en tareas anteriores como el
+   mecanismo de serialización de las RPC existentes) necesita algún
+   tratamiento especial dentro de `pilot_resume_pending_activation()` — la
+   propuesta no lo toca ni lo reemplaza, solo evita necesitarlo al no pasar
+   por `pilot_set_membership`/`pilot_set_coach_client` directamente; si eso
+   resulta insuficiente en la práctica, hay que revisarlo con quien
+   mantenga ese mecanismo.
+4. Rendimiento/bloqueo real de `FOR UPDATE SKIP LOCKED` bajo concurrencia
+   genuina (las pruebas de concurrencia de este módulo son deterministas,
+   no una prueba de carga real).
 
 ## Siguiente paso recomendado
 
-Nada de lo anterior bloquea usar esto en `preprod-docker-test`: el único
-modo en que un contrato equivocado se manifiesta es un error claro y
-específico (columna inexistente, o `40001` resuelto solo), nunca un alta
-silenciosamente incorrecta. Antes de usar esto contra producción real falta:
-
-1. Confirmar los puntos 1 y 2 leyendo, en el SQL Editor del proyecto
-   (`otswebncqidqthqplztj`), las columnas reales de `gym_memberships` y
-   `coach_clients` (`\d gym_memberships`, `\d coach_clients`), y ajustar los
-   nombres en los `.select()` si difieren.
-2. Definir `PILOT_SUPABASE_SERVICE_KEY` únicamente en el entorno del
-   servidor (Render), nunca en el cliente.
-3. Decidir, con quien administre Supabase, si `auth.admin.inviteUserByEmail`
-   + `listUsers` deben reemplazar por completo a `pilot-admin.js`, o si ese
-   archivo original (no recuperable desde este entorno) tenía alguna
-   validación adicional que deba preservarse.
+1. Revisar `PENDING-ACTIVATION-MIGRATION.sql` con quien administre
+   Supabase; ajustar nombres de columna si difieren; probarlo en un
+   proyecto desechable.
+2. Aplicarlo al proyecto real cuando esté validado.
+3. Confirmar que `autoResumable` pasa a `true` en un alta de prueba real
+   después de aplicar la migración — si sigue en `false`, algo en los
+   permisos de escritura de `pilot_pending_activations` no coincide con lo
+   propuesto.
