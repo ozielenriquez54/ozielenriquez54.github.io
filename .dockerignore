@@ -13,6 +13,8 @@
 !pilot-backend/server/manual-macros-http.cjs
 !pilot-backend/server/gateway-safety.cjs
 !pilot-backend/server/diary-http.cjs
+!pilot-backend/server/pilot-admin-provisioning-service.cjs
+!pilot-backend/server/pilot-admin-provisioning-http.cjs
 !nutrika/
 !nutrika/index.html
 !nutrika/coach.html
@@ -40,6 +42,7 @@
 !nutrika/pilot-tracking-service.js
 !nutrika/pilot-tracking-ui.js
 !nutrika/pilot-coach-history-ui.js
+!nutrika/pilot-admin-provisioning-ui.js
 !nutrika/domain/tracking/
 !nutrika/domain/tracking/adherence.cjs
 !pilot-backend/server/postgres-config.cjs

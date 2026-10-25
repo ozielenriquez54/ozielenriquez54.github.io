@@ -21,9 +21,10 @@
     const link=document.getElementById('recovery-login');if(link)link.hidden=!recoveryMode;
   }
   recoveryLayout();
-  let busy=false,updating=false,macrosUI=null,authorized=false,authEpoch=0,diaryUI=null,diaryModel=null,trackingUI=null,trackingModel=null,coachHistoryUI=null,refreshDiary=()=>{},refreshTracking=()=>{},refreshCoachHistory=()=>{};
+  let busy=false,updating=false,macrosUI=null,authorized=false,authEpoch=0,diaryUI=null,diaryModel=null,trackingUI=null,trackingModel=null,coachHistoryUI=null,provisioningUI=null,refreshDiary=()=>{},refreshTracking=()=>{},refreshCoachHistory=()=>{},refreshProvisioning=()=>{};
   function clearDiary(){diaryModel?.invalidate();diaryUI?.clear();}
   function clearTracking(){trackingModel?.invalidate();trackingUI?.clear();coachHistoryUI?.clear();}
+  function clearProvisioning(){provisioningUI?.clear();}
   function render(result){
     if(result.status==='RECOVERY')recoveryMode=true;
     if(['PASSWORD_UPDATED','AUTHORIZED'].includes(result.status))recoveryMode=false;
@@ -34,7 +35,7 @@
     access.hidden=result.status!=='AUTHORIZED';
     recovery.hidden=result.status!=='RECOVERY';
     authorized=result.status==='AUTHORIZED';
-    if(authorized&&!document.hidden){macrosUI?.refresh();refreshDiary();refreshTracking();refreshCoachHistory();}else {macrosUI?.clear();clearDiary();clearTracking();access.hidden=true;}
+    if(authorized&&!document.hidden){macrosUI?.refresh();refreshDiary();refreshTracking();refreshCoachHistory();refreshProvisioning();}else {macrosUI?.clear();clearDiary();clearTracking();clearProvisioning();access.hidden=true;}
   }
   // Capture credentials in memory and immediately clean the address; never log them.
   const callback=location.pathname==='/auth/callback.html';
@@ -67,6 +68,10 @@
       trackingModel=PilotTrackingService.createModel(client);trackingUI=PilotTrackingUI.mount(document.getElementById('tracking-root'),{model:trackingModel,role});
       if(role==='CLIENT')refreshTracking=async()=>{const ticket=authEpoch;trackingUI.clear();try{const targets=await macrosModel.list();if(ticket!==authEpoch||!authorized||document.hidden||targets.length!==1)return;const d=new Date(),date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');await trackingUI.show(targets[0],date,macrosModel);}catch{trackingUI.clear();}};
       else{coachHistoryUI=PilotCoachHistoryUI.mount(document.getElementById('coach-history-root'),{model:macrosModel,macros:macrosModel,tracking:trackingUI});refreshCoachHistory=async()=>{if(!authorized||document.hidden)return;await coachHistoryUI.refresh();};}
+    }
+    if(config.adminProvisioningAvailable===true&&role==='COACH'){
+      provisioningUI=PilotAdminProvisioningUI.mount(document.getElementById('admin-provisioning-root'),{client});
+      refreshProvisioning=async()=>{if(!authorized||document.hidden)return;await provisioningUI.refresh();};
     }
     async function run(fn){
       if(busy)return;busy=true;access.hidden=true;macrosUI.clear();clearDiary();clearTracking();

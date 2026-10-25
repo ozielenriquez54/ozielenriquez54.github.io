@@ -7,6 +7,7 @@ const {domainBundle,demoPage}=require('./manual-macros-assets.cjs');
 const {createManualMacrosInfrastructure}=require('./manual-macros-service.cjs');
 const {handleManualMacros}=require('./manual-macros-http.cjs');
 const {handleDiary}=require('./diary-http.cjs');
+const {handleAdminProvisioning}=require('./pilot-admin-provisioning-http.cjs');
 const PUBLIC_ROOT=path.resolve(__dirname,'../../nutrika');
 const CSP="default-src 'none'; script-src 'self'; connect-src 'self' https://otswebncqidqthqplztj.supabase.co; style-src 'unsafe-inline'; img-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'none'";
 
@@ -17,6 +18,8 @@ function page(kind,config){
   const css=source.match(/<style>([\s\S]*?)<\/style>/i)?.[1];
   if(!css||/@import|url\s*\(|<\//i.test(css))throw new Error('PILOT_PRESENTATION_REJECTED');
   const trackingScripts=config.trackingAvailable?'<script src="/pilot-tracking-service.js" defer></script><script src="/pilot-tracking-domain.js" defer></script><script src="/pilot-tracking-ui.js" defer></script><script src="/pilot-coach-history-ui.js" defer></script>':'';
+  const provisioningScripts=config.adminProvisioningAvailable&&kind==='Coach'?'<script src="/pilot-admin-provisioning-ui.js" defer></script>':'';
+  const provisioningRoot=config.adminProvisioningAvailable&&kind==='Coach'?'<div id="admin-provisioning-root"></div>':'';
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Twogramms — Piloto ${kind}</title><style>${css}
   .pilot-shell{max-width:800px;margin:40px auto;padding:24px;background:white;color:#222;border:2px solid #c9a13b} .pilot-shell nav a{display:inline-block;margin:12px} .pilot-shell img{width:72px} .pilot-shell p{margin:16px 0} .pilot-shell label{display:block;margin:12px 0} .pilot-shell input,.pilot-shell select,.pilot-shell button{padding:8px;margin:5px;max-width:100%} .pilot-shell button:disabled{opacity:.55} .pilot-shell section{margin:20px 0}
   </style></head><body data-role="${kind==='Coach'?'COACH':'CLIENT'}"><main class="pilot-shell"><img src="/assets/logo.jpg" alt="Twogramms"><h1>TWOGRAMMS — MODO PILOTO</h1><h2>Vista ${kind}</h2><p>Objetivos manuales de macros: consulta y vista previa. Guardado no disponible.</p><p>Proyecto permitido: <strong>${config.projectRef}</strong></p>
@@ -27,21 +30,24 @@ function page(kind,config){
   <button id="recovery-retry" type="button" hidden>Reintentar verificación de sesión</button>
   <a id="recovery-login" href="/index.html" hidden>Ir al inicio de sesión</a>
   <form id="password-form" hidden><label>Nueva contraseña <input id="new-password" type="password" autocomplete="new-password" minlength="8" required></label><button type="submit">Guardar contraseña</button></form>
-  <section id="pilot-access" hidden><div id="macros-root"></div><div id="diary-root"></div><div id="tracking-root"></div><div id="coach-history-root"></div></section>
-  <nav aria-label="Vistas del piloto"><a href="/index.html">Cliente</a><a href="/coach.html">Coach</a></nav></main><script src="/vendor/supabase.js" defer></script><script src="/pilot-auth.js" defer></script><script src="/manual-macros-domain.js" defer></script><script src="/pilot-macros-service.js" defer></script><script src="/pilot-macros-ui.js" defer></script><script src="/pilot-diary-service.js" defer></script><script src="/pilot-diary-ui.js" defer></script>${trackingScripts}<script src="/pilot-auth-ui.js" defer></script></body></html>`;
+  <section id="pilot-access" hidden><div id="macros-root"></div><div id="diary-root"></div><div id="tracking-root"></div><div id="coach-history-root"></div>${provisioningRoot}</section>
+  <nav aria-label="Vistas del piloto"><a href="/index.html">Cliente</a><a href="/coach.html">Coach</a></nav></main><script src="/vendor/supabase.js" defer></script><script src="/pilot-auth.js" defer></script><script src="/manual-macros-domain.js" defer></script><script src="/pilot-macros-service.js" defer></script><script src="/pilot-macros-ui.js" defer></script><script src="/pilot-diary-service.js" defer></script><script src="/pilot-diary-ui.js" defer></script>${trackingScripts}${provisioningScripts}<script src="/pilot-auth-ui.js" defer></script></body></html>`;
 }
-function createPilotServer({env=process.env,manualMacrosService,diaryService=null,manualMacrosWriteEnabled=false,trackingService=null,readOnly=false,localAdmin=false}={}){
+function createPilotServer({env=process.env,manualMacrosService,diaryService=null,manualMacrosWriteEnabled=false,trackingService=null,readOnly=false,localAdmin=false,adminProvisioningService=null}={}){
   if(readOnly&&(diaryService||manualMacrosWriteEnabled||trackingService))throw new Error('READ_ONLY_REQUIRED');
   const config=loadPilotConfig(env); // Fail before opening any listener.
   if(localAdmin&&(readOnly||config.publicOrigin))throw new Error('LOCAL_ADMIN_ONLY');
-  const pageConfig={...config,trackingAvailable:Boolean(trackingService)&&!readOnly};
+  // El alta administrativa es ortogonal a readOnly a propósito (requisito: las
+  // funciones clínicas -diario/macros/tracking- siguen cerradas en el piloto
+  // de solo lectura, pero esta alta sí debe poder habilitarse ahí).
+  const pageConfig={...config,trackingAvailable:Boolean(trackingService)&&!readOnly,adminProvisioningAvailable:Boolean(adminProvisioningService)};
   const handleTracking=trackingService?require('./pilot-tracking-http.cjs').handleTracking:null;
   const macros=manualMacrosService??createManualMacrosInfrastructure({env});
   const routes=new Map([
     ['/index.html',['text/html; charset=utf-8',Buffer.from(page('Cliente',pageConfig))]],
     ['/coach.html',['text/html; charset=utf-8',Buffer.from(page('Coach',pageConfig))]],
     ['/assets/logo.jpg',['image/jpeg',fs.readFileSync(path.join(PUBLIC_ROOT,'assets/logo.jpg'))]],
-    ['/pilot-config.json',['application/json; charset=utf-8',Buffer.from(JSON.stringify({mode:'pilot',phase:2,projectRef:config.projectRef,supabaseUrl:config.supabaseUrl,publicKey:config.publicKey,publicOrigin:config.publicOrigin,diaryAvailable:Boolean(diaryService),trackingAvailable:Boolean(trackingService)&&!readOnly,macrosWritable:manualMacrosWriteEnabled}))]]
+    ['/pilot-config.json',['application/json; charset=utf-8',Buffer.from(JSON.stringify({mode:'pilot',phase:2,projectRef:config.projectRef,supabaseUrl:config.supabaseUrl,publicKey:config.publicKey,publicOrigin:config.publicOrigin,diaryAvailable:Boolean(diaryService),trackingAvailable:Boolean(trackingService)&&!readOnly,macrosWritable:manualMacrosWriteEnabled,adminProvisioningAvailable:Boolean(adminProvisioningService)}))]]
   ]);
   routes.set('/',routes.get('/index.html'));
   if(readOnly){
@@ -54,6 +60,7 @@ function createPilotServer({env=process.env,manualMacrosService,diaryService=nul
     routes.set('/pilot-tracking-domain.js',['text/javascript; charset=utf-8',fs.readFileSync(path.join(PUBLIC_ROOT,'domain/tracking/adherence.cjs'))]);
   }
   routes.set('/manual-macros-domain.js',['text/javascript; charset=utf-8',Buffer.from(domainBundle())]);
+  if(adminProvisioningService)routes.set('/pilot-admin-provisioning-ui.js',['text/javascript; charset=utf-8',fs.readFileSync(path.join(PUBLIC_ROOT,'pilot-admin-provisioning-ui.js'))]);
   routes.set('/preview/macros-coach.html',['text/html; charset=utf-8',Buffer.from(demoPage('COACH'))]);
   routes.set('/preview/macros-client.html',['text/html; charset=utf-8',Buffer.from(demoPage('CLIENT'))]);
   if(localAdmin)routes.set('/admin.html',['text/html; charset=utf-8',Buffer.from(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Twogramms — Administración piloto</title><style>body{font-family:system-ui;max-width:850px;margin:32px auto;padding:20px}button,input,select{margin:8px;padding:8px}pre{white-space:pre-wrap;overflow-wrap:anywhere}label{display:block}</style></head><body><h1>TWOGRAMMS — MODO PILOTO</h1><h2>Administración de la organización existente</h2><p>Solo las dos cuentas personales indicadas. No se crean organizaciones ni se habilitan funciones clínicas. Cada asignación se confirma por separado.</p><p id="admin-status" role="status" aria-live="polite">Verificando sesión…</p><form id="admin-login"><label>Correo <input id="admin-email" type="email" autocomplete="username" required></label><label>Contraseña <input id="admin-password" type="password" autocomplete="current-password" required></label><button type="submit">Iniciar sesión</button></form><button id="admin-logout" type="button">Cerrar sesión</button><button id="admin-refresh" type="button">Revalidar acceso</button><div id="admin-controls"></div><a href="/index.html">Volver al piloto</a><script src="/vendor/supabase.js" defer></script><script src="/pilot-auth.js" defer></script><script src="/pilot-admin.js" defer></script><script src="/pilot-admin-ui.js" defer></script></body></html>`)]);
@@ -75,6 +82,7 @@ function createPilotServer({env=process.env,manualMacrosService,diaryService=nul
     if(await handleManualMacros(req,res,macros,config.publicOrigin))return;
     if(await handleDiary(req,res,diaryService,config.publicOrigin))return;
     if(handleTracking&&await handleTracking(req,res,trackingService,config.publicOrigin??'http://'+req.headers.host))return;
+    if(await handleAdminProvisioning(req,res,adminProvisioningService,config.publicOrigin))return;
     if(!['GET','HEAD'].includes(req.method)){
       res.setHeader('Allow','GET, HEAD');res.writeHead(405);res.end('PILOT_METHOD_REJECTED');return;
     }
