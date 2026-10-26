@@ -68,7 +68,13 @@ function applyResumePendingActivation(db, userId) {
       request.status = 'cancelled';
       return { data: { status: 'cancelled', gym_id: request.gym_id, coach_membership_id: request.coach_membership_id }, error: null };
     }
-    applySetMembership(db, { p_gym_id: request.gym_id, p_user_id: userId, p_roles: ['CLIENT'], p_active: true, p_expected_revision: (db.memberships.find(m => m.gym_id === request.gym_id && m.user_id === userId)?.revision) ?? 0 });
+    // Protección del último OWNER (corregido tras los fallos de Codex en
+    // PG 17.11, ver PENDING-ACTIVATION-MIGRATION.sql): se AGREGA CLIENT al
+    // arreglo de roles existente, nunca se reemplaza — si quien reanuda ya
+    // tenía OWNER/ADMIN/COACH, ese rol no se pierde.
+    const existingMembership = db.memberships.find(m => m.gym_id === request.gym_id && m.user_id === userId);
+    const mergedRoles = existingMembership ? Array.from(new Set([...existingMembership.roles, 'CLIENT'])) : ['CLIENT'];
+    applySetMembership(db, { p_gym_id: request.gym_id, p_user_id: userId, p_roles: mergedRoles, p_active: true, p_expected_revision: existingMembership?.revision ?? 0 });
     const membershipId = db.memberships.find(m => m.gym_id === request.gym_id && m.user_id === userId).id;
     applySetCoachClient(db, { p_gym_id: request.gym_id, p_coach_membership_id: request.coach_membership_id, p_client_membership_id: membershipId, p_active: true, p_expected_revision: 0 });
     request.status = 'completed';
@@ -584,6 +590,27 @@ test('concurrencia: una fila ya bloqueada (SKIP LOCKED) no se procesa dos veces 
   assert.equal(result.data, null); // SKIP LOCKED: no espera, no aplica, no falla
   assert.equal(db.memberships.some(m => m.user_id === OZIEL_ID), false);
   assert.equal(db.pendingActivations[0].status, 'pending'); // intacta para el próximo intento
+});
+
+test('protección del último OWNER: si quien reanuda ya es OWNER, conserva ese rol además de CLIENT (nunca se reemplaza el arreglo de roles)', async () => {
+  // Reproduce, a nivel de mock, el mismo fallo que Codex confirmó en la
+  // migración SQL contra PG 17.11: la reanudación hacía
+  // `set roles = array['CLIENT']`, reemplazando por completo el arreglo
+  // en vez de agregar — pudiendo dejar un gimnasio sin ningún OWNER activo
+  // si la persona invitada como cliente ya era su único OWNER.
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID);
+  // Oziel YA es OWNER de este gimnasio antes de aceptar la invitación de
+  // cliente (caso límite real: mismo usuario con dos roles distintos).
+  db.memberships.push({ id: uuid(300), gym_id: GYM, user_id: OZIEL_ID, roles: ['OWNER'], active: true, revision: 1 });
+  const { api } = service({ db, findUserByEmail: findOziel });
+  await api.addClient({ token: 'tok', command: { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM } });
+  db.missingProfiles.delete(OZIEL_ID);
+  const result = applyResumePendingActivation(db, OZIEL_ID);
+  assert.equal(result.data.status, 'completed');
+  const membership = db.memberships.find(m => m.user_id === OZIEL_ID);
+  assert.deepEqual(new Set(membership.roles), new Set(['OWNER', 'CLIENT'])); // conserva OWNER, agrega CLIENT
+  assert.equal(membership.roles.includes('OWNER'), true); // explícito: el gimnasio no se queda sin este OWNER
 });
 
 test('correo nuevo con perfil pendiente tras crear la cuenta: PENDING_PROFILE, la Admin API se llama una sola vez incluso tras varios intentos', async () => {
