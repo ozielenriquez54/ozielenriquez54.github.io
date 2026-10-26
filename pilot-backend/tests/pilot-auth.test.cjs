@@ -66,34 +66,50 @@ function fixtureResume({resume,roles=['CLIENT'],active=true}={}){
 }
 test('resume de activación: distingue completada, pendiente, bloqueada y fallida — nunca las oculta tras AUTHORIZED/ROLE_REQUIRED genérico',async()=>{
   // bloqueada (P0: reactivación de privilegios negada)
-  let f=fixtureResume({resume:()=>({data:{out_status:'blocked_privileged_role',out_gym_id:'g',out_coach_membership_id:'c'},error:null})});
+  let f=fixtureResume({resume:()=>({data:{out_status:'blocked_privileged_role',out_gym_id:'g',out_coach_membership_id:'c'},error:null,status:200})});
   assert.equal((await f.auth.verify()).status,'ACTIVATION_BLOCKED_PRIVILEGED_ROLE');
   // cancelada (la autorización original ya no es válida)
-  f=fixtureResume({resume:()=>({data:{out_status:'cancelled',out_gym_id:'g',out_coach_membership_id:'c'},error:null})});
+  f=fixtureResume({resume:()=>({data:{out_status:'cancelled',out_gym_id:'g',out_coach_membership_id:'c'},error:null,status:200})});
   assert.equal((await f.auth.verify()).status,'ACTIVATION_CANCELLED');
   // completada: nunca interrumpe el flujo normal de verify()
-  f=fixtureResume({resume:()=>({data:{out_status:'completed',out_gym_id:'g',out_coach_membership_id:'c'},error:null})});
+  f=fixtureResume({resume:()=>({data:{out_status:'completed',out_gym_id:'g',out_coach_membership_id:'c'},error:null,status:200})});
   assert.equal((await f.auth.verify()).status,'AUTHORIZED');
   // nada pendiente (sin fila): tampoco interrumpe el flujo normal
-  f=fixtureResume({resume:()=>({data:null,error:null})});
+  f=fixtureResume({resume:()=>({data:null,error:null,status:200})});
   assert.equal((await f.auth.verify()).status,'AUTHORIZED');
+  // P2 (auditoría sobre el commit a201ed1, "clasificación incorrecta de
+  // errores"): la señal correcta para cada caso es `resume.status` (el
+  // código HTTP REAL que el SDK conserva, confirmado leyendo
+  // PostgrestBuilder.ts), nunca la mera ausencia de `error.code` — un
+  // código vacío/ausente NO implica por sí mismo "sin red".
+  //
   // la función todavía no existe (infraestructura propuesta no aplicada,
-  // 404 -> PILOT_NOT_FOUND): se tolera, nunca rompe la verificación.
-  f=fixtureResume({resume:()=>({data:null,error:{code:'PILOT_NOT_FOUND'}})});
+  // HTTP 404 real de PostgREST): se tolera, nunca rompe la verificación.
+  f=fixtureResume({resume:()=>({data:null,error:{code:'PGRST202',message:'Could not find the function'},status:404})});
   assert.equal((await f.auth.verify()).status,'AUTHORIZED');
-  // un error REAL (permiso denegado, nunca "no existe todavía"): fallo
-  // explícito, jamás absorbido en silencio.
-  f=fixtureResume({resume:()=>({data:null,error:{code:'42501'}})});
+  // un error REAL con código SQL reconocido (permiso denegado, 42501):
+  // fallo explícito, jamás absorbido en silencio ni confundido con "no
+  // existe todavía" aunque ambos puedan compartir una respuesta sin 2xx.
+  f=fixtureResume({resume:()=>({data:null,error:{code:'42501'},status:403})});
+  assert.equal((await f.auth.verify()).status,'ACTIVATION_FAILED');
+  // un conflicto SQL real (23505, unique_violation) — se conserva y se
+  // reporta como fallo real, nunca como "nada pendiente" ni como red.
+  f=fixtureResume({resume:()=>({data:null,error:{code:'23505'},status:409})});
+  assert.equal((await f.auth.verify()).status,'ACTIVATION_FAILED');
+  // un HTTP 500 SIN código SQL reconocido (error.code queda undefined,
+  // exactamente como con un fallo de red) — antes esto se clasificaba
+  // como ACTIVATION_NETWORK_ERROR por error; con `status` como señal,
+  // 500 es un fallo de SERVIDOR real, no de transporte.
+  f=fixtureResume({resume:()=>({data:null,error:{message:'Internal Server Error'},status:500})});
   assert.equal((await f.auth.verify()).status,'ACTIVATION_FAILED');
   // P2 (auditoría sobre el commit 60afc33, "error de red"): el COMPORTAMIENTO
   // REAL del SDK de Supabase instalado — confirmado leyendo su código
   // fuente (@supabase/postgrest-js, PostgrestBuilder.ts) — es resolver
-  // `{error}` con `code` VACÍO ante un fallo de fetch real, nunca lanzar
-  // una excepción (eso solo pasaría con `.throwOnError()`, que este
-  // archivo no usa). La prueba ANTERIOR de esta sesión simulaba una
-  // excepción lanzada — un caso que la SDK real nunca produce aquí; esta
-  // es la forma correcta de reproducirlo.
-  f=fixtureResume({resume:()=>({data:null,error:{code:'',message:'TypeError: fetch failed'}})});
+  // `{error, status:0}` ante un fallo de fetch real (nunca hubo respuesta
+  // HTTP), nunca lanzar una excepción (eso solo pasaría con
+  // `.throwOnError()`, que este archivo no usa). status:0 es la señal —
+  // no el código, que también queda vacío en un 500 real (caso de arriba).
+  f=fixtureResume({resume:()=>({data:null,error:{code:'',message:'TypeError: fetch failed'},status:0})});
   assert.equal((await f.auth.verify()).status,'ACTIVATION_NETWORK_ERROR');
   // Defensa en profundidad (no el camino real del SDK actual, pero se
   // conserva por si una versión futura SÍ llegara a lanzar): una excepción
@@ -151,4 +167,16 @@ test('administrative transport allows only explicit RPCs and read-only roster; p
   assert.equal(calls,3);
   for(const [path,method] of [['/rest/v1/gym_memberships','POST'],['/rest/v1/coach_clients','DELETE'],['/rest/v1/rpc/pilot_create_gym','POST'],['/rest/v1/rpc/pilot_set_membership','GET']])await assert.rejects(options.global.fetch(config.supabaseUrl+path,{method}));
   assert.equal(calls,3);
+});
+test('fetch real: conserva 23505 (unique_violation) sin exponer el mensaje crudo, y nunca sustituye el código HTTP real',async()=>{
+  // P2 (auditoría sobre el commit a201ed1, "clasificación incorrecta de
+  // errores"): 23505 es un conflicto SQL real (p. ej. una fila duplicada
+  // por una condición de carrera) que antes se descartaba en silencio
+  // junto con cualquier código no reconocido.
+  let options;
+  createClient(config,{createClient:(_url,_key,o)=>{options=o;}},async()=>new Response(JSON.stringify({code:'23505',message:'duplicate key value (secreto interno)',details:'secreto interno'}),{status:409}),{admin:true});
+  const response=await options.global.fetch(config.supabaseUrl+'/rest/v1/rpc/pilot_set_membership',{method:'POST'});
+  assert.equal(response.status,409); // el código HTTP real nunca se sustituye
+  const body=await response.json();
+  assert.equal(body.code,'23505');assert.ok(!JSON.stringify(body).includes('secreto'));
 });

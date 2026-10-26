@@ -10,6 +10,80 @@ automatiza — **pero depende de infraestructura SQL que todavía no existe
 en Supabase real.** No se declara el flujo terminado de extremo a extremo:
 ver la sección "Bloqueo real" más abajo.
 
+## 12ª ronda: 2 pendientes P2 de Codex sobre el commit `a201ed1` (clasificación de errores, alta bloqueada por RLS)
+
+**1) Clasificación incorrecta de errores (`pilot-auth.js:86,184`).** La
+ronda anterior distinguía "fallo de red" de "fallo real" mirando si
+`resume.error.code` estaba vacío — pero un HTTP 500 sin código SQL
+reconocido TAMBIÉN llega con `code` vacío/ausente, así que ese chequeo
+clasificaba un fallo de SERVIDOR real como si fuera un problema de red.
+Corregido usando `resume.status` (el código HTTP real que el SDK
+conserva, confirmado leyendo @supabase/postgrest-js/PostgrestBuilder.ts:
+`status:0` ÚNICAMENTE cuando el fetch nunca llegó a completarse; el
+código HTTP real en cualquier otro caso) — `status===0` → red,
+`status===404` → tolerado ("no existe todavía"), cualquier otro →
+`ACTIVATION_FAILED`. Se agregó `'23505'` (unique_violation) al conjunto de
+códigos SQL reconocidos y conservados por el fetch wrapper (antes se
+descartaba en silencio junto con cualquier código no reconocido). Pruebas
+nuevas: HTTP 500 sin código reconocido (ya NO se confunde con red), 23505
+conservado, 42501 conservado, y la forma REAL en que el SDK resuelve una
+falla de red (`{error, status:0}`, no una excepción).
+
+**2) Alta directa bloqueada por RLS (`pilot-admin-provisioning-service.cjs:435`).**
+`setCoachClient()` leía `clients` (datos clínicos) con la sesión del
+propio OWNER/ADMIN para confirmar que la fila existía y conocer la
+revisión actual de `coach_clients` antes de escribir. RLS sobre `clients`
+casi con certeza solo permite leer al propio cliente o a su coach YA
+asignado — un OWNER/ADMIN que nunca fue ese coach exacto no podía leer
+esa fila aunque existiera, y la operación ADMINISTRATIVA terminaba
+reportando `PENDING_PROFILE` para un cliente que ya existía. Esto era,
+de hecho, el riesgo que el punto 5 de "CONTRATO NO VERIFICADO" (al inicio
+del archivo, desde rondas anteriores) ya predecía sin poder confirmarlo.
+Corregido para NUNCA depender de esa lectura clínica, sin ampliar RLS ni
+dar acceso privilegiado al CLIENT, y sin cambiar el contrato de las RPC
+existentes:
+  - la existencia de `clients` ya no se verifica con un SELECT propio —
+    se deja que la propia RPC `pilot_set_coach_client` la valide (su
+    llave foránea sobre `client_id`, resuelta internamente) y reporte
+    23503 si falta, con el mismo mapeo ya establecido
+    (`RELATED_RECORD_NOT_FOUND`).
+  - la revisión de `coach_clients` tampoco se lee: se intenta
+    optimistamente con un contador local (0, 1, 2, ..., hasta 8 intentos)
+    en vez de releer la fila — mismo principio de concurrencia optimista,
+    sin necesitar ningún permiso de lectura clínica adicional. Un número
+    adivinado mal nunca aplica a ciegas: la propia RPC lo rechaza
+    (40001) y se reintenta con el siguiente.
+Pruebas nuevas: un OWNER nunca antes asignado reasigna a un cliente YA
+EXISTENTE a un coach válido, con `from()` envuelto para que CUALQUIER
+intento de leer `clients`/`coach_clients` directamente falle la prueba
+(demuestra que el código nunca lo intenta, no solo que el mock lo
+permite); y el límite explícito de la adivinanza (revisión muy alta →
+`REVISION_CONFLICT` honesto, acotado, nunca a ciegas ni indefinido).
+
+**Pruebas ejecutadas esta ronda:**
+- `npm test`: **139/139 PASS** (136 previas + 3 nuevas: HTTP 500
+  real/23505 conservado + fetch real 23505, OWNER no asignado sin leer
+  clínico, límite de reintentos).
+- SQL (`PENDING-ACTIVATION-MIGRATION-TEST.sql`, sin cambios esta ronda):
+  **28/28 PASS, 0 FAIL** — reconfirma que las protecciones P0/P1 de
+  rondas anteriores siguen intactas.
+- Concurrencia: PASS.
+
+**Variables necesarias para un Supabase aislado (sin crear nada todavía)**
+— ver la lista completa en el informe de esta ronda. Confirmado: ningún
+archivo de producción conserva el ref/URL compartido hardcodeado salvo
+`pilot-config.cjs` (su propio *valor por defecto*, nunca usado cuando se
+configura un proyecto aislado) — `pilot-http.cjs` (CSP) y `pilot-auth.js`
+ya derivan todo de `config.supabaseUrl`/`config.projectRef`, confirmado
+con una prueba de integración real (servidor + cliente reales) que
+verifica que ni la CSP ni `/pilot-config.json` mencionan el proyecto
+compartido cuando se configura uno aislado.
+
+**Sin commit ni push esta ronda** (no autorizado). Archivos modificados:
+`nutrika/pilot-auth.js`, `pilot-backend/server/pilot-admin-provisioning-service.cjs`,
+`pilot-backend/tests/pilot-auth.test.cjs`,
+`pilot-backend/tests/pilot-admin-provisioning.test.cjs`, y este archivo.
+
 ## 11ª ronda: 5 hallazgos de Codex sobre el commit `60afc33` (COACH revocado, reenvío, proyecto Supabase aislado)
 
 **P1 — Reactivación de COACH revocado (SQL:415 de la v del commit 60afc33).**

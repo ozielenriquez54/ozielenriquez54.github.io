@@ -434,7 +434,12 @@ test('un 23503 inesperado en pilot_set_coach_client también se trata como pendi
   assert.ok(!JSON.stringify(result).includes('secreto'));
 });
 
-test('setCoachClient rechaza de inmediato (sin llamar la RPC) si `clients` todavía no tiene la fila del cliente', async () => {
+test('setCoachClient reporta PENDING_PROFILE si `clients` todavía no tiene la fila del cliente, SIN leer `clients` (la RPC valida la relación por su cuenta)', async () => {
+  // P1 (auditoría sobre el commit a201ed1, "alta directa bloqueada por
+  // RLS"): la versión anterior pre-leía `clients` con la sesión del
+  // propio OWNER/ADMIN antes de llamar la RPC — ahora NUNCA se lee esa
+  // tabla; se llama pilot_set_coach_client directamente y se confía en su
+  // propia validación (23503 si `clients` no tiene la fila).
   const db = freshDb();
   const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
   // Fuerza que, tras la membresía, NUNCA aparezca la fila en `clients`
@@ -443,8 +448,61 @@ test('setCoachClient rechaza de inmediato (sin llamar la RPC) si `clients` todav
   db.clients.push = () => {}; // absorbe cualquier intento de "crearla" en el mock
   const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
   assert.equal(result.status, 'PENDING_PROFILE');
-  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 0); // nunca llega a llamar la RPC sin resolver `clients` antes
+  // Ahora SÍ se llama la RPC (una vez) — es ELLA quien detecta la relación
+  // inválida (23503), nunca una lectura propia de `clients`.
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 1);
   db.clients.push = realPush;
+});
+
+test('addClient: un OWNER NO asignado previamente reasigna a un cliente YA EXISTENTE a un coach válido, sin leer NUNCA `clients` ni `coach_clients` (RLS clínica real lo bloquearía)', async () => {
+  // P1 (auditoría sobre el commit a201ed1, "alta directa bloqueada por
+  // RLS"): reproduce el caso exacto del hallazgo — el OWNER que llama
+  // addClient() nunca fue el coach asignado de Ana, y RLS real sobre
+  // `clients` casi con certeza solo permite leer al propio cliente o a su
+  // coach YA asignado. Se envuelve from() para que CUALQUIER intento de
+  // leer esas dos tablas directamente falle la prueba — no basta con que
+  // el mock "lo permita"; se demuestra que el código nunca lo intenta.
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: ANA_ID, roles: ['CLIENT'], active: true, revision: 1 }]);
+  db.clients.push({ id: uuid(8000), gym_id: GYM, membership_id: uuid(3) });
+  // Ana ya estaba asignada a COACH, con revisión 2 — el caso donde
+  // adivinar la revisión (en vez de leerla) realmente importa.
+  db.coachClients.push({ id: uuid(5000), gym_id: GYM, coach_membership_id: uuid(2), client_id: uuid(8000), active: true, revision: 2 });
+
+  const base = fakeClient({ actor: OWNER, db });
+  const guarded = {
+    ...base,
+    from(table) {
+      if (table === 'clients' || table === 'coach_clients') {
+        return { select: () => assert.fail('nunca debe leer ' + table + ' directamente — RLS clínica real lo bloquearía para un OWNER no asignado') };
+      }
+      return base.from(table);
+    },
+  };
+  const api = createProvisioningService({ createSession: async () => guarded, findUserByEmail: findAna });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PROVISIONED'); // nunca PENDING_PROFILE por un bloqueo de lectura que no debería hacer falta
+  assert.equal(db.coachClients.length, 1); // reasignada, nunca duplicada
+  assert.equal(db.coachClients[0].active, true);
+  assert.equal(db.coachClients[0].revision, 3); // la RPC real sí incrementa, aunque esta capa nunca la haya leído
+});
+
+test('addClient: si la revisión real de coach_clients excede los intentos de adivinanza, reporta REVISION_CONFLICT con honestidad (nunca aplica a ciegas ni cuelga)', async () => {
+  // Límite explícito y verificado del enfoque "adivinar en vez de leer":
+  // funciona para revisiones bajas (el caso real típico: pocas
+  // reasignaciones), pero tiene un techo. Pasado ese techo, debe fallar
+  // de forma clara y acotada — nunca reintentar indefinidamente ni
+  // aplicar con una revisión incorrecta.
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: ANA_ID, roles: ['CLIENT'], active: true, revision: 1 }]);
+  db.clients.push({ id: uuid(8000), gym_id: GYM, membership_id: uuid(3) });
+  db.coachClients.push({ id: uuid(5000), gym_id: GYM, coach_membership_id: uuid(2), client_id: uuid(8000), active: true, revision: 50 });
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
+  await assert.rejects(
+    api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } }),
+    e => e.code === 'REVISION_CONFLICT' && e.status === 409,
+  );
+  const coachClientCalls = rpcCalls.filter(c => c[0] === 'pilot_set_coach_client');
+  assert.equal(coachClientCalls.length, 8); // acotado, nunca indefinido
+  assert.equal(db.coachClients[0].revision, 50); // nunca se tocó con una revisión adivinada mal
 });
 
 // ---------------------------------------------------------------------------

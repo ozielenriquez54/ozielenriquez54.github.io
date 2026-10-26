@@ -64,20 +64,23 @@
 //      COACH, no por ser OWNER/ADMIN.
 //
 // Relaciones (corregido tras 2ª auditoría — la 1ª corrección fue
-// incorrecta y se revierte aquí):
+// incorrecta y se revierte aquí; vuelto a corregir tras la auditoría
+// sobre el commit a201ed1, "alta directa bloqueada por RLS" — ver
+// setCoachClient más abajo):
 //   - `pilot_set_coach_client` recibe `p_client_membership_id` = el id en
-//     `gym_memberships` del cliente (NO el id de su fila en `clients`).
-//     setCoachClient() pasa `clientMembershipId` tal cual a la RPC.
-//   - Para CONSULTAR una asignación existente (antes de escribir, para la
-//     concurrencia optimista), hay que resolver primero `clients.id` a
-//     partir de `(gym_id, membership_id)` — `clients` es la tabla que
-//     `pilot_set_membership` crea automáticamente al activar CLIENT, con
-//     su propio id y una columna `membership_id` que referencia
-//     `gym_memberships.id`. Con ese `clients.id` resuelto, la consulta a
-//     `coach_clients` filtra por su columna `client_id` — NUNCA por una
-//     columna `client_membership_id` (esa columna no existe en
-//     `coach_clients`; solo existía en la implementación anterior de este
-//     archivo, que confundía el id de escritura con el de lectura).
+//     `gym_memberships` del cliente (NO el id de su fila en `clients`) —
+//     la propia RPC resuelve `clients.id` internamente. setCoachClient()
+//     pasa `clientMembershipId` tal cual a la RPC, SIN leer `clients` ni
+//     `coach_clients` primero: esa lectura, con la sesión del propio
+//     OWNER/ADMIN, depende de un permiso de lectura CLÍNICO (RLS sobre
+//     `clients`) que la mayoría de los OWNER/ADMIN no tienen — solo el
+//     propio cliente o su coach YA asignado. En vez de leer, se adivina
+//     la revisión esperada con un contador local (0, 1, 2, ...) y se deja
+//     que la propia RPC confirme o rechace cada intento (40001 si no
+//     coincide) — nunca se construye una columna `client_membership_id`
+//     en `coach_clients` (no existe ahí; solo existía en la
+//     implementación anterior, que confundía el id de escritura con el
+//     de lectura).
 //
 // Profiles (rediseñado tras 2ª auditoría — NO es un reintento con espera):
 //   - `pilot_ensure_profile()` es estrictamente de autoservicio: se llama
@@ -159,11 +162,16 @@
 //     inicie sesión primero (lo cual, en este despliegue, también depende
 //     de si `pilot-auth.js` corre en modo `readOnly` — ver nota de
 //     PROVISIONING-GAP.md sobre esto, que NO se modifica en este módulo).
-//  5) Si RLS permite que un OWNER/ADMIN lea la fila de `clients` de otro
-//     usuario del mismo gimnasio (necesario para resolver la consulta de
-//     `coach_clients` antes de escribir). Si RLS lo bloquea, el error es
-//     inmediato y explícito (PROVISIONING_RESULT_UNKNOWN), nunca una
-//     asignación incorrecta o silenciosa.
+//  5) (Confirmado como riesgo real por una auditoría de Codex sobre el
+//     commit a201ed1, "alta directa bloqueada por RLS" — ya corregido,
+//     ver setCoachClient): este punto predecía que RLS probablemente NO
+//     deja a un OWNER/ADMIN leer `clients` de un usuario que no es su
+//     cliente asignado (casi con certeza solo el propio cliente o su
+//     coach YA asignado). Por eso setCoachClient() ya NUNCA lee `clients`
+//     ni `coach_clients` — ver el comentario de esa función. Sigue sin
+//     poder confirmarse contra el esquema real qué exactamente permite esa
+//     RLS (no hay acceso a Supabase real en esta sesión), pero ya no
+//     importa para este flujo: no depende de ese permiso en absoluto.
 // ==========================================================================
 
 const {snapshotCommand} = require('./gateway-safety.cjs');
@@ -299,28 +307,6 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
     return r.data?.[0] ?? null;
   }
 
-  // `clients` es la tabla que `pilot_set_membership` crea automáticamente
-  // al activar el rol CLIENT. Se lee (nunca se escribe) para resolver su id
-  // a partir de (gym_id, membership_id) — necesario SOLO para poder
-  // consultar `coach_clients` antes de escribir (ver nota de "Relaciones"
-  // al inicio del archivo). La propia escritura de pilot_set_coach_client
-  // sigue usando el id de gym_memberships, no el de `clients`.
-  async function readClientRecordByMembership(client, gymId, membershipId, check) {
-    const r = await client.from('clients').select('id').eq('gym_id', gymId).eq('membership_id', membershipId);
-    check();
-    if (r.error) fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
-    return r.data?.[0] ?? null;
-  }
-
-  // Filtra por `client_id` (la fila de `clients`), NUNCA por una columna
-  // `client_membership_id` — esa columna no existe en `coach_clients`.
-  async function readCoachClientRow(client, gymId, coachMembershipId, clientRecordId, check) {
-    const r = await client.from('coach_clients').select('id,revision').eq('gym_id', gymId).eq('coach_membership_id', coachMembershipId).eq('client_id', clientRecordId);
-    check();
-    if (r.error) fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
-    return r.data?.[0] ?? null;
-  }
-
   function mapRpcError(rpcError) {
     const code = rpcError?.code;
     if (code === '40001') return new ProvisioningError('REVISION_CONFLICT', 409);
@@ -424,27 +410,45 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   }
 
   // Vincula coach y cliente. p_client_membership_id es el id en
-  // gym_memberships del cliente (NUNCA el de `clients`) — pero para
-  // CONSULTAR si ya existe una asignación (y su revisión real) hay que
-  // resolver primero `clients.id` vía (gym_id, membership_id) y filtrar
-  // `coach_clients` por su columna `client_id`. Si esa fila en `clients`
-  // todavía no existe, es la misma situación de "perfil no listo todavía"
-  // que setMembership — se deja subir como RELATED_RECORD_NOT_FOUND para
-  // que addClient() la traduzca en PENDING_PROFILE, nunca con reintentos.
-  async function setCoachClient(client, { gymId, coachMembershipId, clientMembershipId }, check) {
-    const clientRecord = await readClientRecordByMembership(client, gymId, clientMembershipId, check);
-    if (!clientRecord) fail('RELATED_RECORD_NOT_FOUND', 404);
-    return withRevisionRetry(
-      () => readCoachClientRow(client, gymId, coachMembershipId, clientRecord.id, check),
-      async row => {
-        const expectedRevision = row?.revision ?? 0;
-        const call = await client.rpc('pilot_set_coach_client', { p_gym_id: gymId, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId, p_active: true, p_expected_revision: expectedRevision });
-        check();
-        if (call.error) throw mapRpcError(call.error);
-        return call;
-      },
-      check,
-    );
+  // gym_memberships del cliente (NUNCA el de `clients`) — la propia RPC
+  // resuelve `clients.id` internamente a partir de ese id de membresía.
+  //
+  // P1 (auditoría sobre el commit a201ed1, "alta directa bloqueada por
+  // RLS"): la versión anterior LEÍA `clients` (datos clínicos) con la
+  // sesión del propio OWNER/ADMIN para (a) confirmar que la fila existía y
+  // (b) conocer la revisión actual de `coach_clients` antes de escribir.
+  // RLS sobre `clients` casi con certeza solo permite leer al propio
+  // cliente o a su coach YA asignado — un OWNER/ADMIN que todavía no es
+  // (o nunca fue) ese coach exacto no podía leer esa fila aunque
+  // existiera, así que esta operación ADMINISTRATIVA (asignar un coach)
+  // dependía, sin necesidad real, de un permiso de lectura CLÍNICO que la
+  // mayoría de los OWNER/ADMIN nunca tienen — y terminaba reportando
+  // PENDING_PROFILE para un cliente que ya existía. Corregido para NUNCA
+  // depender de esa lectura, sin ampliar RLS ni dar acceso privilegiado
+  // al CLIENT, y sin cambiar el contrato de la RPC existente:
+  //   - la EXISTENCIA de `clients` ya no se verifica con un SELECT propio
+  //     — se deja que la propia RPC la valide (su llave foránea sobre
+  //     client_id, resuelta internamente) y reporte 23503 si falta, con
+  //     el mismo mapeo ya establecido (RELATED_RECORD_NOT_FOUND).
+  //   - la REVISIÓN de `coach_clients` tampoco se lee: se intenta
+  //     optimistamente con un contador LOCAL (0, 1, 2, ...) en vez de
+  //     releer la fila — mismo principio de concurrencia optimista que ya
+  //     usa pilot_set_membership, solo que la "lectura" de la revisión
+  //     esperada viene de un conteo propio, nunca de una tabla clínica.
+  //     El WHERE interno de la RPC (coincidencia exacta de revisión) es
+  //     lo único que decide si el intento aplica — un número adivinado
+  //     mal simplemente responde 40001 otra vez, nunca aplica a ciegas.
+  async function setCoachClient(client, { gymId, coachMembershipId, clientMembershipId }, check, maxAttempts = 8) {
+    let guessedRevision = 0;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      check();
+      const call = await client.rpc('pilot_set_coach_client', { p_gym_id: gymId, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId, p_active: true, p_expected_revision: guessedRevision });
+      check();
+      if (!call.error) return call;
+      const mapped = mapRpcError(call.error);
+      if (mapped.code !== 'REVISION_CONFLICT' || attempt === maxAttempts) throw mapped;
+      guessedRevision++;
+    }
   }
 
   // Confirma que ESE correo (ya resuelto a un id Auth real) tiene una

@@ -75,15 +75,21 @@
           // SDK errors must never carry a server message, echoed input or URL.
           if(!response.ok){
             let code;
-            // 404 se distingue con un código sintético propio (nunca el
-            // mensaje crudo del servidor): es la única forma estable de
-            // reconocer "la función/tabla propuesta todavía no existe"
-            // (infraestructura no aplicada) sin inventar una interpretación
-            // del cuerpo de PostgREST. Cualquier OTRO error (permiso, 5xx,
-            // etc.) nunca se oculta tras este mismo código (P2, auditoría
-            // sobre el commit 26fd7fc: "errores ocultos").
-            if(response.status===404)code='PILOT_NOT_FOUND';
-            else{try{const body=await response.json();const candidate=body.code??body.error_code;if(['42501','40001','23503','23514'].includes(candidate)||(url.pathname.startsWith('/auth/v1/')&&['otp_expired','flow_state_expired','session_not_found','refresh_token_not_found','refresh_token_already_used','bad_jwt'].includes(candidate)))code=candidate;}catch{}}
+            // Se conserva el código SQL/PostgREST reconocido (nunca el
+            // mensaje crudo del servidor) — 23505 (unique_violation) se
+            // agrega aquí (P2, auditoría sobre el commit a201ed1,
+            // "clasificación incorrecta de errores"): antes se descartaba
+            // en silencio igual que cualquier código no reconocido, cuando
+            // es un conflicto SQL real que conviene distinguir de un
+            // simple "no se pudo completar la operación". El código HTTP
+            // real (`response.status`) SIEMPRE viaja intacto en el
+            // Response sintetizado de abajo — nunca se sustituye por un
+            // código inventado: el estado 0 (transporte real, nunca
+            // llegó respuesta) y 404 ("no existe todavía") se distinguen
+            // más adelante, en verify(), a partir de ESE estado, nunca de
+            // `code` (ver la nota de ahí sobre por qué un `code` vacío NO
+            // implica por sí mismo un error de red).
+            try{const body=await response.json();const candidate=body.code??body.error_code;if(['42501','40001','23503','23505','23514'].includes(candidate)||(url.pathname.startsWith('/auth/v1/')&&['otp_expired','flow_state_expired','session_not_found','refresh_token_not_found','refresh_token_already_used','bad_jwt'].includes(candidate)))code=candidate;}catch{}
             return new Response(JSON.stringify({message:'PILOT_REQUEST_FAILED',error:'PILOT_REQUEST_FAILED',code,error_code:code}),{status:response.status,headers:{'Content-Type':'application/json'}});
           }
           return response;
@@ -143,10 +149,9 @@
         if(profile.error||ownProfile?.id!==id)fail();
         if(ticket!==generation)return {status:'SIGNED_OUT'};
         // Autoservicio, tolerante a propósito SOLO a que la función todavía
-        // no exista (infraestructura propuesta no aplicada, código
-        // sintético PILOT_NOT_FOUND — ver el fetch de arriba) o a que no
-        // hubiera nada pendiente (sin fila): ninguno de los dos es un
-        // error. Cualquier OTRO resultado se distingue explícitamente —
+        // no exista (infraestructura propuesta no aplicada — HTTP 404) o a
+        // que no hubiera nada pendiente (sin fila): ninguno de los dos es
+        // un error. Cualquier OTRO resultado se distingue explícitamente —
         // nunca se oculta tras un AUTHORIZED/ROLE_REQUIRED genérico (P2,
         // auditoría sobre el commit 26fd7fc: "errores ocultos"):
         //   - out_status='blocked_privileged_role' (P0): la reanudación se
@@ -159,30 +164,39 @@
         //     normal de abajo (la nueva membresía, si se otorgó, ya se
         //     refleja en la lectura de gym_memberships que sigue).
         //   - un error de transporte DISTINTO de "no existe todavía"
-        //     (permiso denegado, 5xx, etc.): se reporta como fallo de
-        //     activación explícito, nunca se finge que no pasó nada.
+        //     (permiso denegado, HTTP 500, un conflicto SQL como 23505,
+        //     etc.): se reporta como fallo de activación explícito, nunca
+        //     se finge que no pasó nada NI se confunde con un error de red.
         //   - un fallo de RED real: se distingue de AUTH_FAILED — la
         //     sesión sigue siendo válida, solo falló la reanudación y
         //     conviene reintentar, no volver a iniciar sesión.
         //
-        // P2 (auditoría sobre el commit 60afc33, "error de red"): el SDK de
-        // Supabase, por configuración por defecto (nunca se llamó
-        // `.throwOnError()` en este archivo), NO lanza una excepción ante
-        // un fallo de fetch real — lo CAPTURA internamente y resuelve
-        // `{error}` igual que un error de PostgREST/Postgres, pero con
-        // `code` VACÍO (confirmado leyendo el código fuente instalado de
-        // @supabase/postgrest-js, PostgrestBuilder.ts: el catch de
-        // fetchError construye `{error:{code:'', ...}}`). El `catch` de
-        // abajo nunca se alcanza en la práctica para esto — queda solo
-        // como defensa en profundidad si una versión futura del SDK
-        // cambiara ese comportamiento.
+        // P2 (auditoría sobre el commit 60afc33, endurecido tras la
+        // auditoría sobre el commit a201ed1, "clasificación incorrecta de
+        // errores"): el SDK de Supabase, por configuración por defecto
+        // (nunca se llamó `.throwOnError()` en este archivo), NO lanza una
+        // excepción ante un fallo de fetch real — lo CAPTURA internamente
+        // y resuelve `{error}`. La ronda anterior distinguía esto mirando
+        // si `resume.error.code` estaba vacío — pero un HTTP 500 (o
+        // cualquier error real sin código SQL reconocido) TAMBIÉN llega
+        // con `code` vacío/ausente, así que ese chequeo clasificaba un
+        // fallo de servidor real como si fuera un problema de red. La
+        // señal correcta y estable (confirmada leyendo el código fuente
+        // instalado de @supabase/postgrest-js, PostgrestBuilder.ts) es
+        // `resume.status`: 0 únicamente cuando el fetch nunca llegó a
+        // completarse (fallo de transporte real — nunca hubo respuesta
+        // HTTP), y el código HTTP real (404, 500, lo que sea) en cualquier
+        // otro caso, incluyendo cuando sí hubo respuesta pero PostgREST
+        // reportó un error. El `catch` de abajo nunca se alcanza en la
+        // práctica para esto — queda solo como defensa en profundidad si
+        // una versión futura del SDK cambiara ese comportamiento.
         try{
           const resume=await client.rpc('pilot_resume_pending_activation');
           if(ticket!==generation)return {status:'SIGNED_OUT'};
           if(resume.error){
-            if(resume.error.code==='PILOT_NOT_FOUND'){/* tolerado: la función todavía no existe */}
-            else if(!resume.error.code)return {status:'ACTIVATION_NETWORK_ERROR'};
-            else return {status:'ACTIVATION_FAILED'};
+            if(resume.status===0)return {status:'ACTIVATION_NETWORK_ERROR'};
+            if(resume.status!==404)return {status:'ACTIVATION_FAILED'};
+            /* 404: tolerado — la función todavía no existe */
           }else{
             const row=Array.isArray(resume.data)?resume.data[0]:resume.data;
             if(row?.out_status==='blocked_privileged_role')return {status:'ACTIVATION_BLOCKED_PRIVILEGED_ROLE'};
