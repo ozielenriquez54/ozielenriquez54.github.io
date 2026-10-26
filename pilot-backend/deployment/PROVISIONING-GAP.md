@@ -10,6 +10,152 @@ automatiza — **pero depende de infraestructura SQL que todavía no existe
 en Supabase real.** No se declara el flujo terminado de extremo a extremo:
 ver la sección "Bloqueo real" más abajo.
 
+## 9ª ronda: corrección de la discrepancia de roles de coach (evidencia directa del contrato real)
+
+La 8ª ronda dejó "coach sin rol COACH" SIN cambiar, razonando que
+OWNER/ADMIN como sustituto de COACH replicaba el contrato ya usado en
+`pilot-admin-provisioning-service.cjs` (`COACH_CAPABLE_ROLES`) — y pidió
+explícitamente evidencia más reciente antes de tocarlo. Esa evidencia
+llegó esta ronda, directamente: el contrato real de `pilot_set_coach_client`
+en Supabase es `'COACH'::public.pilot_role = any(coach.roles)` — COACH
+LITERAL, nunca OWNER/ADMIN como sustituto. La suposición de la 8ª ronda
+era incorrecta y se revierte.
+
+**Cambios:**
+- `COACH_CAPABLE_ROLES` en `pilot-admin-provisioning-service.cjs`:
+  `['COACH', 'OWNER', 'ADMIN']` → `['COACH']`. Comentarios actualizados
+  (cabecera del archivo y junto a `authorizeTargetCoach`).
+- `PENDING-ACTIVATION-MIGRATION.sql`: la comprobación de "¿el coach destino
+  sigue siendo válido?" pasa de `gm.roles && array['COACH','OWNER','ADMIN']`
+  a `'COACH' = any(gm.roles)`. Comentario de la 8ª ronda ("P1 evaluado, SIN
+  cambio") reemplazado por la corrección real, con cita textual de la
+  condición confirmada.
+- Mock JS de reanudación (`pilot-admin-provisioning.test.cjs`,
+  `applyResumePendingActivation`): mismo cambio en `coachStillValid`.
+- Reglas finales, sin ambigüedad (las 3 pedidas esta ronda):
+  1. OWNER/ADMIN activos administran altas (sin cambios).
+  2. El coach asignado debe tener COACH activo en ese gimnasio — OWNER/ADMIN
+     por sí solos NUNCA son un destino válido.
+  3. Un OWNER/ADMIN que TAMBIÉN tiene COACH en su arreglo de roles sigue
+     siendo un destino válido — por tener COACH, no por ser OWNER/ADMIN.
+
+**Pruebas nuevas (todas ejecutadas, no simuladas):**
+- JS (`pilot-admin-provisioning.test.cjs`): rechaza coach=OWNER sin COACH;
+  rechaza coach=ADMIN sin COACH; acepta coach=OWNER+COACH (combinación).
+- SQL (`PENDING-ACTIVATION-MIGRATION-TEST.sql`, contra PostgreSQL 16.15
+  local desechable): K/K2 (OWNER activo sin COACH → se cancela, sin
+  membresía otorgada), L/L2 (OWNER+COACH → se completa y queda vinculado).
+- Concurrencia (`PENDING-ACTIVATION-MIGRATION-CONCURRENCY-TEST.sh`):
+  repetida tras el cambio, sin regresión.
+- `npm test`: **115/115 PASS** (112 + 3 nuevas).
+
+**Sin commit ni push esta ronda tampoco** (no autorizado). Archivos
+modificados: `pilot-backend/server/pilot-admin-provisioning-service.cjs`,
+`pilot-backend/deployment/PENDING-ACTIVATION-MIGRATION.sql`,
+`pilot-backend/deployment/PENDING-ACTIVATION-MIGRATION-TEST.sql`,
+`pilot-backend/tests/pilot-admin-provisioning.test.cjs`, y este archivo.
+
+## 8ª ronda: hallazgos de la auditoría de Codex sobre el commit `9462850`
+
+El commit `9462850` (7ª ronda, ya subido a `preprod-docker-test`) recibió una
+nueva auditoría de Codex con 5 hallazgos. Esta ronda los corrige uno por
+uno — SIN hacer commit ni push (no autorizado esta vez) — y deja uno
+explícitamente SIN tocar, por contradecir un contrato ya confirmado.
+
+**P0 — Restauración de privilegios (SQL:317-318 de la v2).** Una membresía
+ADMIN INACTIVA con roles `{ADMIN, CLIENT}` podía reactivarse sola
+(`active = true`) al reanudar, restaurando ADMIN sin ninguna decisión
+administrativa. Corregido: antes de tocar la membresía propia, se
+comprueba si ya existe, está inactiva y conserva OWNER/ADMIN — si es así,
+la solicitud se marca `blocked_privileged_role` (nuevo valor de `status`,
+distinto de `cancelled` para que una auditoría lo distinga) y NO se aplica
+ningún cambio. Reproducido y verificado contra PostgreSQL 16.15 real
+(escenario P0/P0b/P0c en `PENDING-ACTIVATION-MIGRATION-TEST.sql`) y, en
+paralelo, en el mock JS (`pilot-admin-provisioning.test.cjs`, que tenía el
+mismo patrón de bug y se corrigió igual).
+
+**P1 — Autoría falsificable (SQL:105-125 de la v2).** La política RLS solo
+exigía que quien escribe sea OWNER/ADMIN del gimnasio, nunca que
+`created_by` fuera su propia identidad — cualquier OWNER/ADMIN podía
+atribuir la autorización a OTRO OWNER/ADMIN. Corregido añadiendo
+`created_by = auth.uid()` al `with check` de la política. Esto también
+cierra, como efecto correcto, la reapertura/reutilización de una solicitud
+cancelada o completada: reabrirla exige autoatribuirse como nuevo
+autorizador. Verificado con dos escenarios reales (P1: INSERT falsificado
+rechazado; P1b: UPDATE que intenta reatribuir una solicitud existente,
+también rechazado) — ambos con el ERROR de RLS esperado, confirmado por
+ejecución real, no asumido.
+
+**P1 — "Coach sin rol COACH" (SQL:289 de la v2) — EVALUADO, SIN CAMBIO.**
+Se pidió exigir el rol COACH literal y no aceptar OWNER/ADMIN como
+sustituto. Esto contradice el contrato YA CONFIRMADO dos veces en este
+mismo repositorio: `COACH_CAPABLE_ROLES = ['COACH','OWNER','ADMIN']` en
+`pilot-admin-provisioning-service.cjs` (líneas ~169-173 y ~264-272),
+usado en producción por el flujo real de alta de clientes
+(`addClient`/`pilot_set_coach_client`). Cambiar esta línea del SQL
+rompería la consistencia con ese flujo ya auditado, no sería una
+corrección. Se documenta la discrepancia en el propio SQL en vez de
+"corregir" algo que no está roto. Si Codex tiene evidencia MÁS RECIENTE de
+que ese contrato cambió, hace falta esa evidencia específica antes de
+tocar esta línea — no se inventa una corrección sin ella.
+
+**P1 — Integración Render.** `server/render-readonly.cjs` nunca conectaba
+el servicio de alta de clientes (`createProvisioningInfrastructure`) al
+arranque real de Render — la ruta y el JS existían y estaban probados
+(111 tests), pero nunca se exponían fuera de los tests. Corregido:
+`prepareRender()` ahora construye y pasa `adminProvisioningService`.
+**Al verificarlo con un arranque real (no solo leyendo el código) se
+encontró un SEGUNDO bug, más concreto que el reportado por Codex:** la
+guarda de `readOnly` en `pilot-http.cjs` bloqueaba cualquier ruta que
+empezara con `/pilot-admin` por PREFIJO — lo cual también atrapaba, por
+accidente, la ruta nueva y legítima `/pilot-admin-provisioning-ui.js`,
+devolviendo 404 incluso con el servicio ya conectado. Corregido a
+coincidencia EXACTA (`/admin.html`, `/pilot-admin.js`, `/pilot-admin-ui.js`)
+en vez de por prefijo. Verificado con un servidor real escuchando en un
+puerto efímero: `/pilot-admin-provisioning-ui.js` → 200 (8557 bytes),
+`/admin.html`/`/pilot-admin.js`/`/pilot-admin-ui.js`/`/preview/*` → 404,
+`/api/diary/save` y `/api/manual-macros/assign` → siguen cerrados. Prueba
+de regresión permanente añadida a `render-readonly.test.cjs`.
+
+**P2 — Endurecimiento SQL.** `search_path` de la función pasa de `public`
+a `''` (vacío, el máximo endurecimiento contra secuestro de objetos vía
+search_path) y cada referencia al tipo `pilot_role` se califica
+explícitamente como `public.pilot_role` (antes dependía de que `public`
+siguiera siendo el único esquema en el path). `pg_catalog` sigue siempre
+disponible aunque el path esté vacío, así que `now()`/`array[...]` no
+necesitan calificarse.
+
+**P2 — "No ignores silenciosamente errores de activación".** El try/catch
+tolerante de `pilot-auth.js` alrededor de `pilot_resume_pending_activation()`
+sigue tolerando que la RPC no exista todavía (infraestructura no
+aplicada) — eso es deliberado y no se tocó. Pero ahora SÍ distingue el
+único estado con consecuencia de seguridad real: si la RPC devuelve
+`out_status = 'blocked_privileged_role'`, `verify()` retorna
+`{status:'ACTIVATION_BLOCKED_PRIVILEGED_ROLE'}` en vez de seguir como si
+nada hubiera pasado. No se rediseñó la superficie completa de estados
+(pendiente/completada/fallida para cada transición) — eso excede lo que
+esta ronda pidió corregir con evidencia concreta (archivo/línea) y
+arriesgaba romper el contrato ya probado de `verify()`.
+
+**Pruebas ejecutadas esta ronda (todas contra PostgreSQL 16.15 local
+desechable, nunca 17.11 — sigue sin estar disponible en este entorno — y
+nunca Supabase real):**
+- `npm test`: 112/112 PASS (111 + 1 nueva: P0 sobre el mock).
+- `PENDING-ACTIVATION-MIGRATION-TEST.sql`: 22/22 PASS (18 de la ronda
+  anterior + P0, P0b, P0c, P1, P1b nuevos).
+- `PENDING-ACTIVATION-MIGRATION-CONCURRENCY-TEST.sh`: PASS (sin cambios de
+  comportamiento esperados; se repitió para confirmar que los cambios de
+  P0/P1/P2 no la rompieron).
+- Arranque real de `prepareRender()` en un puerto efímero, con
+  verificación manual de las rutas HTTP (ver P1 Render arriba).
+
+**Sin commit ni push esta ronda** (no autorizado). Los archivos quedan
+modificados en el árbol de trabajo: `PENDING-ACTIVATION-MIGRATION.sql`,
+`PENDING-ACTIVATION-MIGRATION-TEST.sql`, `server/render-readonly.cjs`,
+`server/pilot-http.cjs`, `nutrika/pilot-auth.js`,
+`tests/pilot-admin-provisioning.test.cjs`, `tests/render-readonly.test.cjs`,
+y este archivo.
+
 ## 7ª ronda: mismos 6 fallos reportados otra vez — causa real: nunca se confirmaron ni se subieron
 
 Codex volvió a reportar los MISMOS 6 fallos de la 6ª ronda, ahora contra

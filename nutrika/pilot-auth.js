@@ -124,8 +124,17 @@
         // para este usuario, si existía. Si la función todavía no existe
         // en Supabase real (infraestructura propuesta no aplicada) o no
         // había nada pendiente, esto no debe romper la verificación normal
-        // — por eso se ignora cualquier error aquí, nunca se usa fail().
-        try{await client.rpc('pilot_resume_pending_activation');}catch{}
+        // — por eso se ignora cualquier error de transporte aquí, nunca se
+        // usa fail(). Pero un out_status='blocked_privileged_role' (P0,
+        // PENDING-ACTIVATION-MIGRATION.sql: la reanudación se negó a
+        // reactivar sola una membresía propia inactiva con OWNER/ADMIN) sí
+        // se distingue del resto — nunca se filtra al cliente como un
+        // simple AUTHORIZED/ROLE_REQUIRED silencioso.
+        try{
+          const resume=await client.rpc('pilot_resume_pending_activation');
+          const row=Array.isArray(resume.data)?resume.data[0]:resume.data;
+          if(row?.out_status==='blocked_privileged_role'){if(ticket!==generation)return {status:'SIGNED_OUT'};return {status:'ACTIVATION_BLOCKED_PRIVILEGED_ROLE'};}
+        }catch{}
         const memberships=await client.from('gym_memberships').select('user_id,roles,active').eq('user_id',id).eq('active',true);
         if(memberships.error||!Array.isArray(memberships.data))fail();
         if(ticket!==generation)return {status:'SIGNED_OUT'};

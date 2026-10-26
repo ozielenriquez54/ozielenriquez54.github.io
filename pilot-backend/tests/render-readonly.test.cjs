@@ -16,7 +16,17 @@ test('Render serves both surfaces, rejects wrong host and keeps business writes 
     for(const path of ['/','/coach.html','/auth/callback.html','/vendor/supabase.js'])assert.equal((await request(path)).status,200);
     const config=JSON.parse((await request('/pilot-config.json')).body);
     assert.equal(config.readOnly,true);assert.equal(config.macrosWritable,false);assert.equal(config.diaryAvailable,false);
-    for(const path of ['/admin.html','/pilot-admin.js','/.env','/pilot-backend/audit-005-evidence/test.json'])assert.equal((await request(path)).status,404);
+    // Regresión (auditoría Codex sobre el commit 9462850, "integración
+    // Render"): el servicio de alta de clientes debe estar realmente
+    // conectado en el arranque de Render — ni ausente del todo (como antes
+    // de esta corrección) ni devolviendo 404 por culpa de una guarda de
+    // readOnly demasiado amplia (`/pilot-admin*` atrapaba por prefijo la
+    // ruta nueva `/pilot-admin-provisioning-ui.js`).
+    assert.equal(config.adminProvisioningAvailable,true);
+    const provisioningUi=await request('/pilot-admin-provisioning-ui.js');
+    assert.equal(provisioningUi.status,200);assert.ok(provisioningUi.body.length>0);
+    assert.ok((await request('/coach.html')).body.includes('/pilot-admin-provisioning-ui.js'));
+    for(const path of ['/admin.html','/pilot-admin.js','/pilot-admin-ui.js','/.env','/pilot-backend/audit-005-evidence/test.json'])assert.equal((await request(path)).status,404);
     assert.equal((await request('/','GET','evil.example')).status,403);
     assert.equal((await request('/api/diary/save','POST')).status,503);
     assert.equal((await request('/api/manual-macros/assign','POST')).status,503);

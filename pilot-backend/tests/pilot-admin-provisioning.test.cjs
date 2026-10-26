@@ -63,16 +63,29 @@ function applyResumePendingActivation(db, userId) {
   db.lockedActivations.add(request.id);
   try {
     const authorizerStillValid = db.memberships.some(m => m.gym_id === request.gym_id && m.user_id === request.created_by && m.active && PROVISIONER_ROLES_FOR_TESTS.some(r => m.roles.includes(r)));
-    const coachStillValid = db.memberships.some(m => m.id === request.coach_membership_id && m.gym_id === request.gym_id && m.active && ['COACH', 'OWNER', 'ADMIN'].some(r => m.roles.includes(r)));
+    // COACH literal, confirmado contra el contrato real de
+    // pilot_set_coach_client ('COACH'::public.pilot_role = any(coach.roles))
+    // — OWNER/ADMIN nunca sustituyen a COACH, ni aquí ni en el SQL real.
+    const coachStillValid = db.memberships.some(m => m.id === request.coach_membership_id && m.gym_id === request.gym_id && m.active && m.roles.includes('COACH'));
     if (!authorizerStillValid || !coachStillValid) {
       request.status = 'cancelled';
       return { data: { status: 'cancelled', gym_id: request.gym_id, coach_membership_id: request.coach_membership_id }, error: null };
     }
+    const existingMembership = db.memberships.find(m => m.gym_id === request.gym_id && m.user_id === userId);
+    // P0 (Codex, auditoría sobre el commit 9462850, "restauración de
+    // privilegios"): si la membresía propia ya existe, está INACTIVA
+    // (revocada) y conserva OWNER/ADMIN (p. ej. roles=['ADMIN','CLIENT']),
+    // nunca se reactiva sola por el solo hecho de reanudar — eso
+    // restauraría privilegios administrativos sin ninguna decisión
+    // administrativa explícita. Se bloquea antes de tocar la membresía.
+    if (existingMembership && !existingMembership.active && PROVISIONER_ROLES_FOR_TESTS.some(r => existingMembership.roles.includes(r))) {
+      request.status = 'blocked_privileged_role';
+      return { data: { status: 'blocked_privileged_role', gym_id: request.gym_id, coach_membership_id: request.coach_membership_id }, error: null };
+    }
     // Protección del último OWNER (corregido tras los fallos de Codex en
     // PG 17.11, ver PENDING-ACTIVATION-MIGRATION.sql): se AGREGA CLIENT al
     // arreglo de roles existente, nunca se reemplaza — si quien reanuda ya
-    // tenía OWNER/ADMIN/COACH, ese rol no se pierde.
-    const existingMembership = db.memberships.find(m => m.gym_id === request.gym_id && m.user_id === userId);
+    // tenía OWNER/ADMIN/COACH *activo*, ese rol no se pierde.
     const mergedRoles = existingMembership ? Array.from(new Set([...existingMembership.roles, 'CLIENT'])) : ['CLIENT'];
     applySetMembership(db, { p_gym_id: request.gym_id, p_user_id: userId, p_roles: mergedRoles, p_active: true, p_expected_revision: existingMembership?.revision ?? 0 });
     const membershipId = db.memberships.find(m => m.gym_id === request.gym_id && m.user_id === userId).id;
@@ -283,6 +296,33 @@ test('rechaza coach destino que SÍ es coach activo pero en otro gimnasio', asyn
   const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
   await assert.rejects(api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: OTHER_COACH, gymId: GYM } }), e => e.code === 'INVALID_COACH' && e.status === 422);
   assert.equal(rpcCalls.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Confirmado contra el contrato real de `pilot_set_coach_client` en
+// Supabase: 'COACH'::public.pilot_role = any(coach.roles) — COACH LITERAL,
+// nunca OWNER/ADMIN como sustituto (corrección sobre una suposición
+// incorrecta de una ronda anterior de esta sesión).
+// ---------------------------------------------------------------------------
+test('rechaza coach destino con OWNER activo pero SIN rol COACH (OWNER/ADMIN administran, no sustituyen a COACH)', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: NON_COACH, roles: ['OWNER'], active: true, revision: 1 }]);
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
+  await assert.rejects(api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: NON_COACH, gymId: GYM } }), e => e.code === 'INVALID_COACH' && e.status === 422);
+  assert.equal(rpcCalls.length, 0);
+});
+
+test('rechaza coach destino con ADMIN activo pero SIN rol COACH', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: NON_COACH, roles: ['ADMIN'], active: true, revision: 1 }]);
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
+  await assert.rejects(api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: NON_COACH, gymId: GYM } }), e => e.code === 'INVALID_COACH' && e.status === 422);
+  assert.equal(rpcCalls.length, 0);
+});
+
+test('acepta coach destino que es OWNER pero TAMBIÉN tiene COACH en su arreglo de roles (pasa por tener COACH, no por ser OWNER)', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: NON_COACH, roles: ['OWNER', 'COACH'], active: true, revision: 1 }]);
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
+  await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: NON_COACH, gymId: GYM } });
+  assert.deepEqual(rpcCalls.map(c => c[0]), ['pilot_set_membership', 'pilot_set_coach_client']);
 });
 
 // ---------------------------------------------------------------------------
@@ -611,6 +651,30 @@ test('protección del último OWNER: si quien reanuda ya es OWNER, conserva ese 
   const membership = db.memberships.find(m => m.user_id === OZIEL_ID);
   assert.deepEqual(new Set(membership.roles), new Set(['OWNER', 'CLIENT'])); // conserva OWNER, agrega CLIENT
   assert.equal(membership.roles.includes('OWNER'), true); // explícito: el gimnasio no se queda sin este OWNER
+});
+
+test('P0 restauración de privilegios: una membresía ADMIN INACTIVA con roles {ADMIN,CLIENT} nunca se reactiva sola al reanudar', async () => {
+  // Reproduce, a nivel de mock, el hallazgo P0 de la auditoría de Codex
+  // sobre el commit 9462850 (SQL:317-318 de PENDING-ACTIVATION-MIGRATION.sql):
+  // si la membresía propia ya existe, está revocada (active=false) y
+  // conserva el rol ADMIN en el arreglo, el camino normal de reanudación
+  // la reactivaría (`active=true`) por el solo hecho de iniciar sesión —
+  // restaurando privilegios administrativos sin ninguna acción
+  // administrativa explícita. Distinto del caso "último OWNER" de arriba:
+  // ahí la membresía ya estaba ACTIVA; aquí el problema es reactivar una
+  // que no lo estaba.
+  const db = freshDb();
+  db.missingProfiles.add(OZIEL_ID);
+  db.memberships.push({ id: uuid(300), gym_id: GYM, user_id: OZIEL_ID, roles: ['ADMIN', 'CLIENT'], active: false, revision: 3 });
+  const { api } = service({ db, findUserByEmail: findOziel });
+  await api.addClient({ token: 'tok', command: { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM } });
+  db.missingProfiles.delete(OZIEL_ID);
+  const result = applyResumePendingActivation(db, OZIEL_ID);
+  assert.equal(result.data.status, 'blocked_privileged_role'); // nunca 'completed': no se decide solo
+  const membership = db.memberships.find(m => m.user_id === OZIEL_ID);
+  assert.equal(membership.active, false); // sigue inactiva
+  assert.deepEqual(membership.roles, ['ADMIN', 'CLIENT']); // sus roles no se tocaron en absoluto
+  assert.equal(db.pendingActivations[0].status, 'blocked_privileged_role'); // auditable, distinto de 'cancelled'
 });
 
 test('correo nuevo con perfil pendiente tras crear la cuenta: PENDING_PROFILE, la Admin API se llama una sola vez incluso tras varios intentos', async () => {

@@ -52,6 +52,72 @@
 -- mezcla gimnasios nunca se aplica. Ver PROVISIONING-GAP.md para el
 -- detalle completo de cada corrida.
 --
+-- VERSIÓN 3 — corrige los hallazgos de la auditoría de Codex sobre el
+-- commit `9462850` (versión 2, ya subida a preprod-docker-test):
+--   P0. "Restauración de privilegios" (v2, líneas 317-318): el camino de
+--       reanudación REACTIVABA (`active = true`) una membresía propia ya
+--       existente sin mirar si esa membresía, estando INACTIVA, conservaba
+--       un rol OWNER o ADMIN (p. ej. {ADMIN, CLIENT} tras una revocación
+--       parcial) — restaurando privilegios administrativos por autoservicio,
+--       sin ninguna decisión administrativa explícita. Corregido: se agrega
+--       una comprobación ANTES de tocar la fila; si la membresía propia está
+--       inactiva y retiene OWNER/ADMIN, la solicitud se marca
+--       'blocked_privileged_role' (nuevo valor de `status`, distinto de
+--       'cancelled' para que quede auditable por separado) y NO se aplica
+--       ningún cambio — la membresía queda exactamente como estaba. Repárese
+--       en que esto es distinto de los OWNER/ADMIN *activos* que resuelven
+--       conservar su rol al agregárseles CLIENT (protección del último
+--       OWNER, v2): ahí la membresía YA estaba activa; aquí el problema es
+--       reactivar una que no lo estaba.
+--   P1. "Autoría falsificable" (v2, líneas 105-125): la política RLS exigía
+--       que quien escribe sea OWNER/ADMIN del gimnasio, pero nunca exigía
+--       que el valor de `created_by` fuera la propia identidad de quien
+--       escribe — cualquier OWNER/ADMIN del gimnasio podía crear o
+--       modificar una solicitud atribuyéndosela a OTRO OWNER/ADMIN
+--       (falsificando quién autorizó realmente el alta). Corregido:
+--       `with check` ahora exige también `created_by = auth.uid()` — la
+--       autoría queda ligada de forma no falsificable a quien realmente
+--       ejecuta la escritura. Esto también cierra, como efecto secundario
+--       correcto, la reapertura/reutilización de una solicitud cancelada o
+--       completada: reabrirla exige que quien lo haga se autoatribuya como
+--       nuevo autorizador (su propio auth.uid()), nunca conservar la
+--       autoría de otra persona sin su acción.
+--   P1 (corregido en esta ronda — revierte la decisión "SIN cambio" de la
+--       ronda anterior). "Coach sin rol COACH" (v2, línea 289): una ronda
+--       anterior de esta sesión dejó esto sin cambiar, razonando que
+--       OWNER/ADMIN como sustituto de COACH replicaba el contrato ya usado
+--       en `pilot-admin-provisioning-service.cjs` (`COACH_CAPABLE_ROLES`).
+--       Esa suposición era incorrecta: se recibió confirmación DIRECTA del
+--       contrato real de `pilot_set_coach_client` en Supabase —
+--       `'COACH'::public.pilot_role = any(coach.roles)` — que exige COACH
+--       LITERAL, nunca OWNER/ADMIN como sustituto. Corregido aquí Y en
+--       `COACH_CAPABLE_ROLES` (que pasa de `['COACH','OWNER','ADMIN']` a
+--       `['COACH']`). Reglas resultantes, sin ambigüedad:
+--         1. OWNER/ADMIN activos pueden ADMINISTRAR altas (sin cambios).
+--         2. El coach ASIGNADO debe tener COACH activo en ese gimnasio —
+--            ni OWNER ni ADMIN, por sí solos, son un destino válido.
+--         3. Un OWNER/ADMIN que TAMBIÉN tiene COACH en su arreglo de roles
+--            sigue siendo un destino válido — porque tiene COACH, no por
+--            ser OWNER/ADMIN.
+--   P1. Integración Render: `server/render-readonly.cjs` nunca conectaba el
+--       servicio de alta de clientes (`createProvisioningInfrastructure`,
+--       de pilot-admin-provisioning-service.cjs) al arranque real de
+--       Render — la ruta y el JS de autoservicio de alta existían y estaban
+--       probados (111 tests), pero jamás se exponían fuera de los tests.
+--       Corregido en ese archivo (no en este SQL): `prepareRender()` ahora
+--       construye y pasa `adminProvisioningService` a `createPilotServer`,
+--       conservando `readOnly:true` para toda función clínica (diario,
+--       macros, tracking) y sin habilitar `localAdmin`.
+--   P2. Endurecimiento SQL: `search_path` de la función pasa de `public` a
+--       `''` (vacío) — el máximo endurecimiento posible contra secuestro de
+--       objetos vía `search_path` — y cada referencia al tipo `pilot_role`
+--       se califica explícitamente como `public.pilot_role`, en vez de
+--       depender de que `public` siga siendo el único esquema en el path.
+--       (`pg_catalog` sigue disponible siempre, aunque el path esté vacío —
+--       es un comportamiento estable de PostgreSQL, no algo que dependa de
+--       esta migración — por eso `now()`, `array[...]`, etc. no necesitan
+--       calificarse.)
+--
 -- Quien aplique esto debe:
 --   1. Confirmar los nombres reales de columna en gym_memberships/clients/
 --      coach_clients (ver el contrato no verificado en
@@ -84,7 +150,12 @@ create table if not exists public.pilot_pending_activations (
   user_id uuid not null,                  -- el cliente invitado (auth.users.id)
   coach_membership_id uuid not null,      -- gym_memberships.id del coach destino, fijado en el momento de autorizar
   created_by uuid not null,               -- gym_memberships.user_id del OWNER/ADMIN que autorizó esto
-  status text not null default 'pending' check (status in ('pending', 'completed', 'cancelled')),
+  -- 'blocked_privileged_role' (P0, auditoría sobre el commit 9462850): la
+  -- reanudación encontró que la membresía propia del solicitante ya existe,
+  -- está INACTIVA y conserva OWNER/ADMIN — nunca se reactiva sola; queda
+  -- aquí, distinta de 'cancelled', para que una revisión administrativa
+  -- explícita la encuentre y decida.
+  status text not null default 'pending' check (status in ('pending', 'completed', 'cancelled', 'blocked_privileged_role')),
   revision bigint not null default 0,
   created_at timestamptz not null default now(),
   completed_at timestamptz,
@@ -111,16 +182,27 @@ create policy pilot_pending_activations_owner_admin_rw
       where gm.gym_id = pilot_pending_activations.gym_id
         and gm.user_id = auth.uid()
         and gm.active = true
-        and gm.roles && array['OWNER', 'ADMIN']::pilot_role[]
+        and gm.roles && array['OWNER', 'ADMIN']::public.pilot_role[]
     )
   )
   with check (
-    exists (
+    -- P1 (Codex, SQL:105-125 de la v2, commit 9462850): "autoría
+    -- falsificable" — antes, cualquier OWNER/ADMIN del gimnasio podía
+    -- escribir `created_by` con el id de OTRO OWNER/ADMIN, atribuyéndole
+    -- una autorización que esa persona nunca dio. Se exige que
+    -- `created_by` sea, siempre, la propia identidad de quien ejecuta el
+    -- INSERT/UPDATE — nunca una ajena. Esto también vuelve segura la
+    -- reapertura/reutilización: reabrir una solicitud cancelada o
+    -- completada para reasignarla exige que quien lo hace se autoatribuya
+    -- como nuevo autorizador (su propio auth.uid()), nunca conservando la
+    -- autoría de otra persona sin su acción.
+    pilot_pending_activations.created_by = auth.uid()
+    and exists (
       select 1 from public.gym_memberships gm
       where gm.gym_id = pilot_pending_activations.gym_id
         and gm.user_id = auth.uid()
         and gm.active = true
-        and gm.roles && array['OWNER', 'ADMIN']::pilot_role[]
+        and gm.roles && array['OWNER', 'ADMIN']::public.pilot_role[]
     )
   );
 
@@ -227,14 +309,21 @@ create or replace function public.pilot_resume_pending_activation()
 returns table (out_status text, out_gym_id uuid, out_coach_membership_id uuid)
 language plpgsql
 security definer
-set search_path = public
+-- P2 (endurecimiento, auditoría sobre el commit 9462850): search_path
+-- vacío en vez de `public` — ya no basta con que `public` sea el único
+-- esquema de la ruta; CADA referencia a un tipo/objeto no incorporado a
+-- pg_catalog debe calificarse explícitamente (ver `public.pilot_role` más
+-- abajo). pg_catalog sigue siempre disponible aunque el path esté vacío,
+-- así que now()/array[...]/etc. no necesitan calificarse.
+set search_path = ''
 as $$
 declare
   v_uid uuid := auth.uid();
   v_request record;
   v_membership_id uuid;
   v_membership_revision bigint;
-  v_membership_roles pilot_role[];
+  v_membership_roles public.pilot_role[];
+  v_membership_active boolean;
   v_client_id uuid;
   v_coach_still_authorized boolean;
   v_coach_still_valid boolean;
@@ -265,7 +354,7 @@ begin
     where gm.gym_id = v_request.gym_id
       and gm.user_id = v_request.created_by
       and gm.active = true
-      and gm.roles && array['OWNER', 'ADMIN']::pilot_role[]
+      and gm.roles && array['OWNER', 'ADMIN']::public.pilot_role[]
     for share
   ) into v_coach_still_authorized;
 
@@ -281,12 +370,21 @@ begin
 
   -- Confirma que el coach destino sigue activo en ese gimnasio (puede
   -- haber cambiado desde que se autorizó la solicitud); mismo bloqueo.
+  --
+  -- P1 (corregido en esta ronda): COACH LITERAL, confirmado contra el
+  -- contrato real de `pilot_set_coach_client` en Supabase —
+  -- `'COACH'::public.pilot_role = any(coach.roles)`. OWNER/ADMIN NUNCA
+  -- sustituyen a COACH como destino (una ronda anterior lo dejaba pasar,
+  -- asumiendo sin confirmación directa que replicaba el contrato real —
+  -- ver el detalle de la corrección al inicio del archivo). Un OWNER/ADMIN
+  -- que TAMBIÉN tiene COACH en su arreglo de roles sigue siendo un destino
+  -- válido — porque tiene COACH, no por ser OWNER/ADMIN.
   select exists (
     select 1 from public.gym_memberships gm
     where gm.id = v_request.coach_membership_id
       and gm.gym_id = v_request.gym_id
       and gm.active = true
-      and gm.roles && array['COACH', 'OWNER', 'ADMIN']::pilot_role[]
+      and 'COACH' = any(gm.roles)
     for share
   ) into v_coach_still_valid;
 
@@ -301,20 +399,36 @@ begin
   -- Aplica la membresía CLIENT (mismo efecto que pilot_set_membership,
   -- revisión optimista incluida) — profiles.id de v_uid YA existe en este
   -- punto porque esta función solo se llama después de pilot_ensure_profile().
-  select gm.id, gm.revision, gm.roles into v_membership_id, v_membership_revision, v_membership_roles
+  select gm.id, gm.revision, gm.roles, gm.active into v_membership_id, v_membership_revision, v_membership_roles, v_membership_active
   from public.gym_memberships gm
   where gm.gym_id = v_request.gym_id and gm.user_id = v_uid
   for update;
 
+  -- P0 (Codex, SQL:317-318 de la v2, commit 9462850): "restauración de
+  -- privilegios" — si la membresía propia YA existe, está INACTIVA
+  -- (revocada) y conserva OWNER/ADMIN, el camino de abajo la reactivaría
+  -- sola (`active = true`) por el solo hecho de iniciar sesión, sin
+  -- ninguna decisión administrativa explícita. Se bloquea aquí, antes de
+  -- tocar la fila: la solicitud queda marcada para revisión administrativa
+  -- (nunca se completa sola) y la membresía permanece sin cambios.
+  if v_membership_id is not null and v_membership_active = false
+     and v_membership_roles && array['OWNER', 'ADMIN']::public.pilot_role[] then
+    update public.pilot_pending_activations pa
+      set status = 'blocked_privileged_role', revision = pa.revision + 1
+      where pa.id = v_request.id;
+    return query select 'blocked_privileged_role'::text, v_request.gym_id, v_request.coach_membership_id;
+    return;
+  end if;
+
   if v_membership_id is null then
     insert into public.gym_memberships (gym_id, user_id, roles, active, revision)
-    values (v_request.gym_id, v_uid, array['CLIENT']::pilot_role[], true, 1)
+    values (v_request.gym_id, v_uid, array['CLIENT']::public.pilot_role[], true, 1)
     returning id into v_membership_id;
   else
     -- Agrega CLIENT sin eliminar ningún rol existente (protección del
     -- último OWNER: nunca se reemplaza el arreglo de roles a ciegas).
     update public.gym_memberships gm
-      set roles = case when 'CLIENT' = any(v_membership_roles) then v_membership_roles else v_membership_roles || 'CLIENT'::pilot_role end,
+      set roles = case when 'CLIENT' = any(v_membership_roles) then v_membership_roles else v_membership_roles || 'CLIENT'::public.pilot_role end,
           active = true,
           revision = v_membership_revision + 1
       where gm.id = v_membership_id;
@@ -341,7 +455,7 @@ end;
 $$;
 
 comment on function public.pilot_resume_pending_activation() is
-  'Autoservicio: completa, si existe, la ÚNICA solicitud de activación pendiente de auth.uid(). Revalida en vivo (con bloqueo) que el autorizador original (created_by) sigue siendo OWNER/ADMIN activo del gimnasio antes de aplicar nada. Nunca actúa sobre otro usuario, nunca reemplaza roles existentes (solo agrega CLIENT), y nunca otorga rol OWNER/ADMIN al cliente.';
+  'Autoservicio: completa, si existe, la ÚNICA solicitud de activación pendiente de auth.uid(). Revalida en vivo (con bloqueo) que el autorizador original (created_by) sigue siendo OWNER/ADMIN activo del gimnasio antes de aplicar nada. Nunca actúa sobre otro usuario, nunca reemplaza roles existentes (solo agrega CLIENT), nunca otorga rol OWNER/ADMIN al cliente, y nunca reactiva una membresía propia inactiva que conserve OWNER/ADMIN (status=blocked_privileged_role en ese caso, requiere acción administrativa explícita).';
 
 revoke all on function public.pilot_resume_pending_activation() from public;
 grant execute on function public.pilot_resume_pending_activation() to authenticated;

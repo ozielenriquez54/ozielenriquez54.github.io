@@ -49,6 +49,20 @@
 // módulo sigue siendo exclusivamente OWNER/ADMIN, separado del permiso
 // clínico/de coacheo.
 //
+// COACH_CAPABLE_ROLES (corregido: el destino de una asignación exige COACH
+// LITERAL, confirmado contra el contrato real de `pilot_set_coach_client`
+// en Supabase: `'COACH'::public.pilot_role = any(coach.roles)`). Una ronda
+// anterior de esta sesión asumió, sin esa confirmación directa, que
+// OWNER/ADMIN podían sustituir a COACH como destino — esa suposición era
+// incorrecta y se revierte aquí. Las tres reglas, ahora separadas sin
+// ambigüedad:
+//   1. OWNER/ADMIN activos pueden EJECUTAR el alta (administrar).
+//   2. El coach ASIGNADO debe tener el rol COACH activo en ese gimnasio —
+//      ni OWNER ni ADMIN, por sí solos, son un destino válido.
+//   3. Un OWNER/ADMIN que TAMBIÉN tiene COACH en su arreglo de roles (la
+//      misma persona con dos roles) SÍ puede ser el destino — porque tiene
+//      COACH, no por ser OWNER/ADMIN.
+//
 // Relaciones (corregido tras 2ª auditoría — la 1ª corrección fue
 // incorrecta y se revierte aquí):
 //   - `pilot_set_coach_client` recibe `p_client_membership_id` = el id en
@@ -169,8 +183,12 @@ const PG_STATUS = { '42501': 403, '23514': 422, '22023': 400 };
 // Quién puede EJECUTAR el alta de clientes (corregido: COACH no tiene este
 // permiso, solo puede ser el destino de la asignación).
 const PROVISIONER_ROLES = ['OWNER', 'ADMIN'];
-// Quién puede ser el COACH destino de una asignación.
-const COACH_CAPABLE_ROLES = ['COACH', 'OWNER', 'ADMIN'];
+// Quién puede ser el COACH destino de una asignación — COACH LITERAL,
+// confirmado contra el contrato real de `pilot_set_coach_client` en
+// Supabase (`'COACH'::public.pilot_role = any(coach.roles)`). OWNER/ADMIN
+// NUNCA sustituyen a COACH aquí; si la misma persona también tiene COACH
+// en su arreglo de roles, pasa por tenerlo, no por ser OWNER/ADMIN.
+const COACH_CAPABLE_ROLES = ['COACH'];
 
 function object(value, keys) {
   if (!value || Array.isArray(value) || typeof value !== 'object' ||
@@ -261,9 +279,10 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   }
 
   // Confirma que el coach objetivo tiene una membresía activa EN EL MISMO
-  // gimnasio con un rol que puede coachear (COACH, OWNER o ADMIN), y
-  // devuelve el id real de esa membresía (lo exige pilot_set_coach_client
-  // como p_coach_membership_id — nunca un user_id).
+  // gimnasio con el rol COACH literal (nunca OWNER/ADMIN como sustituto —
+  // ver COACH_CAPABLE_ROLES), y devuelve el id real de esa membresía (lo
+  // exige pilot_set_coach_client como p_coach_membership_id — nunca un
+  // user_id).
   async function authorizeTargetCoach(client, coachId, gymId, check) {
     const membership = await client.from('gym_memberships').select('id,user_id,gym_id,roles,active').eq('user_id', coachId).eq('gym_id', gymId).eq('active', true);
     check();

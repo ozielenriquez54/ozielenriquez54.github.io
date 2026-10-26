@@ -89,7 +89,17 @@ function createPilotServer({env=process.env,manualMacrosService,diaryService=nul
     // Exact allowlist: no filesystem path is ever constructed from a request.
     // Ignore query parameters without decoding or normalizing the allowlisted path.
     const route=req.url.split('?',1)[0];
-    if(readOnly&&(route.startsWith('/admin')||route.startsWith('/pilot-admin')||route.startsWith('/preview/'))){res.writeHead(404);res.end();return;}
+    // Coincidencia EXACTA para el administrador antiguo, nunca por
+    // prefijo: corregido tras la auditoría de Codex sobre el commit
+    // 9462850 (integración Render) — `route.startsWith('/pilot-admin')`
+    // también atrapaba por accidente `/pilot-admin-provisioning-ui.js` (el
+    // alta de clientes, una ruta legítima y distinta), devolviéndole 404
+    // incluso con `adminProvisioningService` ya conectado. localAdmin y
+    // readOnly ya son mutuamente excluyentes (ver arriba), así que
+    // `/admin.html`/`/pilot-admin.js`/`/pilot-admin-ui.js` nunca se
+    // registran de todas formas bajo readOnly — esta lista es defensa en
+    // profundidad, no la única barrera.
+    if(readOnly&&(route==='/admin.html'||route==='/pilot-admin.js'||route==='/pilot-admin-ui.js'||route.startsWith('/preview/'))){res.writeHead(404);res.end();return;}
     const resource=routes.get(route);
     if(!resource){res.writeHead(404);res.end('PILOT_ROUTE_NOT_FOUND');return;}
     if(route.startsWith('/preview/'))res.setHeader('Content-Security-Policy',CSP.replace("connect-src 'self' https://otswebncqidqthqplztj.supabase.co","connect-src 'none'"));

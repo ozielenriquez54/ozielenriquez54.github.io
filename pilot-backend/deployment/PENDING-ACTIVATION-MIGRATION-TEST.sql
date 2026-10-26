@@ -169,4 +169,77 @@ commit;
 select case when not exists (select 1 from gym_memberships where gym_id = '20000000-0000-0000-0000-000000000001' and user_id = '30000000-0000-0000-0000-000000000006')
             then 'PASS J2: sin membresía otorgada entre gimnasios' else 'FAIL J2' end;
 
+\echo '=== P0) Restauración de privilegios: un ADMIN inactivo con roles {ADMIN,CLIENT} NO se reactiva solo (debe bloquearse) ==='
+-- Simula una membresía ADMIN previamente revocada (active=false) que
+-- conserva el rol ADMIN en el arreglo — exactamente el caso reportado por
+-- Codex sobre el commit 9462850 (SQL:317-318 de esa versión).
+insert into gym_memberships (gym_id, user_id, roles, active, revision) values
+  ('20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-00000000000c', '{ADMIN,CLIENT}', false, 3);
+insert into pilot_pending_activations (gym_id, user_id, coach_membership_id, created_by, status)
+select '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-00000000000c', gm.id, '30000000-0000-0000-0000-000000000004', 'pending'
+from gym_memberships gm where gm.gym_id = '20000000-0000-0000-0000-000000000001' and gm.user_id = '30000000-0000-0000-0000-000000000002'; -- coach1; created_by = admin1 (activo)
+begin;
+set local role authenticated;
+set local "test.current_uid" = '30000000-0000-0000-0000-00000000000c';
+select case when out_status = 'blocked_privileged_role' then 'PASS P0: la reanudación se niega a reactivar sola un ADMIN/OWNER inactivo' else 'FAIL P0: ' || coalesce(out_status,'NULL') end
+from pilot_resume_pending_activation();
+commit;
+select case when active = false and roles = array['ADMIN','CLIENT']::pilot_role[] then 'PASS P0b: la membresía sigue inactiva, con sus roles intactos (no se restauró ADMIN)' else 'FAIL P0b: active=' || active::text || ' roles=' || roles::text end
+from gym_memberships where gym_id = '20000000-0000-0000-0000-000000000001' and user_id = '30000000-0000-0000-0000-00000000000c';
+select case when status = 'blocked_privileged_role' then 'PASS P0c: la solicitud queda marcada para revisión administrativa explícita' else 'FAIL P0c: ' || status end
+from pilot_pending_activations where user_id = '30000000-0000-0000-0000-00000000000c';
+
+\echo '=== P1) Autoría falsificable: un ADMIN intenta crear una solicitud atribuida a OTRO OWNER/ADMIN (debe RECHAZARSE) (se espera un ERROR aquí) ==='
+begin;
+set local role authenticated;
+set local "test.current_uid" = '30000000-0000-0000-0000-000000000004'; -- admin1
+insert into pilot_pending_activations (gym_id, user_id, coach_membership_id, created_by, status)
+values ('20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-00000000000d', '30000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000001', 'pending'); -- created_by = owner1, NO admin1
+rollback;
+select case when not exists (select 1 from pilot_pending_activations where user_id = '30000000-0000-0000-0000-00000000000d') then 'PASS P1: un ADMIN no puede atribuir la autoría de una solicitud a otro OWNER/ADMIN' else 'FAIL P1' end;
+
+\echo '=== P1b) Autoría falsificable al reabrir: un ADMIN intenta reatribuir created_by de una solicitud EXISTENTE a otra persona (debe RECHAZARSE) (se espera un ERROR aquí) ==='
+begin;
+set local role authenticated;
+set local "test.current_uid" = '30000000-0000-0000-0000-000000000004'; -- admin1, autor real de la solicitud de la prueba B
+update pilot_pending_activations set created_by = '30000000-0000-0000-0000-000000000001' where user_id = '30000000-0000-0000-0000-000000000005'; -- intenta atribuirla a owner1
+rollback;
+select case when created_by = '30000000-0000-0000-0000-000000000004' then 'PASS P1b: no se pudo reatribuir la autoría de una solicitud existente a otra persona' else 'FAIL P1b: created_by=' || created_by::text end
+from pilot_pending_activations where user_id = '30000000-0000-0000-0000-000000000005';
+
+\echo '=== K) Coach destino con OWNER activo pero SIN rol COACH -> se cancela (COACH literal, confirmado contra pilot_set_coach_client real) ==='
+insert into gym_memberships (gym_id, user_id, roles, active, revision) values
+  ('20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-00000000000e', '{OWNER}', true, 1);
+insert into pilot_pending_activations (gym_id, user_id, coach_membership_id, created_by, status)
+select '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000010', gm.id, '30000000-0000-0000-0000-000000000004', 'pending'
+from gym_memberships gm where gm.gym_id = '20000000-0000-0000-0000-000000000001' and gm.user_id = '30000000-0000-0000-0000-00000000000e'; -- owner sin COACH; created_by = admin1
+begin;
+set local role authenticated;
+set local "test.current_uid" = '30000000-0000-0000-0000-000000000010';
+select case when out_status = 'cancelled' then 'PASS K: un OWNER activo SIN rol COACH nunca es un destino válido' else 'FAIL K: ' || coalesce(out_status,'NULL') end
+from pilot_resume_pending_activation();
+commit;
+select case when not exists (select 1 from gym_memberships where gym_id = '20000000-0000-0000-0000-000000000001' and user_id = '30000000-0000-0000-0000-000000000010')
+            then 'PASS K2: sin membresía otorgada (la solicitud se canceló, nunca se aplicó)' else 'FAIL K2' end;
+
+\echo '=== L) Coach destino con OWNER activo que TAMBIÉN tiene COACH -> se aplica normalmente (pasa por tener COACH, no por ser OWNER) ==='
+insert into gym_memberships (gym_id, user_id, roles, active, revision) values
+  ('20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-00000000000f', '{OWNER,COACH}', true, 1);
+insert into pilot_pending_activations (gym_id, user_id, coach_membership_id, created_by, status)
+select '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000011', gm.id, '30000000-0000-0000-0000-000000000004', 'pending'
+from gym_memberships gm where gm.gym_id = '20000000-0000-0000-0000-000000000001' and gm.user_id = '30000000-0000-0000-0000-00000000000f'; -- OWNER+COACH; created_by = admin1
+begin;
+set local role authenticated;
+set local "test.current_uid" = '30000000-0000-0000-0000-000000000011';
+select case when out_status = 'completed' then 'PASS L: un OWNER que TAMBIÉN tiene COACH sigue siendo un destino válido' else 'FAIL L: ' || coalesce(out_status,'NULL') end
+from pilot_resume_pending_activation();
+commit;
+select case when exists (
+    select 1 from coach_clients cc
+    join gym_memberships coach_gm on coach_gm.id = cc.coach_membership_id
+    join clients c on c.id = cc.client_id
+    join gym_memberships client_gm on client_gm.id = c.membership_id
+    where coach_gm.user_id = '30000000-0000-0000-0000-00000000000f' and client_gm.user_id = '30000000-0000-0000-0000-000000000011' and cc.active
+  ) then 'PASS L2: queda vinculado al coach OWNER+COACH' else 'FAIL L2' end;
+
 \echo '=== RESUMEN: cualquier línea que empiece con FAIL arriba es un fallo real ==='
