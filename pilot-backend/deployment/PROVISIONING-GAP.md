@@ -10,6 +10,89 @@ automatiza — **pero depende de infraestructura SQL que todavía no existe
 en Supabase real.** No se declara el flujo terminado de extremo a extremo:
 ver la sección "Bloqueo real" más abajo.
 
+## 10ª ronda: 5 hallazgos de Codex sobre el commit `26fd7fc` (servicio de alta, callback de invitación, UI)
+
+Esta ronda corrige 5 hallazgos sobre el backend/frontend del alta de
+clientes (`pilot-admin-provisioning-service.cjs`, `pilot-auth.js`,
+`pilot-auth-ui.js`, `pilot-admin-provisioning-ui.js`) — ninguno toca
+`PENDING-ACTIVATION-MIGRATION.sql` ni sus pruebas SQL, que se reejecutaron
+para confirmar que las protecciones P0/P1 ya existentes (restauración de
+privilegios, autoría falsificable, rol de coach literal) siguen intactas.
+
+**P1 — Invitaciones sin autorización suficiente.** `resendInvite` solo
+exigía que el llamador fuera OWNER/ADMIN de ALGÚN gimnasio (`gymId` lo
+decide el propio llamador) — nunca comprobaba que el correo a reenviar
+tuviera relación alguna con ese gimnasio. Cualquier OWNER/ADMIN de
+cualquier gimnasio podía reenviar/invitar un correo arbitrario vía la
+Admin API. Corregido: se resuelve el correo a un id Auth real
+(`findUserByEmail`) y se exige una fila en `pilot_pending_activations` con
+`gym_id` + `user_id` + `status='pending'` — si esa tabla no existe todavía
+(migración no aplicada) o no hay fila, se falla cerrado
+(`NO_PENDING_ACTIVATION`, nunca se asume autorización sin poder
+comprobarla).
+
+**P1 — Sobrescritura de roles.** `addClient` llamaba siempre
+`pilot_set_membership` con `p_roles=['CLIENT']`, reemplazando por completo
+cualquier rol existente de ese correo en ese gimnasio — si ya era
+OWNER/ADMIN/COACH, lo perdía. Corregido: se conserva el arreglo existente y
+solo se agrega CLIENT (mismo criterio que la protección del último OWNER
+en `pilot_resume_pending_activation()`). Además, si esa membresía ya existe,
+está INACTIVA y conserva un rol privilegiado, `addClient` la rechaza
+explícitamente (`BLOCKED_PRIVILEGED_ROLE`) en vez de reactivarla como
+efecto secundario de "agregar cliente".
+
+**P1 — Callback de invitación.** `inviteUserByEmail` se llamaba sin
+`redirectTo`, dependiendo del callback GLOBAL configurado en el dashboard
+de Supabase (no validado por este servidor, potencialmente distinto por
+entorno). Corregido: se construye siempre con `config.publicOrigin` (única
+fuente: una variable de entorno del servidor, ya validada por
+`loadPilotConfig`) + la ruta fija `/auth/callback.html`; sin
+`PILOT_PUBLIC_ORIGIN` configurado, se rechaza (`PILOT_PUBLIC_ORIGIN_REQUIRED`)
+en vez de invitar sin saber a dónde redirigir.
+
+**P2 — Errores ocultos.** `pilot-auth.js` ignoraba CUALQUIER error al
+llamar `pilot_resume_pending_activation()` (no solo "la función no existe
+todavía"), y `pilot-auth-ui.js` no tenía mensaje propio para
+`ACTIVATION_BLOCKED_PRIVILEGED_ROLE` (caía en el AUTH_FAILED genérico pese
+a que `pilot-auth.js` ya lo distinguía desde la 8ª ronda). Corregido: el
+fetch distingue 404 ("no existe todavía", único caso tolerado) de
+cualquier otro error (`ACTIVATION_FAILED`) y de un fallo de red real
+(`ACTIVATION_NETWORK_ERROR`); se agrega `ACTIVATION_CANCELLED` para cuando
+la autorización original ya no es válida. Los 4 estados tienen mensaje
+propio en la UI, sin filtrar información sensible.
+
+**P2 — Multigimnasio.** `pilot-admin-provisioning-ui.js` tomaba
+`memberships.data[0]` sin mirar si había más de una membresía activa
+OWNER/ADMIN — un OWNER/ADMIN de varios gimnasios podía terminar dando de
+alta en el gimnasio equivocado, en silencio. Corregido: con más de un
+gimnasio elegible, se exige una selección explícita (sin preselección); el
+backend sigue revalidando de todas formas que el `gymId` recibido sea
+exactamente uno donde el actor es OWNER/ADMIN activo.
+
+**Pruebas ejecutadas esta ronda:**
+- `npm test`: **131/131 PASS** (115 previas + 16 nuevas: multigimnasio,
+  resendInvite autorizado/no autorizado, sobrescritura de roles para
+  OWNER/ADMIN/COACH/CLIENT existentes, redirectTo configurado/rechazado, y
+  los nuevos estados de activación en pilot-auth.js y su UI real).
+- SQL (`PENDING-ACTIVATION-MIGRATION-TEST.sql`, PostgreSQL 16.15 local
+  desechable, sin cambios de esta ronda): **25/25 PASS, 0 FAIL** — se
+  reejecutó para confirmar que P0/P1 de rondas anteriores siguen intactos.
+- Concurrencia (`PENDING-ACTIVATION-MIGRATION-CONCURRENCY-TEST.sh`): PASS.
+- Se encontró y corrigió, al VERIFICAR con un arranque real (no solo leer
+  el código), un bug adicional no listado por Codex: la guarda de
+  `readOnly` en `pilot-http.cjs` (de la 8ª ronda) usaba coincidencia por
+  PREFIJO para el administrador antiguo — esto habría seguido bloqueando
+  `/pilot-admin-provisioning-ui.js` si no se hubiera corregido ya en la 8ª
+  ronda; se reconfirmó aquí que sigue con coincidencia EXACTA.
+
+**Sin commit ni push esta ronda** (no autorizado). Archivos modificados:
+`pilot-backend/server/pilot-admin-provisioning-service.cjs`,
+`nutrika/pilot-auth.js`, `nutrika/pilot-auth-ui.js`,
+`nutrika/pilot-admin-provisioning-ui.js`,
+`pilot-backend/tests/pilot-admin-provisioning.test.cjs`,
+`pilot-backend/tests/pilot-auth.test.cjs`,
+`pilot-backend/tests/render-readonly.test.cjs`.
+
 ## 9ª ronda: corrección de la discrepancia de roles de coach (evidencia directa del contrato real)
 
 La 8ª ronda dejó "coach sin rol COACH" SIN cambiar, razonando que

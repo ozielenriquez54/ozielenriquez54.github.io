@@ -254,6 +254,76 @@ test('reintentar la misma alta es idempotente: lee la revisión real y no duplic
   assert.equal(membershipCalls[1][1].p_expected_revision, 1); // segunda vez: lee la revisión real ya existente
 });
 
+// ---------------------------------------------------------------------------
+// P1 (auditoría sobre el commit 26fd7fc, "sobrescritura de roles"): addClient
+// llamaba pilot_set_membership siempre con p_roles=['CLIENT'], REEMPLAZANDO
+// por completo cualquier rol existente de ese correo en ese gimnasio. Si el
+// correo invitado ya era OWNER/ADMIN/COACH ahí, perdía ese rol por completo.
+// Corregido: se conserva el arreglo existente y solo se agrega CLIENT.
+// ---------------------------------------------------------------------------
+test('addClient CONSERVA el rol OWNER existente al agregar CLIENT (nunca lo reemplaza)', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: ANA_ID, roles: ['OWNER'], active: true, revision: 1 }]);
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PROVISIONED');
+  const membership = db.memberships.find(m => m.user_id === ANA_ID);
+  assert.deepEqual(new Set(membership.roles), new Set(['OWNER', 'CLIENT']));
+  assert.equal(membership.active, true);
+  const call = rpcCalls.find(c => c[0] === 'pilot_set_membership');
+  assert.deepEqual(new Set(call[1].p_roles), new Set(['OWNER', 'CLIENT']));
+});
+
+test('addClient CONSERVA el rol ADMIN existente al agregar CLIENT (nunca lo reemplaza)', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: ANA_ID, roles: ['ADMIN'], active: true, revision: 1 }]);
+  const { api } = service({ db, findUserByEmail: findAna });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PROVISIONED');
+  const membership = db.memberships.find(m => m.user_id === ANA_ID);
+  assert.deepEqual(new Set(membership.roles), new Set(['ADMIN', 'CLIENT']));
+});
+
+test('addClient CONSERVA el rol COACH existente al agregar CLIENT (nunca lo reemplaza)', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: ANA_ID, roles: ['COACH'], active: true, revision: 1 }]);
+  const { api } = service({ db, findUserByEmail: findAna });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PROVISIONED');
+  const membership = db.memberships.find(m => m.user_id === ANA_ID);
+  assert.deepEqual(new Set(membership.roles), new Set(['COACH', 'CLIENT']));
+});
+
+test('addClient sobre un CLIENT ya existente es idempotente: no duplica el rol ni pierde nada', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: ANA_ID, roles: ['CLIENT'], active: true, revision: 1 }]);
+  const { api } = service({ db, findUserByEmail: findAna });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PROVISIONED');
+  const membership = db.memberships.find(m => m.user_id === ANA_ID);
+  assert.deepEqual(membership.roles, ['CLIENT']); // ni duplicado ni perdido
+});
+
+test('addClient RECHAZA reactivar una membresía OWNER/ADMIN/COACH INACTIVA como efecto secundario de "agregar cliente"', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: ANA_ID, roles: ['ADMIN', 'CLIENT'], active: false, revision: 3 }]);
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
+  await assert.rejects(
+    api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } }),
+    e => e.code === 'BLOCKED_PRIVILEGED_ROLE' && e.status === 409,
+  );
+  const membership = db.memberships.find(m => m.user_id === ANA_ID);
+  assert.equal(membership.active, false); // sigue inactiva, sin tocar
+  assert.deepEqual(membership.roles, ['ADMIN', 'CLIENT']); // sus roles tampoco se tocaron
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_membership').length, 0); // nunca llegó a llamar la RPC
+  assert.equal(db.coachClients.length, 0); // ni mucho menos a vincular un coach
+});
+
+test('addClient SÍ reactiva una membresía CLIENT inactiva sin roles privilegiados (sin bloqueo)', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: ANA_ID, roles: ['CLIENT'], active: false, revision: 2 }]);
+  const { api } = service({ db, findUserByEmail: findAna });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PROVISIONED');
+  const membership = db.memberships.find(m => m.user_id === ANA_ID);
+  assert.equal(membership.active, true);
+  assert.deepEqual(membership.roles, ['CLIENT']);
+});
+
 test('nunca inserta directamente en `clients`: cualquier intento de tocar otra tabla hace fallar la prueba', async () => {
   // Cubierto estructuralmente por fakeClient.from() en todas las pruebas de
   // este archivo (lanza assert.fail si se pide una tabla distinta de
@@ -665,10 +735,16 @@ test('P0 restauración de privilegios: una membresía ADMIN INACTIVA con roles {
   // que no lo estaba.
   const db = freshDb();
   db.missingProfiles.add(OZIEL_ID);
-  db.memberships.push({ id: uuid(300), gym_id: GYM, user_id: OZIEL_ID, roles: ['ADMIN', 'CLIENT'], active: false, revision: 3 });
   const { api } = service({ db, findUserByEmail: findOziel });
   await api.addClient({ token: 'tok', command: { name: 'Oziel Enríquez', email: OZIEL_EMAIL, coachId: COACH, gymId: GYM } });
   db.missingProfiles.delete(OZIEL_ID);
+  // Entre la invitación original (arriba) y este primer login, una acción
+  // administrativa COMPLETAMENTE DISTINTA (no addClient, no esta prueba) le
+  // otorgó y luego le revocó el rol ADMIN en este mismo gimnasio — de ahí
+  // que la membresía se agregue aquí directamente, nunca a través de
+  // addClient (que ahora también bloquea reactivar privilegios, ver la
+  // prueba "P1 sobrescritura de roles" más abajo).
+  db.memberships.push({ id: uuid(300), gym_id: GYM, user_id: OZIEL_ID, roles: ['ADMIN', 'CLIENT'], active: false, revision: 3 });
   const result = applyResumePendingActivation(db, OZIEL_ID);
   assert.equal(result.data.status, 'blocked_privileged_role'); // nunca 'completed': no se decide solo
   const membership = db.memberships.find(m => m.user_id === OZIEL_ID);
@@ -779,20 +855,73 @@ test('token ausente o malformado se rechaza como AUTH_REQUIRED sin abrir sesión
   assert.equal(sessionCalls, 0);
 });
 
-test('resendInvite exige gymId y reusa la capacidad admin, sin tocar las RPC de membresía', async () => {
+// ---------------------------------------------------------------------------
+// P1 (auditoría sobre el commit 26fd7fc, "invitaciones sin autorización
+// suficiente"): resendInvite exige una solicitud pendiente y vigente en ESE
+// gimnasio para ESE correo — nunca solo que el llamador sea OWNER/ADMIN de
+// algún gimnasio, lo que permitía invitar/reenviar cualquier correo arbitrario
+// vía la Admin API.
+// ---------------------------------------------------------------------------
+test('resendInvite exige gymId, una solicitud pendiente vigente en ese gimnasio, y reusa la capacidad admin sin tocar las RPC de membresía', async () => {
   const db = freshDb();
+  db.pendingActivations.push({ id: uuid(7000), gym_id: GYM, user_id: ANA_ID, coach_membership_id: uuid(2), created_by: OWNER, status: 'pending', revision: 0 });
   const admin = fakeAdminInvite();
-  const { api, rpcCalls } = service({ db, createAdminInvite: admin.invite });
+  const { api, rpcCalls } = service({ db, createAdminInvite: admin.invite, findUserByEmail: findAna });
   const result = await api.resendInvite({ token: 'tok', command: { email: 'ana@example.com', gymId: GYM } });
   assert.equal(result.status, 'INVITE_RESENT');
   assert.deepEqual(admin.calls, [['ana@example.com', {}]]);
   assert.equal(rpcCalls.length, 0); // pilot_set_membership no tiene concepto de "reenviar"
 });
 
+test('resendInvite RECHAZA un correo sin ninguna solicitud pendiente en ese gimnasio (nunca invita arbitrariamente vía la Admin API)', async () => {
+  const db = freshDb(); // sin ninguna fila en pendingActivations
+  const admin = fakeAdminInvite();
+  const { api } = service({ db, createAdminInvite: admin.invite, findUserByEmail: findAna });
+  await assert.rejects(api.resendInvite({ token: 'tok', command: { email: 'ana@example.com', gymId: GYM } }), e => e.code === 'NO_PENDING_ACTIVATION' && e.status === 422);
+  assert.deepEqual(admin.calls, []); // nunca se llegó a invocar la Admin API
+});
+
+test('resendInvite RECHAZA cuando la solicitud pendiente existe pero en OTRO gimnasio (gym_id no coincide)', async () => {
+  const db = freshDb([{ id: uuid(3), gym_id: OTHER_GYM, user_id: OTHER_OWNER, roles: ['OWNER'], active: true, revision: 1 }]);
+  db.pendingActivations.push({ id: uuid(7000), gym_id: GYM, user_id: ANA_ID, coach_membership_id: uuid(2), created_by: OWNER, status: 'pending', revision: 0 });
+  const admin = fakeAdminInvite();
+  const { api } = service({ db, actor: OTHER_OWNER, createAdminInvite: admin.invite, findUserByEmail: findAna });
+  // OTHER_OWNER SÍ es OWNER activo de OTHER_GYM (pasa authorizeCaller), pero
+  // la única solicitud pendiente de ana@example.com es en GYM, no en
+  // OTHER_GYM — nunca se reenvía cruzando el gimnasio del llamador.
+  await assert.rejects(api.resendInvite({ token: 'tok', command: { email: 'ana@example.com', gymId: OTHER_GYM } }), e => e.code === 'NO_PENDING_ACTIVATION' && e.status === 422);
+  assert.deepEqual(admin.calls, []);
+});
+
+test('resendInvite RECHAZA cuando la solicitud pendiente de ese correo ya está completada o cancelada (no "pending")', async () => {
+  const db = freshDb();
+  db.pendingActivations.push({ id: uuid(7000), gym_id: GYM, user_id: ANA_ID, coach_membership_id: uuid(2), created_by: OWNER, status: 'completed', revision: 1 });
+  const admin = fakeAdminInvite();
+  const { api } = service({ db, createAdminInvite: admin.invite, findUserByEmail: findAna });
+  await assert.rejects(api.resendInvite({ token: 'tok', command: { email: 'ana@example.com', gymId: GYM } }), e => e.code === 'NO_PENDING_ACTIVATION' && e.status === 422);
+  assert.deepEqual(admin.calls, []);
+});
+
+test('resendInvite RECHAZA un correo que nunca tuvo cuenta Auth (findUserByEmail no lo encuentra), nunca lo invita como si fuera nuevo', async () => {
+  const db = freshDb();
+  const admin = fakeAdminInvite();
+  const { api } = service({ db, createAdminInvite: admin.invite, findUserByEmail: () => null });
+  await assert.rejects(api.resendInvite({ token: 'tok', command: { email: 'nadie@example.com', gymId: GYM } }), e => e.code === 'NO_PENDING_ACTIVATION' && e.status === 422);
+  assert.deepEqual(admin.calls, []);
+});
+
 test('resendInvite sin capacidad admin configurada reporta ADMIN_INVITE_UNAVAILABLE', async () => {
   const db = freshDb();
   const { api } = service({ db });
   await assert.rejects(api.resendInvite({ token: 'tok', command: { email: 'ana@example.com', gymId: GYM } }), e => e.code === 'ADMIN_INVITE_UNAVAILABLE' && e.status === 503);
+});
+
+test('resendInvite sin findUserByEmail configurado (solo createAdminInvite) también reporta ADMIN_INVITE_UNAVAILABLE, nunca invita a ciegas', async () => {
+  const db = freshDb();
+  const admin = fakeAdminInvite();
+  const { api } = service({ db, createAdminInvite: admin.invite });
+  await assert.rejects(api.resendInvite({ token: 'tok', command: { email: 'ana@example.com', gymId: GYM } }), e => e.code === 'ADMIN_INVITE_UNAVAILABLE' && e.status === 503);
+  assert.deepEqual(admin.calls, []);
 });
 
 test('clientStatus es de solo lectura, exige gymId y autorización del llamador en ese gimnasio', async () => {
@@ -904,6 +1033,74 @@ test('createProvisioningInfrastructure: resuelve un correo existente paginando l
   assert.equal(result.createdUser, false);
   assert.deepEqual(listUsersCalls, [1, 2]); // se detiene al encontrarlo; nunca pide la página 3
   assert.equal(inviteCalls, 0);
+});
+
+// ---------------------------------------------------------------------------
+// P1 (auditoría sobre el commit 26fd7fc, "callback de invitación"):
+// inviteUserByEmail debe recibir SIEMPRE un `redirectTo` explícito,
+// construido del lado del servidor a partir de PILOT_PUBLIC_ORIGIN — nunca
+// depender del callback global configurado en el dashboard de Supabase.
+// ---------------------------------------------------------------------------
+function infraForInviteRedirect(env, { onInvite } = {}) {
+  const { createProvisioningInfrastructure } = require('../server/pilot-admin-provisioning-service.cjs');
+  const memberships = [
+    { id: uuid(1), gym_id: GYM, user_id: OWNER, roles: ['OWNER'], active: true, revision: 1 },
+    { id: uuid(2), gym_id: GYM, user_id: COACH, roles: ['COACH'], active: true, revision: 1 },
+  ];
+  function tableOps(rows) {
+    let filters = [];
+    const q = {
+      select: () => q,
+      eq(k, v) { filters.push([k, v]); return q; },
+      then(resolve) { resolve({ data: rows.filter(r => filters.every(([k, v]) => r[k] === v)), error: null }); },
+    };
+    return q;
+  }
+  return createProvisioningInfrastructure({
+    env,
+    fetchImpl: async () => ({ ok: true, status: 200 }),
+    createClient: (_url, key) => {
+      if (key === env.PILOT_SUPABASE_PUBLIC_KEY) {
+        return {
+          auth: { getUser: async () => ({ data: { user: { id: OWNER } } }) },
+          from: table => tableOps(table === 'gym_memberships' ? memberships : []),
+          // PENDING_PROFILE directo: profiles.id todavía no existe para el
+          // correo nuevo — no interesa llegar más lejos que resendInvite.
+          rpc: () => Promise.resolve({ data: null, error: { code: '23503' } }),
+        };
+      }
+      return { auth: { admin: {
+        listUsers: async () => ({ data: { users: [] }, error: null }),
+        inviteUserByEmail: async (email, options) => { onInvite?.(email, options); return { data: { user: { id: uuid(888) } }, error: null }; },
+      } } };
+    },
+  });
+}
+
+test('createAdminInvite construye redirectTo del lado del servidor a partir de PILOT_PUBLIC_ORIGIN, nunca del callback global de Supabase', async () => {
+  let captured = null;
+  const infra = infraForInviteRedirect(
+    { PILOT_SUPABASE_PUBLIC_KEY: 'sb_publishable_test', PILOT_SUPABASE_SERVICE_KEY: 'sb_secret_' + 'x'.repeat(30), PILOT_PUBLIC_ORIGIN: 'https://twogramms-preprod.onrender.com' },
+    { onInvite: (email, options) => { captured = { email, options }; } },
+  );
+  const result = await infra.addClient({ token: 'tok', command: { name: 'Nueva', email: 'nueva@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PENDING_PROFILE');
+  assert.ok(captured, 'debía invitar: el correo no existía todavía');
+  assert.equal(captured.email, 'nueva@example.com');
+  assert.equal(captured.options.redirectTo, 'https://twogramms-preprod.onrender.com/auth/callback.html');
+});
+
+test('createAdminInvite RECHAZA invitar sin PILOT_PUBLIC_ORIGIN configurado (nunca cae al callback global de Supabase en silencio)', async () => {
+  let invited = false;
+  const infra = infraForInviteRedirect(
+    { PILOT_SUPABASE_PUBLIC_KEY: 'sb_publishable_test', PILOT_SUPABASE_SERVICE_KEY: 'sb_secret_' + 'x'.repeat(30) }, // sin PILOT_PUBLIC_ORIGIN
+    { onInvite: () => { invited = true; } },
+  );
+  await assert.rejects(
+    infra.addClient({ token: 'tok', command: { name: 'Nueva', email: 'nueva@example.com', coachId: COACH, gymId: GYM } }),
+    e => e.code === 'PILOT_PUBLIC_ORIGIN_REQUIRED' && e.status === 503,
+  );
+  assert.equal(invited, false); // nunca se llegó a invocar la Admin API sin saber a dónde redirigir
 });
 
 // ---------------------------------------------------------------------------
@@ -1098,6 +1295,58 @@ test('Integración UI real: un COACH sin OWNER/ADMIN ve un mensaje claro, nunca 
   const status = container._children.find(c => c.tagName === 'p');
   assert.ok(status.textContent.toLowerCase().includes('owner/admin'), status.textContent);
   void api; // el servicio real existe para simetría con el otro caso, pero nunca se invoca
+});
+
+// ---------------------------------------------------------------------------
+// P2 (auditoría sobre el commit 26fd7fc, "multigimnasio"): un OWNER/ADMIN con
+// membresía activa en más de un gimnasio nunca debe ver el alta enviada en
+// silencio al primero que devuelva la consulta — debe elegir explícitamente.
+// ---------------------------------------------------------------------------
+test('Integración UI real: OWNER con membresías activas en DOS gimnasios debe elegir uno explícitamente (nunca el primero en silencio)', async () => {
+  const db = freshDb([{ id: uuid(300), gym_id: OTHER_GYM, user_id: OWNER, roles: ['OWNER'], active: true, revision: 1 }]);
+  const api = createProvisioningService({ createSession: async () => fakeClient({ actor: OWNER, db }), findUserByEmail: findAna });
+  const app = createPilotServer({ env: { PORT: '10000', PILOT_SUPABASE_PUBLIC_KEY: 'sb_publishable_test' }, readOnly: true, adminProvisioningService: api });
+  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
+  try {
+    const base = 'http://127.0.0.1:' + app.server.address().port;
+    const browserClient = fakeClient({ actor: OWNER, db });
+    browserClient.auth.getSession = async () => ({ data: { session: { access_token: 'owner-session-token', user: { id: OWNER } } } });
+    const { container, document: doc } = fakeDom();
+    const context = { module: { exports: {} }, fetch: (path, init) => globalThis.fetch(base + path, { ...init, headers: { ...init.headers, origin: base } }) };
+    vm.createContext(context);
+    vm.runInContext(fs.readFileSync(require.resolve('../../nutrika/pilot-admin-provisioning-ui.js'), 'utf8'), context);
+    const ui = context.module.exports.mount(container, { client: browserClient, document: doc });
+    await ui.refresh();
+    const form = container._children.find(c => c.tagName === 'form');
+    assert.ok(form, 'el formulario debía montarse: OWNER con al menos una membresía activa está autorizado');
+    const [nameField, emailField, coachField, gymField] = form._children;
+    assert.ok(gymField, 'con dos gimnasios elegibles debe aparecer un campo adicional de selección');
+    const select = gymField._children[0];
+    assert.equal(select.tagName, 'select');
+    assert.equal(select.value, '', 'nunca preseleccionado — ni el primero ni ningún otro, hasta que la persona elige');
+    const optionGyms = select._children.map(o => o.value).filter(v => v !== '');
+    assert.deepEqual(new Set(optionGyms), new Set([GYM, OTHER_GYM]));
+
+    nameField._children[0].value = 'Ana Multi';
+    emailField._children[0].value = 'ana@example.com';
+    coachField._children[0].value = COACH;
+    // Intento de envío SIN elegir gimnasio: debe rechazarse sin llamar al backend.
+    await form._listeners.submit({ preventDefault() {} });
+    let status = container._children.find(c => c.tagName === 'p');
+    assert.ok(status.textContent.toLowerCase().includes('selecciona'), status.textContent);
+    assert.equal(db.memberships.some(m => m.user_id === ANA_ID), false);
+
+    // Elige explícitamente GYM (donde está el coach real) y reintenta.
+    select.value = GYM;
+    select._listeners.change();
+    await form._listeners.submit({ preventDefault() {} });
+    status = container._children.find(c => c.tagName === 'p');
+    assert.ok(status.textContent.includes('Cliente agregado'), status.textContent);
+    // Confirma que el backend REAL recibió exactamente el gimnasio elegido,
+    // nunca OTHER_GYM (el que habría salido primero de un memberships[0]).
+    const anaMembership = db.memberships.find(m => m.user_id === ANA_ID);
+    assert.equal(anaMembership.gym_id, GYM);
+  } finally { await new Promise(r => app.server.close(r)); }
 });
 
 function httpRequest(app, origin, path, method, jsonBody, authorization = undefined) {

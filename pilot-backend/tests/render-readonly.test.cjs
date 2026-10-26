@@ -92,6 +92,23 @@ test('invitation UI cleans URL before requests, uses CLIENT and enables password
   els['password-form'].submit({preventDefault(){}});await new Promise(r=>setImmediate(r));assert.equal(els['pilot-access'].hidden,true);
 });
 
+test('UI real: los cuatro estados nuevos de reanudación de activación muestran un mensaje propio, nunca el genérico de AUTH_FAILED (P2, auditoría sobre el commit 26fd7fc)',async()=>{
+  const vm=require('node:vm'),fs=require('node:fs');
+  for(const status of ['ACTIVATION_BLOCKED_PRIVILEGED_ROLE','ACTIVATION_CANCELLED','ACTIVATION_FAILED','ACTIVATION_NETWORK_ERROR']){
+    const els={},element=id=>els[id]??={hidden:false,value:'',textContent:'',addEventListener(k,f){this[k]=f;}};
+    const context={document:{hidden:false,body:{dataset:{role:'COACH'}},getElementById:element,querySelectorAll:()=>[],addEventListener(){}},
+      window:{addEventListener(){}},location:{pathname:'/coach.html',origin,search:'',hash:''},
+      history:{replaceState(){}},sessionStorage:{getItem:()=>null,setItem(){},removeItem(){}},
+      fetch:async()=>({json:async()=>({publicKey:'sb_publishable_test',publicOrigin:origin,readOnly:true,macrosWritable:false,diaryAvailable:false,trackingAvailable:false,adminProvisioningAvailable:false})}),supabase:{},
+      PilotAuth:{parseCallback:()=>null,createClient:()=>({auth:{onAuthStateChange(){}}}),controller:()=>({verify:async()=>({status})})},
+      PilotMacrosService:{createModel:()=>({})},PilotMacrosUI:{mount:()=>({clear(){},refresh(){},revalidate(){}})},setInterval(){},setTimeout(){}};
+    await vm.runInNewContext(fs.readFileSync(require.resolve('../../nutrika/pilot-auth-ui.js'),'utf8'),context);
+    const generic='No se pudo completar la operación. Revisa los datos o solicita un enlace nuevo.';
+    assert.notEqual(els['auth-status'].textContent,generic,status+' no debe caer en el mensaje genérico de AUTH_FAILED');
+    assert.ok(els['auth-status'].textContent.length>0,status+' debe mostrar un mensaje');
+    assert.equal(els['pilot-access'].hidden,true,status+' nunca debe exponer las funciones autorizadas');
+  }
+});
 test('Docker context is explicit and contains the entire local require/resource closure',()=>{
   const fs=require('node:fs'),path=require('node:path');
   const root=path.resolve(__dirname,'../..');

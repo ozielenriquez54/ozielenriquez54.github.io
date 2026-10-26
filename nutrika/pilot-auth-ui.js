@@ -13,6 +13,15 @@
     RECOVERY_SESSION_MISSING:'No hay una sesión de recuperación válida en este navegador.',
     RECOVERY_SESSION_MISMATCH:'La sesión corresponde a otra cuenta. No se permite cambiar la contraseña.',
     AUTH_FAILED:'No se pudo verificar la recuperación o completar la operación. Solicita asistencia sin compartir el enlace.',
+    // P2 (auditoría sobre el commit 26fd7fc, "errores ocultos"): estos
+    // cuatro estados de la reanudación automática de activación ya existían
+    // en pilot-auth.js, pero sin entrada aquí caían en el AUTH_FAILED
+    // genérico de abajo — nunca se mostraban al usuario como lo que
+    // realmente eran. Ninguno expone detalles internos ni datos sensibles.
+    ACTIVATION_BLOCKED_PRIVILEGED_ROLE:'Tu cuenta tiene un rol administrativo inactivo en este gimnasio. Reactivarlo requiere una acción explícita del administrador; no ocurre solo al iniciar sesión.',
+    ACTIVATION_CANCELLED:'La autorización para activar tu cuenta en este gimnasio ya no es válida (fue revocada o cambió). Solicita una nueva invitación al administrador.',
+    ACTIVATION_FAILED:'No se pudo completar la activación automática de tu cuenta. Vuelve a intentarlo o solicita ayuda al administrador.',
+    ACTIVATION_NETWORK_ERROR:'No se pudo completar la activación automática por un problema de conexión. Vuelve a intentarlo.',
   });
   let recoveryMode=location.pathname==='/auth/callback.html';
   function recoveryLayout(){

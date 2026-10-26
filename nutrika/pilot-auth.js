@@ -60,7 +60,15 @@
           // SDK errors must never carry a server message, echoed input or URL.
           if(!response.ok){
             let code;
-            try{const body=await response.json();const candidate=body.code??body.error_code;if(['42501','40001','23503','23514'].includes(candidate)||(url.pathname.startsWith('/auth/v1/')&&['otp_expired','flow_state_expired','session_not_found','refresh_token_not_found','refresh_token_already_used','bad_jwt'].includes(candidate)))code=candidate;}catch{}
+            // 404 se distingue con un código sintético propio (nunca el
+            // mensaje crudo del servidor): es la única forma estable de
+            // reconocer "la función/tabla propuesta todavía no existe"
+            // (infraestructura no aplicada) sin inventar una interpretación
+            // del cuerpo de PostgREST. Cualquier OTRO error (permiso, 5xx,
+            // etc.) nunca se oculta tras este mismo código (P2, auditoría
+            // sobre el commit 26fd7fc: "errores ocultos").
+            if(response.status===404)code='PILOT_NOT_FOUND';
+            else{try{const body=await response.json();const candidate=body.code??body.error_code;if(['42501','40001','23503','23514'].includes(candidate)||(url.pathname.startsWith('/auth/v1/')&&['otp_expired','flow_state_expired','session_not_found','refresh_token_not_found','refresh_token_already_used','bad_jwt'].includes(candidate)))code=candidate;}catch{}}
             return new Response(JSON.stringify({message:'PILOT_REQUEST_FAILED',error:'PILOT_REQUEST_FAILED',code,error_code:code}),{status:response.status,headers:{'Content-Type':'application/json'}});
           }
           return response;
@@ -119,22 +127,43 @@
         const ownProfile=Array.isArray(profile.data)?(profile.data.length===1?profile.data[0]:null):profile.data;
         if(profile.error||ownProfile?.id!==id)fail();
         if(ticket!==generation)return {status:'SIGNED_OUT'};
-        // Autoservicio, tolerante a propósito: completa automáticamente la
-        // única solicitud de activación ya autorizada por un OWNER/ADMIN
-        // para este usuario, si existía. Si la función todavía no existe
-        // en Supabase real (infraestructura propuesta no aplicada) o no
-        // había nada pendiente, esto no debe romper la verificación normal
-        // — por eso se ignora cualquier error de transporte aquí, nunca se
-        // usa fail(). Pero un out_status='blocked_privileged_role' (P0,
-        // PENDING-ACTIVATION-MIGRATION.sql: la reanudación se negó a
-        // reactivar sola una membresía propia inactiva con OWNER/ADMIN) sí
-        // se distingue del resto — nunca se filtra al cliente como un
-        // simple AUTHORIZED/ROLE_REQUIRED silencioso.
+        // Autoservicio, tolerante a propósito SOLO a que la función todavía
+        // no exista (infraestructura propuesta no aplicada, código
+        // sintético PILOT_NOT_FOUND — ver el fetch de arriba) o a que no
+        // hubiera nada pendiente (sin fila): ninguno de los dos es un
+        // error. Cualquier OTRO resultado se distingue explícitamente —
+        // nunca se oculta tras un AUTHORIZED/ROLE_REQUIRED genérico (P2,
+        // auditoría sobre el commit 26fd7fc: "errores ocultos"):
+        //   - out_status='blocked_privileged_role' (P0): la reanudación se
+        //     negó a reactivar sola una membresía propia inactiva con
+        //     OWNER/ADMIN — requiere una acción administrativa explícita.
+        //   - out_status='cancelled': la autorización original (el
+        //     OWNER/ADMIN que autorizó, o el coach destino) ya no es
+        //     válida — la activación falló, no quedó "pendiente".
+        //   - out_status='completed' o ninguna fila: se continúa el flujo
+        //     normal de abajo (la nueva membresía, si se otorgó, ya se
+        //     refleja en la lectura de gym_memberships que sigue).
+        //   - un error de transporte DISTINTO de "no existe todavía"
+        //     (permiso denegado, 5xx, etc.): se reporta como fallo de
+        //     activación explícito, nunca se finge que no pasó nada.
+        //   - una excepción real (fallo de red): se distingue de
+        //     AUTH_FAILED — la sesión sigue siendo válida, solo falló la
+        //     reanudación y conviene reintentar, no volver a iniciar sesión.
         try{
           const resume=await client.rpc('pilot_resume_pending_activation');
-          const row=Array.isArray(resume.data)?resume.data[0]:resume.data;
-          if(row?.out_status==='blocked_privileged_role'){if(ticket!==generation)return {status:'SIGNED_OUT'};return {status:'ACTIVATION_BLOCKED_PRIVILEGED_ROLE'};}
-        }catch{}
+          if(ticket!==generation)return {status:'SIGNED_OUT'};
+          if(resume.error){
+            if(resume.error.code!=='PILOT_NOT_FOUND')return {status:'ACTIVATION_FAILED'};
+          }else{
+            const row=Array.isArray(resume.data)?resume.data[0]:resume.data;
+            if(row?.out_status==='blocked_privileged_role')return {status:'ACTIVATION_BLOCKED_PRIVILEGED_ROLE'};
+            if(row?.out_status==='cancelled')return {status:'ACTIVATION_CANCELLED'};
+          }
+        }catch(error){
+          if(ticket!==generation)return {status:'SIGNED_OUT'};
+          if(error?.code==='PILOT_NETWORK_ERROR')return {status:'ACTIVATION_NETWORK_ERROR'};
+          return {status:'ACTIVATION_FAILED'};
+        }
         const memberships=await client.from('gym_memberships').select('user_id,roles,active').eq('user_id',id).eq('active',true);
         if(memberships.error||!Array.isArray(memberships.data))fail();
         if(ticket!==generation)return {status:'SIGNED_OUT'};

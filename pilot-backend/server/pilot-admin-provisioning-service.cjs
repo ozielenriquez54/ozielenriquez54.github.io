@@ -333,12 +333,16 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   // REVISION_CONFLICT (40001) vuelve a leer y reintenta con la revisión
   // fresca — acotado, para no reintentar indefinidamente ni duplicar la
   // operación si el conflicto persiste por otra razón.
+  // `write` recibe la FILA completa leída (o null si no existía), no solo
+  // la revisión — setMembership la necesita para decidir qué roles
+  // conservar (ver P1 "sobrescritura de roles" más abajo) sin una segunda
+  // lectura fuera de este ciclo de reintento.
   async function withRevisionRetry(read, write, check, maxAttempts = 4) {
     let row = await read();
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       check();
       try {
-        return await write(row?.revision ?? 0);
+        return await write(row);
       } catch (e) {
         if (!(e instanceof ProvisioningError) || e.code !== 'REVISION_CONFLICT' || attempt === maxAttempts) throw e;
         row = await read();
@@ -373,11 +377,38 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   // reintenta aquí con esperas (ver nota de "Profiles" al inicio del
   // archivo): el error se deja subir tal cual para que addClient() lo
   // traduzca en un resultado PENDING_PROFILE, nunca en un bucle.
+  // Roles que esta capa NUNCA debe pisar ni reactivar como efecto
+  // secundario de "agregar cliente" (ver el bloqueo explícito más abajo).
+  const PRIVILEGED_ROLES = ['OWNER', 'ADMIN', 'COACH'];
+
   async function setMembership(client, { gymId, userId }, check) {
     await withRevisionRetry(
       () => readMembershipRow(client, gymId, userId, check),
-      async expectedRevision => {
-        const call = await client.rpc('pilot_set_membership', { p_gym_id: gymId, p_user_id: userId, p_roles: ['CLIENT'], p_active: true, p_expected_revision: expectedRevision });
+      async row => {
+        const expectedRevision = row?.revision ?? 0;
+        const existingRoles = row?.roles ?? [];
+        // P1 (auditoría sobre el commit 26fd7fc, "sobrescritura de roles"):
+        // la versión anterior llamaba siempre con p_roles=['CLIENT'], que
+        // REEMPLAZA por completo el arreglo de roles de la RPC real — si el
+        // correo invitado ya tenía una membresía OWNER/ADMIN/COACH en ESTE
+        // gimnasio, quedaba reducido a solo CLIENT, perdiendo ese rol.
+        // Corregido: se CONSERVA el arreglo existente y solo se agrega
+        // CLIENT si faltaba (nunca se reemplaza a ciegas — mismo criterio
+        // que la protección del último OWNER en
+        // pilot_resume_pending_activation(), PENDING-ACTIVATION-MIGRATION.sql).
+        //
+        // Además, si esa membresía YA existe, está INACTIVA (revocada) y
+        // conserva un rol privilegiado, esta operación administrativa de
+        // "agregar cliente" NUNCA la reactiva como efecto secundario — eso
+        // sería restaurar privilegios sin una decisión explícita de
+        // reactivarlos (se rechaza, no se asume); quien quiera reactivar a
+        // esa persona debe hacerlo con una acción administrativa dedicada,
+        // no agregándola por accidente como "nuevo cliente".
+        if (row && !row.active && PRIVILEGED_ROLES.some(r => existingRoles.includes(r))) {
+          fail('BLOCKED_PRIVILEGED_ROLE', 409);
+        }
+        const roles = existingRoles.includes('CLIENT') ? existingRoles : [...existingRoles, 'CLIENT'];
+        const call = await client.rpc('pilot_set_membership', { p_gym_id: gymId, p_user_id: userId, p_roles: roles, p_active: true, p_expected_revision: expectedRevision });
         check();
         if (call.error) throw mapRpcError(call.error);
         return call;
@@ -405,7 +436,8 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
     if (!clientRecord) fail('RELATED_RECORD_NOT_FOUND', 404);
     return withRevisionRetry(
       () => readCoachClientRow(client, gymId, coachMembershipId, clientRecord.id, check),
-      async expectedRevision => {
+      async row => {
+        const expectedRevision = row?.revision ?? 0;
         const call = await client.rpc('pilot_set_coach_client', { p_gym_id: gymId, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId, p_active: true, p_expected_revision: expectedRevision });
         check();
         if (call.error) throw mapRpcError(call.error);
@@ -413,6 +445,26 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
       },
       check,
     );
+  }
+
+  // Confirma que ESE correo (ya resuelto a un id Auth real) tiene una
+  // solicitud de activación PENDIENTE y vigente en ESE gimnasio exacto —
+  // P1 (auditoría sobre el commit 26fd7fc, "invitaciones sin autorización
+  // suficiente"): antes, resendInvite solo exigía que el LLAMADOR fuera
+  // OWNER/ADMIN de `gymId`, sin comprobar que el correo a reenviar tuviera
+  // ninguna relación con ese gimnasio — cualquier OWNER/ADMIN de CUALQUIER
+  // gimnasio podía usar este endpoint para invitar/reenviar a un correo
+  // arbitrario vía la Admin API de Supabase. `pilot_pending_activations` es
+  // la única fuente verificable de "esta persona fue autorizada, en este
+  // gimnasio, por un OWNER/ADMIN, y sigue pendiente" — si esa tabla no
+  // existe todavía (migración propuesta no aplicada) o no hay fila, se
+  // falla cerrado: nunca se asume una autorización que no se puede
+  // comprobar.
+  async function authorizePendingActivation(client, gymId, userId, check) {
+    const pending = await client.from('pilot_pending_activations').select('id,status').eq('gym_id', gymId).eq('user_id', userId).eq('status', 'pending');
+    check();
+    if (pending.error) fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
+    if (!pending.data?.length) fail('NO_PENDING_ACTIVATION', 422);
   }
 
   // Guarda (upsert por gym_id+user_id, nunca duplica) la solicitud de
@@ -481,14 +533,22 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
     // Reenvía la invitación de una cuenta que aún no inició sesión. Ya no
     // depende de pilot_set_membership (esa RPC no tiene concepto de
     // "reenviar") — vuelve a invocar la misma capacidad de Admin API usada
-    // para crear cuentas nuevas. Requiere capacidad admin configurada.
+    // para crear cuentas nuevas. Requiere capacidad admin configurada Y una
+    // solicitud de activación pendiente y vigente para ESE correo en ESE
+    // gimnasio (ver authorizePendingActivation): nunca reenvía/invita un
+    // correo sin relación verificable con el gimnasio del llamador.
     async resendInvite({ token, command, signal }) {
       const input = validateResendCommand(command);
       return run(token, signal, async ({ client, actor, check }) => {
         rateLimiter(actor);
         await authorizeCaller(client, actor, input.gymId, check);
         check();
-        if (!createAdminInvite) fail('ADMIN_INVITE_UNAVAILABLE', 503);
+        if (!createAdminInvite || !findUserByEmail) fail('ADMIN_INVITE_UNAVAILABLE', 503);
+        const existing = await findUserByEmail(input.email);
+        check();
+        if (!existing) fail('NO_PENDING_ACTIVATION', 422);
+        await authorizePendingActivation(client, input.gymId, existing.id, check);
+        check();
         try { await createAdminInvite(input.email, {}); }
         catch (e) { throw e instanceof ProvisioningError ? e : new ProvisioningError('ADMIN_INVITE_FAILED', 502); }
         check();
@@ -537,6 +597,30 @@ async function findUserByEmailViaAdmin(adminClient, email, { perPage = 200, maxP
 function createProvisioningInfrastructure({ env = process.env, fetchImpl = globalThis.fetch, createClient = require('@supabase/supabase-js').createClient } = {}) {
   const { loadPilotConfig } = require('./pilot-config.cjs');
   const config = loadPilotConfig(env);
+
+  // P1 (auditoría sobre el commit 26fd7fc, "callback de invitación"): la
+  // versión anterior llamaba a `inviteUserByEmail` sin `redirectTo`, así que
+  // el enlace de invitación dependía del "Site URL"/callback GLOBAL
+  // configurado en el panel de Supabase — nunca validado por este servidor,
+  // y potencialmente distinto por entorno (preproducción vs. producción).
+  // Se construye aquí, SIEMPRE, a partir de `config.publicOrigin` — la
+  // ÚNICA fuente posible: una variable de entorno del SERVIDOR
+  // (PILOT_PUBLIC_ORIGIN), ya validada estrictamente por loadPilotConfig
+  // (https, un host exacto, sin path/query/hash) — más la ruta fija real
+  // `/auth/callback.html` (la misma que pilot-auth.js exige del lado del
+  // cliente). Ni `email` ni `metadata` (los únicos datos que llegan desde
+  // el navegador a esta capa) participan en absoluto en esta URL.
+  function inviteRedirectTo() {
+    if (!config.publicOrigin) fail('PILOT_PUBLIC_ORIGIN_REQUIRED', 503);
+    const url = new URL('/auth/callback.html', config.publicOrigin);
+    // Defensa en profundidad: revalida el resultado final, sin asumir que
+    // la validación de loadPilotConfig en otro archivo sigue vigente para
+    // siempre ni que new URL(...) no pudo introducir nada inesperado.
+    if (url.protocol !== 'https:' || url.origin !== config.publicOrigin || url.pathname !== '/auth/callback.html' || url.search || url.hash) {
+      fail('PILOT_PUBLIC_ORIGIN_REQUIRED', 503);
+    }
+    return url.toString();
+  }
 
   function createSession(token, signal) {
     if (!config.publicKey || env.NODE_TLS_REJECT_UNAUTHORIZED === '0') fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
@@ -594,7 +678,7 @@ function createProvisioningInfrastructure({ env = process.env, fetchImpl = globa
     return {
       findUserByEmail: email => findUserByEmailViaAdmin(adminClient, email),
       createAdminInvite: async (email, metadata) => {
-        const result = await adminClient.auth.admin.inviteUserByEmail(email, { data: metadata });
+        const result = await adminClient.auth.admin.inviteUserByEmail(email, { data: metadata, redirectTo: inviteRedirectTo() });
         if (result.error) {
           // No reenviar el mensaje del servidor; mapear solo códigos conocidos.
           const code = result.error.code;

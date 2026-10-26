@@ -28,13 +28,23 @@
     '42501': 'Tu cuenta no tiene permiso de OWNER/ADMIN activo para dar de alta clientes en este gimnasio.',
     INVALID_EMAIL: 'Escribe un correo válido.',
     INVALID_NAME: 'Escribe un nombre.',
-    INVALID_COACH: 'El coach indicado no tiene una membresía activa (COACH, OWNER o ADMIN) en este gimnasio.',
+    // Corregido: el coach destino exige el rol COACH literal (confirmado
+    // contra el contrato real de pilot_set_coach_client); OWNER/ADMIN ya no
+    // sustituyen a COACH, salvo que la misma persona también tenga COACH.
+    INVALID_COACH: 'El coach indicado no tiene una membresía activa con el rol COACH en este gimnasio.',
     INVALID_GYM: 'No se pudo determinar tu gimnasio activo. Vuelve a iniciar sesión.',
     USER_NOT_FOUND: 'Ese correo todavía no tiene cuenta en Twogramms y la creación automática no está disponible en este entorno. Contacta al administrador del proyecto.',
     REVISION_CONFLICT: 'Otra operación modificó este registro al mismo tiempo. Intenta de nuevo.',
     RELATED_RECORD_NOT_FOUND: 'Uno de los registros relacionados no se encontró. Verifica los datos e intenta de nuevo.',
     ADMIN_INVITE_EMAIL_EXISTS: 'Ese correo ya tiene una cuenta activada en Twogramms.',
     ADMIN_INVITE_UNAVAILABLE: 'Reenviar invitaciones no está disponible en este entorno.',
+    // P1 (auditoría sobre el commit 26fd7fc): resendInvite ahora exige una
+    // solicitud de activación pendiente y vigente en este gimnasio.
+    NO_PENDING_ACTIVATION: 'Ese correo no tiene ninguna solicitud de activación pendiente en este gimnasio. Usa "Agregar cliente" en vez de reenviar.',
+    // P1 (auditoría sobre el commit 26fd7fc, "sobrescritura de roles"): la
+    // cuenta ya tiene un rol administrativo, pero está inactivo — reactivarlo
+    // requiere una acción administrativa aparte, nunca "agregar cliente".
+    BLOCKED_PRIVILEGED_ROLE: 'Esa cuenta ya tiene un rol administrativo (OWNER/ADMIN/COACH) inactivo en este gimnasio. Reactivarlo requiere una acción administrativa aparte, no se puede hacer agregándola como cliente.',
     RATE_LIMIT_EXCEEDED: 'Demasiadas solicitudes seguidas. Espera un minuto e intenta de nuevo.',
     PROVISIONING_SERVICE_UNAVAILABLE: 'No se pudo completar la operación. Intenta de nuevo.',
     PROVISIONING_RESULT_UNKNOWN: 'No se pudo confirmar el resultado (problema de conexión). Verifica el estado antes de reintentar.',
@@ -59,16 +69,17 @@
       return res.ok ? { data: json.data } : { error: json.error ?? 'PROVISIONING_SERVICE_UNAVAILABLE' };
     }
 
-    // Lee la propia membresía activa para obtener el gym_id Y confirmar que
-    // el rol real incluye OWNER/ADMIN — el servidor igual lo exige, esto
-    // solo evita mostrar un formulario que de todas formas se rechazaría.
-    async function ownActiveMembership() {
+    // Lee TODAS las membresías activas (nunca solo la primera — P2,
+    // auditoría sobre el commit 26fd7fc, "multigimnasio") para poder exigir
+    // una selección explícita cuando quien inició sesión es OWNER/ADMIN en
+    // más de un gimnasio. Elegir silenciosamente memberships.data[0] podía
+    // enviar el alta a un gimnasio distinto del que la persona pretendía.
+    async function ownActiveMemberships() {
       const session = await client.auth.getSession();
       const id = session.data?.session?.user?.id;
       if (!id) return null;
-      const membership = await client.from('gym_memberships').select('gym_id,roles,active').eq('user_id', id).eq('active', true);
-      const row = membership.data?.[0];
-      return row ? { gymId: row.gym_id, roles: row.roles ?? [] } : null;
+      const memberships = await client.from('gym_memberships').select('gym_id,roles,active').eq('user_id', id).eq('active', true);
+      return (memberships.data ?? []).map(r => ({ gymId: r.gym_id, roles: r.roles ?? [] }));
     }
 
     async function refresh() {
@@ -77,13 +88,19 @@
       const heading = node('h3', 'Agregar cliente'); container.append(heading);
       const status = node('p'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); container.append(status);
 
-      let own = null;
-      try { own = await ownActiveMembership(); } catch { /* se trata igual que "sin membresía" abajo */ }
+      let ownRows = null;
+      try { ownRows = await ownActiveMemberships(); } catch { /* se trata igual que "sin membresía" abajo */ }
       if (ticket !== epoch) return;
-      const authorized = own?.roles.some(r => r === 'OWNER' || r === 'ADMIN') === true;
-      if (!own) { status.textContent = messageFor('INVALID_GYM'); return; }
-      if (!authorized) { status.textContent = 'Tu cuenta tiene acceso a esta vista pero no permiso de OWNER/ADMIN para dar de alta clientes.'; return; }
-      const gymId = own.gymId;
+      if (!ownRows || ownRows.length === 0) { status.textContent = messageFor('INVALID_GYM'); return; }
+      const eligible = ownRows.filter(r => r.roles.includes('OWNER') || r.roles.includes('ADMIN'));
+      if (eligible.length === 0) { status.textContent = 'Tu cuenta tiene acceso a esta vista pero no permiso de OWNER/ADMIN para dar de alta clientes.'; return; }
+      // Nunca se preselecciona un gimnasio cuando hay más de uno elegible:
+      // gymId queda null hasta que la propia persona lo elige explícitamente
+      // (o, si solo hay uno, es ese — sin fricción adicional para el caso
+      // común). El backend (authorizeCaller) revalida de todas formas que
+      // el gymId recibido sea exactamente uno donde el actor es OWNER/ADMIN
+      // activo — esta UI nunca es la única barrera.
+      let gymId = eligible.length === 1 ? eligible[0].gymId : null;
 
       const form = doc.createElement('form');
       const nameField = node('label', 'Nombre '), nameInput = doc.createElement('input'); nameInput.required = true; nameInput.maxLength = 200; nameField.append(nameInput);
@@ -91,13 +108,31 @@
       const coachField = node('label', 'ID del coach asignado '), coachInput = doc.createElement('input'); coachInput.required = true; coachInput.maxLength = 64; coachField.append(coachInput);
       const submit = node('button', 'Agregar cliente'); submit.type = 'submit';
       const resend = node('button', 'Reenviar invitación'); resend.type = 'button';
-      form.append(nameField, emailField, coachField, submit); container.append(form, resend);
 
-      function setBusy(value) { busy = value; [nameInput, emailInput, coachInput, submit, resend].forEach(el => { el.disabled = value; }); }
+      let gymSelect = null;
+      if (eligible.length > 1) {
+        const gymField = node('label', 'Gimnasio ');
+        gymSelect = doc.createElement('select'); gymSelect.required = true;
+        const placeholder = doc.createElement('option'); placeholder.value = ''; placeholder.textContent = 'Selecciona un gimnasio…'; gymSelect.append(placeholder);
+        for (const row of eligible) { const opt = doc.createElement('option'); opt.value = row.gymId; opt.textContent = row.gymId; gymSelect.append(opt); }
+        gymSelect.value = '';
+        gymSelect.addEventListener('change', () => { gymId = gymSelect.value || null; });
+        gymField.append(gymSelect);
+        form.append(nameField, emailField, coachField, gymField, submit);
+      } else {
+        form.append(nameField, emailField, coachField, submit);
+      }
+      container.append(form, resend);
+
+      function setBusy(value) { busy = value; [nameInput, emailInput, coachInput, submit, resend, gymSelect].forEach(el => { if (el) el.disabled = value; }); }
 
       form.addEventListener('submit', async event => {
         event.preventDefault();
         if (busy) return;
+        // Verificado de nuevo aquí (no solo al montar): el valor viene
+        // SIEMPRE de la selección explícita o del único gimnasio elegible,
+        // nunca de un valor por defecto silencioso.
+        if (!gymId || !eligible.some(r => r.gymId === gymId)) { status.textContent = 'Selecciona el gimnasio antes de continuar.'; return; }
         setBusy(true); status.textContent = 'Agregando…';
         const result = await call('/api/admin/clients', { body: { name: nameInput.value.trim(), email: emailInput.value.trim(), coachId: coachInput.value.trim(), gymId } });
         if (ticket !== epoch) return;
@@ -114,6 +149,7 @@
 
       resend.addEventListener('click', async () => {
         if (busy) return;
+        if (!gymId || !eligible.some(r => r.gymId === gymId)) { status.textContent = 'Selecciona el gimnasio antes de continuar.'; return; }
         if (!emailInput.value.trim()) { status.textContent = 'Escribe el correo antes de reenviar.'; return; }
         setBusy(true); status.textContent = 'Reenviando…';
         const result = await call('/api/admin/clients/resend-invite', { body: { email: emailInput.value.trim(), gymId } });

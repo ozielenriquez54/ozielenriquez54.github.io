@@ -51,6 +51,45 @@ test('login creates own profile then checks actual active role; metadata is not 
     assert.equal((await clientAuth.verify()).status,'ROLE_REQUIRED');
   }
 });
+// P2 (auditoría sobre el commit 26fd7fc, "errores ocultos"): verify() debía
+// distinguir completada/pendiente/bloqueada/fallida en la reanudación
+// automática de activación, nunca ocultar un resultado real tras un
+// AUTHORIZED/ROLE_REQUIRED genérico. fixture() de arriba usa un rpc() que no
+// distingue por nombre (siempre {data:{id:...}}), así que esto necesita su
+// propio doble con out_status real, igual al contrato de la función SQL.
+function fixtureResume({resume,roles=['CLIENT'],active=true}={}){
+  const calls=[];
+  const client={auth:{getUser:async()=>({data:{user:{id:'synthetic-user'}}})},
+    rpc:async name=>{calls.push(['rpc',name]);if(name==='pilot_ensure_profile')return {data:{id:'synthetic-user'}};if(name==='pilot_resume_pending_activation')return resume();return {data:null,error:null};},
+    from:name=>{calls.push(['table',name]);const q={select:()=>q,eq:(key,value)=>{calls.push(['filter',key,value]);return key==='active'?Promise.resolve({data:[{user_id:'synthetic-user',roles,active}]}):q;}};return q;}};
+  return {client,calls,auth:controller(client,'CLIENT','http://127.0.0.1:3000/auth/callback.html')};
+}
+test('resume de activación: distingue completada, pendiente, bloqueada y fallida — nunca las oculta tras AUTHORIZED/ROLE_REQUIRED genérico',async()=>{
+  // bloqueada (P0: reactivación de privilegios negada)
+  let f=fixtureResume({resume:()=>({data:{out_status:'blocked_privileged_role',out_gym_id:'g',out_coach_membership_id:'c'},error:null})});
+  assert.equal((await f.auth.verify()).status,'ACTIVATION_BLOCKED_PRIVILEGED_ROLE');
+  // cancelada (la autorización original ya no es válida)
+  f=fixtureResume({resume:()=>({data:{out_status:'cancelled',out_gym_id:'g',out_coach_membership_id:'c'},error:null})});
+  assert.equal((await f.auth.verify()).status,'ACTIVATION_CANCELLED');
+  // completada: nunca interrumpe el flujo normal de verify()
+  f=fixtureResume({resume:()=>({data:{out_status:'completed',out_gym_id:'g',out_coach_membership_id:'c'},error:null})});
+  assert.equal((await f.auth.verify()).status,'AUTHORIZED');
+  // nada pendiente (sin fila): tampoco interrumpe el flujo normal
+  f=fixtureResume({resume:()=>({data:null,error:null})});
+  assert.equal((await f.auth.verify()).status,'AUTHORIZED');
+  // la función todavía no existe (infraestructura propuesta no aplicada,
+  // 404 -> PILOT_NOT_FOUND): se tolera, nunca rompe la verificación.
+  f=fixtureResume({resume:()=>({data:null,error:{code:'PILOT_NOT_FOUND'}})});
+  assert.equal((await f.auth.verify()).status,'AUTHORIZED');
+  // un error REAL (permiso denegado, nunca "no existe todavía"): fallo
+  // explícito, jamás absorbido en silencio.
+  f=fixtureResume({resume:()=>({data:null,error:{code:'42501'}})});
+  assert.equal((await f.auth.verify()).status,'ACTIVATION_FAILED');
+  // fallo de red real (excepción, no una respuesta con error): distinto de
+  // AUTH_FAILED — la sesión sigue siendo válida, solo falló la reanudación.
+  f=fixtureResume({resume:()=>{const e=new Error('PILOT_NETWORK_ERROR');e.code='PILOT_NETWORK_ERROR';throw e;}});
+  assert.equal((await f.auth.verify()).status,'ACTIVATION_NETWORK_ERROR');
+});
 test('magic link never creates users; recovery uses fixed local PKCE callback',async()=>{
   const f=fixture({recovery:true});
   assert.equal((await f.auth.email('synthetic@example.test',false)).status,'EMAIL_SENT');
