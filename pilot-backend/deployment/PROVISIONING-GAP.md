@@ -10,6 +10,104 @@ automatiza — **pero depende de infraestructura SQL que todavía no existe
 en Supabase real.** No se declara el flujo terminado de extremo a extremo:
 ver la sección "Bloqueo real" más abajo.
 
+## 13ª ronda: hallazgos de Codex sobre `setCoachClient()` en el commit `e6554ff` (reemplaza la adivinanza de revisiones de la ronda anterior)
+
+La 12ª ronda (punto 2, más abajo) "resolvió" el bloqueo de RLS sobre
+`coach_clients` ADIVINANDO la revisión con un ciclo local de 0 a 8
+intentos, dejando que la propia RPC `pilot_set_coach_client` rechazara
+(40001) cada intento equivocado. Codex auditó ESE commit (`e6554ff`) y
+señaló correctamente que la adivinanza en sí misma era el problema: un
+ciclo que prueba revisiones no es concurrencia optimista real (no hay
+lectura previa que anclar), no distingue "revisión alta legítima" de
+"relación inválida", y no tiene forma de negarse a reintentar — si la
+revisión real crece más rápido que el límite del ciclo, el alta
+simplemente falla con `REVISION_CONFLICT` sin que exista un bug: es un
+límite arbitrario disfrazado de protección. Tres correcciones, estrictamente
+acotadas a `setCoachClient()`:
+
+**1) Elimina la adivinanza — RPC administrativa de solo lectura nueva.**
+`pilot_get_coach_client_state(p_gym_id, p_coach_membership_id,
+p_client_membership_id)` (`COACH-CLIENT-STATE-MIGRATION.sql`, PROPUESTA,
+no aplicada a Supabase real) devuelve exclusivamente
+`(out_client_exists, out_coach_client_id, out_active, out_revision)` —
+nunca una fila completa de `clients` ni ningún otro dato clínico.
+`SECURITY DEFINER`, pero la autorización real y verificada dentro de la
+propia función es una comprobación explícita contra `gym_memberships`
+(OWNER/ADMIN activo de ESE gimnasio exacto) — nunca se confía en que la
+capa JS ya validó nada. También llama a `pilot_private.lock_admin(p_gym_id)`
+para la serialización por gimnasio que las RPC ya confirmadas dicen usar,
+pero **esa firma sigue sin confirmar en esta sesión** (sin acceso a
+Supabase real) — documentado explícitamente en la cabecera del archivo
+como lo único de esta migración que quien la aplique debe verificar antes
+de desplegar; si la firma real es distinta, la función no compila/falla
+al aplicarse, nunca se comporta mal en silencio. `setCoachClient()` ahora
+llama a esta RPC una vez, lee la revisión EXACTA devuelta, y llama a
+`pilot_set_coach_client` una sola vez con esa revisión — sin ciclos.
+
+**2) Concurrencia: `REVISION_CONFLICT` sin reintento y sin revertir una
+revocación.** Si la revisión cambia entre la lectura y la escritura (otra
+sesión revocó o modificó la relación mientras tanto), `pilot_set_coach_client`
+devuelve 40001 y la capa JS lo propaga como `REVISION_CONFLICT` (409) de
+inmediato — nunca vuelve a leer ni reintenta con otra revisión. Si el
+estado leído ya es una relación INACTIVA (`out_active === false`),
+`setCoachClient()` falla explícitamente con el nuevo código
+`BLOCKED_INACTIVE_RELATIONSHIP` (409) antes de intentar escribir nada —
+reactivar una relación revocada exige una decisión administrativa
+explícita, nunca un efecto lateral de "agregar cliente" (mismo patrón que
+`BLOCKED_PRIVILEGED_ROLE` en `setMembership`, de una ronda anterior).
+Probado con una revocación CONCURRENTE real contra PostgreSQL (lectura,
+luego una transacción SEPARADA desactiva y avanza la revisión, luego el
+intento de escritura con la revisión YA LEÍDA) — confirmado que
+`active=false` nunca se revierte.
+
+**3) `23503` ya no se interpreta siempre como `PENDING_PROFILE`.** La RPC
+nueva distingue explícitamente "el cliente todavía no tiene perfil"
+(`out_client_exists=false`, genuinamente pendiente) de "la relación
+gimnasio/coach/cliente es inválida" (coach o cliente de otro gimnasio, o
+membresía inexistente) — esto último ahora lanza
+`INVALID_COACH_RELATIONSHIP`/`INVALID_CLIENT_RELATIONSHIP` (22023,
+mapeados a HTTP 422), nunca se oculta como un simple "pendiente".
+
+**Pruebas ejecutadas esta ronda:**
+- `npm test`: **139/139 PASS, 0 FAIL** (reescritas las pruebas que
+  asumían la adivinanza; nueva prueba de revocación concurrente entre
+  lectura y escritura sin reintento ni reversión silenciosa).
+- SQL nuevo (`COACH-CLIENT-STATE-MIGRATION-TEST.sql`, contra PostgreSQL
+  16.15 local desechable — recreada desde cero, con sus propios
+  stubs de prueba para `pilot_private.lock_admin` y `pilot_set_coach_client`
+  en `COACH-CLIENT-STATE-MIGRATION-TEST-SCHEMA.sql`): **15/15 PASS, 0
+  FAIL** — revisiones 0/8/100 leídas y escritas exactas (nunca
+  adivinadas), revocación concurrente real entre lectura y escritura
+  (`REVISION_CONFLICT`, sin reversión), OWNER y ADMIN activos
+  autorizados, COACH y el propio CLIENT rechazados sin privilegios
+  administrativos, aislamiento de gimnasio para coach y para cliente
+  (relación inválida explícita, nunca "pendiente"), relación inexistente/
+  inactiva/activa.
+- SQL de regresión (`PENDING-ACTIVATION-MIGRATION-TEST.sql`, sin cambios
+  esta ronda, en una base de datos separada para evitar colisión de UUIDs
+  con la batería nueva): **28/28 PASS, 0 FAIL** — las protecciones P0/P1
+  de rondas anteriores siguen intactas.
+- Concurrencia (`PENDING-ACTIVATION-MIGRATION-CONCURRENCY-TEST.sh`, sin
+  cambios esta ronda, dos conexiones Postgres reales): PASS — sin
+  duplicados, sin bloqueo cruzado.
+
+**Pendiente (no se puede cerrar sin acceso a Supabase real):**
+- Confirmar la firma real de `pilot_private.lock_admin` antes de aplicar
+  `COACH-CLIENT-STATE-MIGRATION.sql` — ver la cabecera de ese archivo.
+- Confirmar los nombres reales de columna en `gym_memberships`/`clients`/
+  `coach_clients` (mismo punto no verificado que el resto de esta
+  sesión).
+- Probar la migración en un proyecto de Supabase DESECHABLE antes que en
+  producción.
+
+**Sin commit ni push esta ronda** (no autorizado). Archivos modificados o
+creados: `pilot-backend/server/pilot-admin-provisioning-service.cjs`,
+`pilot-backend/tests/pilot-admin-provisioning.test.cjs`,
+`pilot-backend/deployment/COACH-CLIENT-STATE-MIGRATION.sql` (nuevo),
+`pilot-backend/deployment/COACH-CLIENT-STATE-MIGRATION-TEST-SCHEMA.sql`
+(nuevo), `pilot-backend/deployment/COACH-CLIENT-STATE-MIGRATION-TEST.sql`
+(nuevo), y este archivo.
+
 ## 12ª ronda: 2 pendientes P2 de Codex sobre el commit `a201ed1` (clasificación de errores, alta bloqueada por RLS)
 
 **1) Clasificación incorrecta de errores (`pilot-auth.js:86,184`).** La

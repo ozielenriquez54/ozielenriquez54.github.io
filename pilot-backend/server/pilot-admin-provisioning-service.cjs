@@ -311,6 +311,16 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
     const code = rpcError?.code;
     if (code === '40001') return new ProvisioningError('REVISION_CONFLICT', 409);
     if (code === '23503') return new ProvisioningError('RELATED_RECORD_NOT_FOUND', 404);
+    // P1 (auditoría sobre el commit e6554ff, "corregir diagnóstico
+    // 23503"): pilot_get_coach_client_state (ver
+    // COACH-CLIENT-STATE-MIGRATION.sql) distingue explícitamente una
+    // relación INVÁLIDA (coach/cliente de otro gimnasio, o inexistente)
+    // de "el perfil todavía no existe" — nunca se oculta como un simple
+    // PENDING_PROFILE. Los mensajes son centinelas propios, fijados por
+    // esta misma sesión en el RAISE EXCEPTION correspondiente — nunca el
+    // texto crudo de un error real de Postgres.
+    if (code === '22023' && rpcError?.message === 'INVALID_COACH_RELATIONSHIP') return new ProvisioningError('INVALID_COACH_RELATIONSHIP', 422);
+    if (code === '22023' && rpcError?.message === 'INVALID_CLIENT_RELATIONSHIP') return new ProvisioningError('INVALID_CLIENT_RELATIONSHIP', 422);
     const status = typeof code === 'string' && Object.hasOwn(PG_STATUS, code) ? PG_STATUS[code] : undefined;
     return status ? new ProvisioningError(code, status) : new ProvisioningError('PROVISIONING_RESULT_UNKNOWN', 503);
   }
@@ -415,40 +425,45 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   //
   // P1 (auditoría sobre el commit a201ed1, "alta directa bloqueada por
   // RLS"): la versión anterior LEÍA `clients` (datos clínicos) con la
-  // sesión del propio OWNER/ADMIN para (a) confirmar que la fila existía y
-  // (b) conocer la revisión actual de `coach_clients` antes de escribir.
-  // RLS sobre `clients` casi con certeza solo permite leer al propio
-  // cliente o a su coach YA asignado — un OWNER/ADMIN que todavía no es
-  // (o nunca fue) ese coach exacto no podía leer esa fila aunque
-  // existiera, así que esta operación ADMINISTRATIVA (asignar un coach)
-  // dependía, sin necesidad real, de un permiso de lectura CLÍNICO que la
-  // mayoría de los OWNER/ADMIN nunca tienen — y terminaba reportando
-  // PENDING_PROFILE para un cliente que ya existía. Corregido para NUNCA
-  // depender de esa lectura, sin ampliar RLS ni dar acceso privilegiado
-  // al CLIENT, y sin cambiar el contrato de la RPC existente:
-  //   - la EXISTENCIA de `clients` ya no se verifica con un SELECT propio
-  //     — se deja que la propia RPC la valide (su llave foránea sobre
-  //     client_id, resuelta internamente) y reporte 23503 si falta, con
-  //     el mismo mapeo ya establecido (RELATED_RECORD_NOT_FOUND).
-  //   - la REVISIÓN de `coach_clients` tampoco se lee: se intenta
-  //     optimistamente con un contador LOCAL (0, 1, 2, ...) en vez de
-  //     releer la fila — mismo principio de concurrencia optimista que ya
-  //     usa pilot_set_membership, solo que la "lectura" de la revisión
-  //     esperada viene de un conteo propio, nunca de una tabla clínica.
-  //     El WHERE interno de la RPC (coincidencia exacta de revisión) es
-  //     lo único que decide si el intento aplica — un número adivinado
-  //     mal simplemente responde 40001 otra vez, nunca aplica a ciegas.
-  async function setCoachClient(client, { gymId, coachMembershipId, clientMembershipId }, check, maxAttempts = 8) {
-    let guessedRevision = 0;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      check();
-      const call = await client.rpc('pilot_set_coach_client', { p_gym_id: gymId, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId, p_active: true, p_expected_revision: guessedRevision });
-      check();
-      if (!call.error) return call;
-      const mapped = mapRpcError(call.error);
-      if (mapped.code !== 'REVISION_CONFLICT' || attempt === maxAttempts) throw mapped;
-      guessedRevision++;
+  // sesión del propio OWNER/ADMIN para conocer la revisión actual de
+  // `coach_clients` antes de escribir — bloqueado por RLS para cualquier
+  // OWNER/ADMIN que no fuera ya el coach asignado. Una corrección
+  // intermedia "adivinaba" la revisión con un contador local (0..7) en
+  // vez de leerla — Codex señaló correctamente (auditoría sobre el commit
+  // e6554ff) que esto es frágil: nunca sabe la revisión REAL, puede
+  // agotar los intentos sin motivo, y no distingue una revocación
+  // concurrente de un simple desajuste.
+  //
+  // Corregido con una RPC de SOLO LECTURA administrativa dedicada,
+  // `pilot_get_coach_client_state` (ver COACH-CLIENT-STATE-MIGRATION.sql):
+  // devuelve exactamente id/activo/revisión de `coach_clients` (nunca
+  // datos clínicos), restringida a OWNER/ADMIN activo de ESE gimnasio.
+  // Con la revisión EXACTA ya conocida:
+  //   - si no existe ninguna relación todavía, se escribe con revisión 0
+  //     (primera vez) — sin adivinar nada.
+  //   - si existe una relación INACTIVA (revocada), esta función NUNCA la
+  //     reactiva sola: "agregar cliente" no es una decisión administrativa
+  //     explícita de reactivar algo que alguien revocó a propósito (mismo
+  //     criterio que BLOCKED_PRIVILEGED_ROLE en setMembership).
+  //   - si la escritura responde REVISION_CONFLICT (40001) — alguien
+  //     cambió la fila entre esta lectura y esta escritura (p. ej. una
+  //     revocación concurrente) — se reporta tal cual, SIN reintentar
+  //     automáticamente con otra revisión: nunca se arriesga a revertir
+  //     en silencio ese cambio concurrente.
+  async function setCoachClient(client, { gymId, coachMembershipId, clientMembershipId }, check) {
+    const state = await client.rpc('pilot_get_coach_client_state', { p_gym_id: gymId, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId });
+    check();
+    if (state.error) throw mapRpcError(state.error);
+    const row = Array.isArray(state.data) ? state.data[0] : state.data;
+    if (!row || !row.out_client_exists) fail('RELATED_RECORD_NOT_FOUND', 404);
+    if (row.out_coach_client_id !== null && row.out_active === false) {
+      fail('BLOCKED_INACTIVE_RELATIONSHIP', 409);
     }
+    const expectedRevision = row.out_coach_client_id !== null ? row.out_revision : 0;
+    const call = await client.rpc('pilot_set_coach_client', { p_gym_id: gymId, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId, p_active: true, p_expected_revision: expectedRevision });
+    check();
+    if (call.error) throw mapRpcError(call.error);
+    return call;
   }
 
   // Confirma que ESE correo (ya resuelto a un id Auth real) tiene una
@@ -663,7 +678,15 @@ function createProvisioningInfrastructure({ env = process.env, fetchImpl = globa
         fetch: async (input, init = {}) => {
           const url = new URL(typeof input === 'string' ? input : input.url ?? input.href);
           const method = (init.method ?? (typeof input === 'object' ? input.method : undefined) ?? 'GET').toUpperCase();
-          const allowed = ['/auth/v1/user', '/rest/v1/gym_memberships', '/rest/v1/coach_clients', '/rest/v1/clients', '/rest/v1/pilot_pending_activations', '/rest/v1/rpc/pilot_set_membership', '/rest/v1/rpc/pilot_set_coach_client'];
+          // P1 (auditoría sobre el commit a201ed1/e6554ff): `clients` y
+          // `coach_clients` ya NO se leen directamente desde esta sesión
+          // (datos clínicos) — toda esa resolución pasa por
+          // pilot_get_coach_client_state (lectura administrativa
+          // restringida, nunca clínica) y pilot_set_coach_client
+          // (escritura ya existente). Se retiran del allowlist en vez de
+          // dejarlas "por si acaso": una ruta que el código nunca usa no
+          // debe seguir permitida.
+          const allowed = ['/auth/v1/user', '/rest/v1/gym_memberships', '/rest/v1/pilot_pending_activations', '/rest/v1/rpc/pilot_set_membership', '/rest/v1/rpc/pilot_set_coach_client', '/rest/v1/rpc/pilot_get_coach_client_state'];
           const rpc = url.pathname.startsWith('/rest/v1/rpc/');
           // pilot_pending_activations es la ÚNICA tabla que este cliente
           // puede ESCRIBIR (upsert de la solicitud pendiente) — el resto

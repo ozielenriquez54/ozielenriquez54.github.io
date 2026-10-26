@@ -133,6 +133,32 @@ function applySetCoachClient(db, { p_gym_id, p_coach_membership_id, p_client_mem
   return { data: { ok: true }, error: null };
 }
 
+// Simula pilot_get_coach_client_state() (ver COACH-CLIENT-STATE-MIGRATION.sql):
+// lectura administrativa restringida a OWNER/ADMIN activo del gimnasio,
+// nunca datos clínicos directos — devuelve exactamente lo que
+// setCoachClient() necesita para escribir con la revisión exacta.
+function applyGetCoachClientState(db, actor, { p_gym_id, p_coach_membership_id, p_client_membership_id }) {
+  const authorizer = db.memberships.find(m => m.gym_id === p_gym_id && m.user_id === actor && m.active && (m.roles.includes('OWNER') || m.roles.includes('ADMIN')));
+  if (!authorizer) return { data: null, error: { code: '42501', message: 'no autorizado (secreto interno)' } };
+  const coachMembership = db.memberships.find(m => m.id === p_coach_membership_id);
+  if (!coachMembership || coachMembership.gym_id !== p_gym_id) {
+    return { data: null, error: { code: '22023', message: 'INVALID_COACH_RELATIONSHIP' } };
+  }
+  const clientMembership = db.memberships.find(m => m.id === p_client_membership_id);
+  if (!clientMembership || clientMembership.gym_id !== p_gym_id) {
+    return { data: null, error: { code: '22023', message: 'INVALID_CLIENT_RELATIONSHIP' } };
+  }
+  const clientRecord = db.clients.find(c => c.gym_id === p_gym_id && c.membership_id === p_client_membership_id);
+  if (!clientRecord) {
+    return { data: { out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }, error: null };
+  }
+  const row = db.coachClients.find(c => c.gym_id === p_gym_id && c.coach_membership_id === p_coach_membership_id && c.client_id === clientRecord.id);
+  if (!row) {
+    return { data: { out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }, error: null };
+  }
+  return { data: { out_client_exists: true, out_coach_client_id: row.id, out_active: row.active, out_revision: row.revision }, error: null };
+}
+
 function fakeClient({ actor = OWNER, db, rpcOverride = null, rpcCalls = [] }) {
   function tableOps(rows) {
     let filters = [];
@@ -172,6 +198,7 @@ function fakeClient({ actor = OWNER, db, rpcOverride = null, rpcCalls = [] }) {
       if (forced) return Promise.resolve(forced);
       if (name === 'pilot_set_membership') return Promise.resolve(applySetMembership(db, args));
       if (name === 'pilot_set_coach_client') return Promise.resolve(applySetCoachClient(db, args));
+      if (name === 'pilot_get_coach_client_state') return Promise.resolve(applyGetCoachClientState(db, actor, args));
       return Promise.resolve({ data: null, error: { code: '42883', message: 'función desconocida' } });
     },
   };
@@ -207,7 +234,7 @@ test('provisiona un cliente que ya tiene cuenta Auth pero aún no es miembro del
   assert.equal(result.status, 'PROVISIONED');
   assert.equal(result.email, 'ana@example.com'); // normalizado
   assert.equal(result.createdUser, false);
-  assert.equal(rpcCalls.length, 2);
+  assert.equal(rpcCalls.length, 3);
   assert.equal(rpcCalls[0][0], 'pilot_set_membership');
   assert.deepEqual(rpcCalls[0][1], { p_gym_id: GYM, p_user_id: ANA_ID, p_roles: ['CLIENT'], p_active: true, p_expected_revision: 0 });
   const coachMembershipId = db.memberships.find(m => m.user_id === COACH).id;
@@ -215,10 +242,15 @@ test('provisiona un cliente que ya tiene cuenta Auth pero aún no es miembro del
   const anaClientRecord = db.clients.find(c => c.membership_id === anaMembershipId);
   assert.notEqual(anaClientRecord.id, ANA_ID); // el ID real de `clients` nunca es el user_id
   assert.notEqual(anaClientRecord.id, anaMembershipId); // ni el id de `gym_memberships`
-  assert.equal(rpcCalls[1][0], 'pilot_set_coach_client');
+  // P1 (auditoría sobre el commit e6554ff, "eliminar adivinanza de
+  // revisiones"): antes de escribir, se lee el estado exacto vía la RPC
+  // administrativa de solo lectura — nunca se adivina la revisión.
+  assert.equal(rpcCalls[1][0], 'pilot_get_coach_client_state');
+  assert.deepEqual(rpcCalls[1][1], { p_gym_id: GYM, p_coach_membership_id: coachMembershipId, p_client_membership_id: anaMembershipId });
+  assert.equal(rpcCalls[2][0], 'pilot_set_coach_client');
   // p_client_membership_id debe ser el id en gym_memberships del cliente,
   // NUNCA el id de su fila en `clients` — esa es la relación corregida.
-  assert.deepEqual(rpcCalls[1][1], { p_gym_id: GYM, p_coach_membership_id: coachMembershipId, p_client_membership_id: anaMembershipId, p_active: true, p_expected_revision: 0 });
+  assert.deepEqual(rpcCalls[2][1], { p_gym_id: GYM, p_coach_membership_id: coachMembershipId, p_client_membership_id: anaMembershipId, p_active: true, p_expected_revision: 0 });
   // Pero la fila de coach_clients SÍ debe quedar guardada con client_id
   // apuntando a `clients.id`, no a gym_memberships.id — así se consultará
   // después para detectar asignaciones existentes.
@@ -392,7 +424,7 @@ test('acepta coach destino que es OWNER pero TAMBIÉN tiene COACH en su arreglo 
   const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: NON_COACH, roles: ['OWNER', 'COACH'], active: true, revision: 1 }]);
   const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
   await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: NON_COACH, gymId: GYM } });
-  assert.deepEqual(rpcCalls.map(c => c[0]), ['pilot_set_membership', 'pilot_set_coach_client']);
+  assert.deepEqual(rpcCalls.map(c => c[0]), ['pilot_set_membership', 'pilot_get_coach_client_state', 'pilot_set_coach_client']);
 });
 
 // ---------------------------------------------------------------------------
@@ -434,12 +466,13 @@ test('un 23503 inesperado en pilot_set_coach_client también se trata como pendi
   assert.ok(!JSON.stringify(result).includes('secreto'));
 });
 
-test('setCoachClient reporta PENDING_PROFILE si `clients` todavía no tiene la fila del cliente, SIN leer `clients` (la RPC valida la relación por su cuenta)', async () => {
-  // P1 (auditoría sobre el commit a201ed1, "alta directa bloqueada por
-  // RLS"): la versión anterior pre-leía `clients` con la sesión del
-  // propio OWNER/ADMIN antes de llamar la RPC — ahora NUNCA se lee esa
-  // tabla; se llama pilot_set_coach_client directamente y se confía en su
-  // propia validación (23503 si `clients` no tiene la fila).
+test('setCoachClient reporta PENDING_PROFILE si `clients` todavía no tiene la fila del cliente, SIN leer `clients` con la sesión propia (la RPC administrativa de solo lectura lo detecta)', async () => {
+  // P1 (auditoría sobre los commits a201ed1 y e6554ff): ni la existencia
+  // de `clients` ni la revisión de `coach_clients` se leen con la sesión
+  // del propio OWNER/ADMIN — pilot_get_coach_client_state (administrativa,
+  // SECURITY DEFINER) es quien detecta "el cliente todavía no existe" y
+  // lo distingue explícitamente de una relación inválida; nunca se llega
+  // a llamar pilot_set_coach_client cuando esto ocurre.
   const db = freshDb();
   const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
   // Fuerza que, tras la membresía, NUNCA aparezca la fila en `clients`
@@ -448,9 +481,10 @@ test('setCoachClient reporta PENDING_PROFILE si `clients` todavía no tiene la f
   db.clients.push = () => {}; // absorbe cualquier intento de "crearla" en el mock
   const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
   assert.equal(result.status, 'PENDING_PROFILE');
-  // Ahora SÍ se llama la RPC (una vez) — es ELLA quien detecta la relación
-  // inválida (23503), nunca una lectura propia de `clients`.
-  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 1);
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_get_coach_client_state').length, 1);
+  // pilot_set_coach_client NUNCA se llega a invocar: el estado ya dijo
+  // "el cliente no existe todavía", sin necesidad de intentar escribir.
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 0);
   db.clients.push = realPush;
 });
 
@@ -486,23 +520,42 @@ test('addClient: un OWNER NO asignado previamente reasigna a un cliente YA EXIST
   assert.equal(db.coachClients[0].revision, 3); // la RPC real sí incrementa, aunque esta capa nunca la haya leído
 });
 
-test('addClient: si la revisión real de coach_clients excede los intentos de adivinanza, reporta REVISION_CONFLICT con honestidad (nunca aplica a ciegas ni cuelga)', async () => {
-  // Límite explícito y verificado del enfoque "adivinar en vez de leer":
-  // funciona para revisiones bajas (el caso real típico: pocas
-  // reasignaciones), pero tiene un techo. Pasado ese techo, debe fallar
-  // de forma clara y acotada — nunca reintentar indefinidamente ni
-  // aplicar con una revisión incorrecta.
+// ---------------------------------------------------------------------------
+// P1 (auditoría sobre el commit e6554ff, "proteger contra concurrencia"):
+// si la relación coach-cliente cambia ENTRE pilot_get_coach_client_state
+// (lectura) y pilot_set_coach_client (escritura) — p. ej. una revocación
+// concurrente — la escritura debe fallar con REVISION_CONFLICT, SIN
+// reintentar automáticamente ni revertir esa revocación en silencio.
+// ---------------------------------------------------------------------------
+test('addClient: revocación CONCURRENTE entre la lectura del estado y la escritura -> REVISION_CONFLICT, SIN reintento automático, SIN revertir la revocación', async () => {
   const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: ANA_ID, roles: ['CLIENT'], active: true, revision: 1 }]);
   db.clients.push({ id: uuid(8000), gym_id: GYM, membership_id: uuid(3) });
-  db.coachClients.push({ id: uuid(5000), gym_id: GYM, coach_membership_id: uuid(2), client_id: uuid(8000), active: true, revision: 50 });
-  const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
+  db.coachClients.push({ id: uuid(5000), gym_id: GYM, coach_membership_id: uuid(2), client_id: uuid(8000), active: true, revision: 3 });
+  const rpcOverride = (name) => {
+    if (name === 'pilot_get_coach_client_state') {
+      const row = db.coachClients[0];
+      // La lectura devuelve el estado REAL en ese instante (revision=3,
+      // activa) — pero, ENTRE esta lectura y la escritura que sigue, OTRA
+      // transacción revoca la relación. La captura ANTES de mutar es,
+      // deliberadamente, lo que esta función ya devolvió.
+      const snapshot = { out_client_exists: true, out_coach_client_id: row.id, out_active: row.active, out_revision: row.revision };
+      row.active = false;
+      row.revision += 1;
+      return { data: snapshot, error: null };
+    }
+    return null; // pilot_set_coach_client sigue el dispatcher normal (applySetCoachClient)
+  };
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna, rpcOverride });
   await assert.rejects(
     api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } }),
     e => e.code === 'REVISION_CONFLICT' && e.status === 409,
   );
-  const coachClientCalls = rpcCalls.filter(c => c[0] === 'pilot_set_coach_client');
-  assert.equal(coachClientCalls.length, 8); // acotado, nunca indefinido
-  assert.equal(db.coachClients[0].revision, 50); // nunca se tocó con una revisión adivinada mal
+  // Nunca reintenta automáticamente con otra revisión: exactamente UN
+  // intento de escritura, nunca más.
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 1);
+  // La revocación concurrente NUNCA se revirtió en silencio.
+  assert.equal(db.coachClients[0].active, false);
+  assert.equal(db.coachClients[0].revision, 4);
 });
 
 // ---------------------------------------------------------------------------
@@ -1106,9 +1159,22 @@ test('createProvisioningInfrastructure: resuelve un correo existente paginando l
                 clients.push({ id: uuid(9999), gym_id: args.p_gym_id, membership_id: row.id });
               }
             }
+            // pilot_get_coach_client_state (ver COACH-CLIENT-STATE-MIGRATION.sql):
+            // lectura administrativa que setCoachClient() consulta ANTES
+            // de escribir — nunca lee `clients`/`coach_clients` con la
+            // sesión propia.
+            if (name === 'pilot_get_coach_client_state') {
+              const clientRecord = clients.find(c => c.gym_id === args.p_gym_id && c.membership_id === args.p_client_membership_id);
+              if (!clientRecord) return Promise.resolve({ data: { out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }, error: null });
+              const row = coachClients.find(c => c.gym_id === args.p_gym_id && c.coach_membership_id === args.p_coach_membership_id && c.client_id === clientRecord.id);
+              if (!row) return Promise.resolve({ data: { out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }, error: null });
+              return Promise.resolve({ data: { out_client_exists: true, out_coach_client_id: row.id, out_active: row.active, out_revision: row.revision }, error: null });
+            }
             if (name === 'pilot_set_coach_client') {
-              const existing = coachClients.find(c => c.gym_id === args.p_gym_id && c.coach_membership_id === args.p_coach_membership_id && c.client_id === args.p_client_membership_id);
-              if (!existing) coachClients.push({ id: uuid(9998), gym_id: args.p_gym_id, coach_membership_id: args.p_coach_membership_id, client_id: clients.find(c => c.membership_id === args.p_client_membership_id)?.id, active: args.p_active, revision: 1 });
+              const clientRecord = clients.find(c => c.gym_id === args.p_gym_id && c.membership_id === args.p_client_membership_id);
+              const existing = coachClients.find(c => c.gym_id === args.p_gym_id && c.coach_membership_id === args.p_coach_membership_id && c.client_id === clientRecord?.id);
+              if (!existing) coachClients.push({ id: uuid(9998), gym_id: args.p_gym_id, coach_membership_id: args.p_coach_membership_id, client_id: clientRecord?.id, active: args.p_active, revision: 1 });
+              else { existing.active = args.p_active; existing.revision += 1; }
             }
             return Promise.resolve({ data: { ok: true }, error: null });
           },
