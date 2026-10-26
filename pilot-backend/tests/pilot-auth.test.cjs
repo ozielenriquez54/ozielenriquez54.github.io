@@ -3,7 +3,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const {createClient,controller,STORAGE_KEY}=require('../../nutrika/pilot-auth.js');
+const {createClient,controller,storageKeyFor}=require('../../nutrika/pilot-auth.js');
 const config={projectRef:'otswebncqidqthqplztj',supabaseUrl:'https://otswebncqidqthqplztj.supabase.co',publicKey:'sb_publishable_synthetic'};
 function fixture({roles=['COACH'],active=true,error=false,recovery=false}={}){
   const calls=[];let signedIn=true;
@@ -24,7 +24,7 @@ test('only pilot config and publishable key accepted; PKCE storage isolated from
   let options,requests=0;
   const sdk={createClient:(url,key,o)=>{assert.equal(url,config.supabaseUrl);options=o;return {};}};
   createClient(config,sdk,async()=>{requests++;return new Response('{}');});
-  assert.equal(options.auth.flowType,'pkce');assert.equal(options.auth.storageKey,STORAGE_KEY);assert.equal(options.auth.detectSessionInUrl,false);
+  assert.equal(options.auth.flowType,'pkce');assert.equal(options.auth.storageKey,storageKeyFor(config.projectRef));assert.equal(options.auth.detectSessionInUrl,false);
   for(const change of [{projectRef:'skwjntfknzakhcjlxlnh'},{supabaseUrl:'https://skwjntfknzakhcjlxlnh.supabase.co'},{publicKey:'sb_secret_synthetic'},{publicKey:''}])assert.throws(()=>createClient({...config,...change},sdk,()=>{}),/PILOT_AUTH_FAILED/);
   for(const target of ['https://skwjntfknzakhcjlxlnh.supabase.co/auth/v1/token',config.supabaseUrl+'/rest/v1/rpc/pilot_create_gym',config.supabaseUrl+'/rest/v1/rpc/pilot_set_membership'])await assert.rejects(options.global.fetch(target),/PILOT_AUTH_FAILED/);
   assert.equal(requests,0);
@@ -85,8 +85,19 @@ test('resume de activación: distingue completada, pendiente, bloqueada y fallid
   // explícito, jamás absorbido en silencio.
   f=fixtureResume({resume:()=>({data:null,error:{code:'42501'}})});
   assert.equal((await f.auth.verify()).status,'ACTIVATION_FAILED');
-  // fallo de red real (excepción, no una respuesta con error): distinto de
-  // AUTH_FAILED — la sesión sigue siendo válida, solo falló la reanudación.
+  // P2 (auditoría sobre el commit 60afc33, "error de red"): el COMPORTAMIENTO
+  // REAL del SDK de Supabase instalado — confirmado leyendo su código
+  // fuente (@supabase/postgrest-js, PostgrestBuilder.ts) — es resolver
+  // `{error}` con `code` VACÍO ante un fallo de fetch real, nunca lanzar
+  // una excepción (eso solo pasaría con `.throwOnError()`, que este
+  // archivo no usa). La prueba ANTERIOR de esta sesión simulaba una
+  // excepción lanzada — un caso que la SDK real nunca produce aquí; esta
+  // es la forma correcta de reproducirlo.
+  f=fixtureResume({resume:()=>({data:null,error:{code:'',message:'TypeError: fetch failed'}})});
+  assert.equal((await f.auth.verify()).status,'ACTIVATION_NETWORK_ERROR');
+  // Defensa en profundidad (no el camino real del SDK actual, pero se
+  // conserva por si una versión futura SÍ llegara a lanzar): una excepción
+  // con code='PILOT_NETWORK_ERROR' también se distingue de AUTH_FAILED.
   f=fixtureResume({resume:()=>{const e=new Error('PILOT_NETWORK_ERROR');e.code='PILOT_NETWORK_ERROR';throw e;}});
   assert.equal((await f.auth.verify()).status,'ACTIVATION_NETWORK_ERROR');
 });

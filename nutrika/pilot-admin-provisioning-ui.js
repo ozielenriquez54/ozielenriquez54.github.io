@@ -126,6 +126,19 @@
 
       function setBusy(value) { busy = value; [nameInput, emailInput, coachInput, submit, resend, gymSelect].forEach(el => { if (el) el.disabled = value; }); }
 
+      // P2 (auditoría sobre el commit 60afc33, "selector multigimnasio"):
+      // form.reset() SOLO restaura los valores visibles de los controles —
+      // nunca dispara 'change', así que el listener de gymSelect de arriba
+      // NO se ejecuta y la variable `gymId` (JS, fuera del DOM) seguía
+      // apuntando al gimnasio de la operación anterior aunque el <select>
+      // ya se viera vacío otra vez. Eso permitía reenviar/dar de alta con
+      // un gymId DISTINTO del que la propia interfaz mostraba seleccionado.
+      // Se sincroniza aquí explícitamente al mismo estado que al montar.
+      function resetGymSelection() {
+        if (gymSelect) gymSelect.value = '';
+        gymId = eligible.length === 1 ? eligible[0].gymId : null;
+      }
+
       form.addEventListener('submit', async event => {
         event.preventDefault();
         if (busy) return;
@@ -145,6 +158,7 @@
               : 'La activación automática no está disponible en este entorno todavía: repite "Agregar cliente" manualmente después de que esa persona inicie sesión (no se reenviará la invitación).')
           : (result.data.invite ? 'Cliente agregado. Invitación enviada a ' : 'Cliente agregado y asignado a ') + result.data.email + '.';
         form.reset();
+        resetGymSelection();
       });
 
       resend.addEventListener('click', async () => {

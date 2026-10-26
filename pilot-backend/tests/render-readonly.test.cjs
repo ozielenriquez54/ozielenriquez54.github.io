@@ -92,6 +92,28 @@ test('invitation UI cleans URL before requests, uses CLIENT and enables password
   els['password-form'].submit({preventDefault(){}});await new Promise(r=>setImmediate(r));assert.equal(els['pilot-access'].hidden,true);
 });
 
+test('proyecto Supabase AISLADO: la CSP y /pilot-config.json reflejan el proyecto configurado (nunca el compartido), y pilot-auth.js real lo acepta (P1, auditoría sobre el commit 60afc33)',async()=>{
+  const {createPilotServer}=require('../server/pilot-http.cjs');
+  const isolatedRef='abcdefghij0123456789',isolatedUrl='https://'+isolatedRef+'.supabase.co';
+  const app=createPilotServer({env:{PORT:'10000',PILOT_SUPABASE_PROJECT_REF:isolatedRef,PILOT_SUPABASE_URL:isolatedUrl,PILOT_SUPABASE_PUBLIC_KEY:'sb_publishable_isolated_test'}});
+  await new Promise(r=>app.server.listen(0,'127.0.0.1',r));
+  try{
+    const request=path=>new Promise((resolve,reject)=>{
+      const req=http.request({host:'127.0.0.1',port:app.server.address().port,path,method:'GET'},res=>{let body='';res.on('data',x=>body+=x);res.on('end',()=>resolve({headers:res.headers,body}));});req.on('error',reject);req.end();
+    });
+    const config=JSON.parse((await request('/pilot-config.json')).body);
+    assert.equal(config.projectRef,isolatedRef);assert.equal(config.supabaseUrl,isolatedUrl);
+    const csp=(await request('/')).headers['content-security-policy'];
+    assert.ok(csp.includes("connect-src 'self' "+isolatedUrl),csp);
+    assert.ok(!csp.includes('otswebncqidqthqplztj'),csp); // nunca el proyecto compartido, ni de refuerzo
+    // pilot-auth.js REAL (no un doble) acepta este proyecto configurado —
+    // antes exigía, sin excepción, el project ref compartido hardcodeado.
+    let capturedUrl;
+    const sdk={createClient:(url)=>{capturedUrl=url;return {auth:{}};}};
+    assert.doesNotThrow(()=>createClient(config,sdk,async()=>new Response('{}')));
+    assert.equal(capturedUrl,isolatedUrl);
+  }finally{await new Promise(r=>app.server.close(r));}
+});
 test('UI real: los cuatro estados nuevos de reanudación de activación muestran un mensaje propio, nunca el genérico de AUTH_FAILED (P2, auditoría sobre el commit 26fd7fc)',async()=>{
   const vm=require('node:vm'),fs=require('node:fs');
   for(const status of ['ACTIVATION_BLOCKED_PRIVILEGED_ROLE','ACTIVATION_CANCELLED','ACTIVATION_FAILED','ACTIVATION_NETWORK_ERROR']){

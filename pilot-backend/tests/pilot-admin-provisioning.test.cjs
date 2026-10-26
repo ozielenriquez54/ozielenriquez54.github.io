@@ -910,6 +910,44 @@ test('resendInvite RECHAZA un correo que nunca tuvo cuenta Auth (findUserByEmail
   assert.deepEqual(admin.calls, []);
 });
 
+// ---------------------------------------------------------------------------
+// P1 (auditoría sobre el commit 60afc33, "reenvío de invitaciones
+// inválidas"): status='pending' no basta — resendInvite debe revalidar en
+// vivo que el autorizador original SIGUE siendo OWNER/ADMIN activo y que el
+// coach destino SIGUE siendo COACH literal activo, EN ESE MISMO gimnasio.
+// ---------------------------------------------------------------------------
+test('resendInvite RECHAZA cuando el autorizador original (created_by) ya NO es OWNER/ADMIN activo en ese gimnasio', async () => {
+  const db = freshDb();
+  db.pendingActivations.push({ id: uuid(7000), gym_id: GYM, user_id: ANA_ID, coach_membership_id: uuid(2), created_by: ADMIN_ACTOR, status: 'pending', revision: 0 });
+  // created_by (ADMIN_ACTOR) nunca tuvo membresía en GYM en freshDb(): es
+  // exactamente "ya no autorizado", sin necesidad de revocarlo aparte.
+  const admin = fakeAdminInvite();
+  const { api } = service({ db, createAdminInvite: admin.invite, findUserByEmail: findAna });
+  await assert.rejects(api.resendInvite({ token: 'tok', command: { email: 'ana@example.com', gymId: GYM } }), e => e.code === 'NO_PENDING_ACTIVATION' && e.status === 422);
+  assert.deepEqual(admin.calls, []);
+});
+
+test('resendInvite RECHAZA cuando el coach destino de la solicitud ya está INACTIVO en ese gimnasio', async () => {
+  const db = freshDb();
+  db.pendingActivations.push({ id: uuid(7000), gym_id: GYM, user_id: ANA_ID, coach_membership_id: uuid(2), created_by: OWNER, status: 'pending', revision: 0 });
+  db.memberships.find(m => m.user_id === COACH).active = false; // el coach fue desactivado después de autorizar
+  const admin = fakeAdminInvite();
+  const { api } = service({ db, createAdminInvite: admin.invite, findUserByEmail: findAna });
+  await assert.rejects(api.resendInvite({ token: 'tok', command: { email: 'ana@example.com', gymId: GYM } }), e => e.code === 'NO_PENDING_ACTIVATION' && e.status === 422);
+  assert.deepEqual(admin.calls, []);
+});
+
+test('resendInvite RECHAZA cuando el coach destino de la solicitud pertenece a OTRO gimnasio', async () => {
+  const db = freshDb([{ id: uuid(6), gym_id: OTHER_GYM, user_id: OTHER_COACH, roles: ['COACH'], active: true, revision: 1 }]);
+  // coach_membership_id apunta a una membresía real, pero de OTHER_GYM —
+  // nunca válida como destino para una solicitud de GYM.
+  db.pendingActivations.push({ id: uuid(7000), gym_id: GYM, user_id: ANA_ID, coach_membership_id: uuid(6), created_by: OWNER, status: 'pending', revision: 0 });
+  const admin = fakeAdminInvite();
+  const { api } = service({ db, createAdminInvite: admin.invite, findUserByEmail: findAna });
+  await assert.rejects(api.resendInvite({ token: 'tok', command: { email: 'ana@example.com', gymId: GYM } }), e => e.code === 'NO_PENDING_ACTIVATION' && e.status === 422);
+  assert.deepEqual(admin.calls, []);
+});
+
 test('resendInvite sin capacidad admin configurada reporta ADMIN_INVITE_UNAVAILABLE', async () => {
   const db = freshDb();
   const { api } = service({ db });
@@ -1346,6 +1384,66 @@ test('Integración UI real: OWNER con membresías activas en DOS gimnasios debe 
     // nunca OTHER_GYM (el que habría salido primero de un memberships[0]).
     const anaMembership = db.memberships.find(m => m.user_id === ANA_ID);
     assert.equal(anaMembership.gym_id, GYM);
+  } finally { await new Promise(r => app.server.close(r)); }
+});
+
+test('Integración UI real: tras agregar un cliente y resetear el formulario, reenviar SIN volver a elegir gimnasio se rechaza (nunca reusa el gymId anterior en silencio)', async () => {
+  // P2 (auditoría sobre el commit 60afc33, "selector multigimnasio"):
+  // form.reset() no dispara 'change' en el <select> — sin el fix, la
+  // variable gymId seguía apuntando al gimnasio de la operación anterior
+  // aunque el selector ya se viera vacío otra vez.
+  const otherCoachMembership = { id: uuid(301), gym_id: OTHER_GYM, user_id: OTHER_COACH, roles: ['COACH'], active: true, revision: 1 };
+  const db = freshDb([
+    { id: uuid(300), gym_id: OTHER_GYM, user_id: OWNER, roles: ['OWNER'], active: true, revision: 1 },
+    otherCoachMembership,
+  ]);
+  // Solicitud pendiente y vigente para Oziel, YA en OTHER_GYM, por si el
+  // reenvío explícito a OTHER_GYM (más abajo) llega a intentarse.
+  db.pendingActivations.push({ id: uuid(7000), gym_id: OTHER_GYM, user_id: OZIEL_ID, coach_membership_id: otherCoachMembership.id, created_by: OWNER, status: 'pending', revision: 0 });
+  const admin = fakeAdminInvite();
+  const api = createProvisioningService({ createSession: async () => fakeClient({ actor: OWNER, db }), findUserByEmail: email => findAna(email) ?? findOziel(email), createAdminInvite: admin.invite });
+  const app = createPilotServer({ env: { PORT: '10000', PILOT_SUPABASE_PUBLIC_KEY: 'sb_publishable_test' }, readOnly: true, adminProvisioningService: api });
+  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
+  try {
+    const base = 'http://127.0.0.1:' + app.server.address().port;
+    const browserClient = fakeClient({ actor: OWNER, db });
+    browserClient.auth.getSession = async () => ({ data: { session: { access_token: 'owner-session-token', user: { id: OWNER } } } });
+    const { container, document: doc } = fakeDom();
+    const context = { module: { exports: {} }, fetch: (path, init) => globalThis.fetch(base + path, { ...init, headers: { ...init.headers, origin: base } }) };
+    vm.createContext(context);
+    vm.runInContext(fs.readFileSync(require.resolve('../../nutrika/pilot-admin-provisioning-ui.js'), 'utf8'), context);
+    const ui = context.module.exports.mount(container, { client: browserClient, document: doc });
+    await ui.refresh();
+    const form = container._children.find(c => c.tagName === 'form');
+    const resend = container._children.find(c => c.tagName === 'button' && c.textContent === 'Reenviar invitación');
+    const [nameField, emailField, coachField, gymField] = form._children;
+    const select = gymField._children[0];
+
+    // 1) Selecciona GYM explícitamente y da de alta a Ana ahí.
+    select.value = GYM; select._listeners.change();
+    nameField._children[0].value = 'Ana Multi'; emailField._children[0].value = 'ana@example.com'; coachField._children[0].value = COACH;
+    await form._listeners.submit({ preventDefault() {} });
+    let status = container._children.find(c => c.tagName === 'p');
+    assert.ok(status.textContent.includes('Cliente agregado'), status.textContent);
+    assert.equal(select.value, '', 'el <select> visible vuelve al placeholder tras reset');
+
+    // 2) SIN volver a elegir gimnasio, intenta reenviar para otro correo:
+    // debe rechazarse — nunca reutilizar GYM (el de la operación anterior)
+    // en silencio, que es justo lo que el <select> ya no muestra elegido.
+    emailField._children[0].value = OZIEL_EMAIL;
+    await resend._listeners.click();
+    status = container._children.find(c => c.tagName === 'p');
+    assert.ok(status.textContent.toLowerCase().includes('selecciona'), 'debía exigir elegir gimnasio de nuevo: ' + status.textContent);
+    assert.deepEqual(admin.calls, []); // nunca llegó a reenviar nada
+
+    // 3) Elige OTHER_GYM explícitamente (donde SÍ hay una solicitud
+    // pendiente y vigente para Oziel) y reenvía: ahora sí debe funcionar,
+    // y debe usar OTHER_GYM — nunca GYM.
+    select.value = OTHER_GYM; select._listeners.change();
+    await resend._listeners.click();
+    status = container._children.find(c => c.tagName === 'p');
+    assert.ok(status.textContent.includes('Invitación reenviada'), status.textContent);
+    assert.deepEqual(admin.calls, [[OZIEL_EMAIL, {}]]);
   } finally { await new Promise(r => app.server.close(r)); }
 });
 

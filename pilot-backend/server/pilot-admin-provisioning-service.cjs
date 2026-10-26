@@ -448,23 +448,50 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   }
 
   // Confirma que ESE correo (ya resuelto a un id Auth real) tiene una
-  // solicitud de activación PENDIENTE y vigente en ESE gimnasio exacto —
+  // solicitud de activación PENDIENTE y VIGENTE en ESE gimnasio exacto —
   // P1 (auditoría sobre el commit 26fd7fc, "invitaciones sin autorización
-  // suficiente"): antes, resendInvite solo exigía que el LLAMADOR fuera
-  // OWNER/ADMIN de `gymId`, sin comprobar que el correo a reenviar tuviera
-  // ninguna relación con ese gimnasio — cualquier OWNER/ADMIN de CUALQUIER
-  // gimnasio podía usar este endpoint para invitar/reenviar a un correo
-  // arbitrario vía la Admin API de Supabase. `pilot_pending_activations` es
-  // la única fuente verificable de "esta persona fue autorizada, en este
-  // gimnasio, por un OWNER/ADMIN, y sigue pendiente" — si esa tabla no
-  // existe todavía (migración propuesta no aplicada) o no hay fila, se
-  // falla cerrado: nunca se asume una autorización que no se puede
-  // comprobar.
+  // suficiente"; endurecido tras la auditoría sobre el commit 60afc33,
+  // "reenvío de invitaciones inválidas"): antes, resendInvite solo exigía
+  // que el LLAMADOR fuera OWNER/ADMIN de `gymId`, sin comprobar que el
+  // correo a reenviar tuviera ninguna relación con ese gimnasio — cualquier
+  // OWNER/ADMIN de CUALQUIER gimnasio podía usar este endpoint para
+  // invitar/reenviar a un correo arbitrario vía la Admin API de Supabase.
+  // La primera corrección exigió `status='pending'` en ESE gym_id/user_id,
+  // pero no revalidaba si esa autorización SEGUÍA siendo válida — una
+  // solicitud puede quedar marcada `pending` en la tabla mientras su
+  // autorizador original fue revocado o su coach destino ya no es COACH
+  // activo ahí (exactamente las mismas comprobaciones que
+  // pilot_resume_pending_activation() hace al completarla; resendInvite
+  // debe exigir lo mismo ANTES de reenviar, no solo al completar). Si
+  // `pilot_pending_activations` no existe todavía (migración propuesta no
+  // aplicada) o cualquiera de estas comprobaciones falla, se falla cerrado:
+  // nunca se asume una autorización que no se puede comprobar en vivo.
   async function authorizePendingActivation(client, gymId, userId, check) {
-    const pending = await client.from('pilot_pending_activations').select('id,status').eq('gym_id', gymId).eq('user_id', userId).eq('status', 'pending');
+    const pending = await client.from('pilot_pending_activations').select('id,status,created_by,coach_membership_id').eq('gym_id', gymId).eq('user_id', userId).eq('status', 'pending');
     check();
     if (pending.error) fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
-    if (!pending.data?.length) fail('NO_PENDING_ACTIVATION', 422);
+    const row = pending.data?.[0];
+    if (!row) fail('NO_PENDING_ACTIVATION', 422);
+
+    // El administrador que autorizó originalmente debe seguir siendo
+    // OWNER/ADMIN activo EN ESE gimnasio — si fue revocado después, la
+    // solicitud sigue diciendo "pending" pero ya no tiene una autorización
+    // vigente detrás.
+    const authorizer = await client.from('gym_memberships').select('user_id,gym_id,roles,active').eq('user_id', row.created_by).eq('gym_id', gymId).eq('active', true);
+    check();
+    if (authorizer.error) fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
+    const authorizerRoles = authorizer.data?.[0]?.roles ?? [];
+    if (!PROVISIONER_ROLES.some(r => authorizerRoles.includes(r))) fail('NO_PENDING_ACTIVATION', 422);
+
+    // El coach destino debe seguir siendo COACH literal activo EN ESE
+    // MISMO gimnasio (mismo criterio que authorizeTargetCoach/
+    // COACH_CAPABLE_ROLES) — nunca OWNER/ADMIN como sustituto, y nunca un
+    // coach de otro gimnasio.
+    const coach = await client.from('gym_memberships').select('id,gym_id,roles,active').eq('id', row.coach_membership_id).eq('gym_id', gymId).eq('active', true);
+    check();
+    if (coach.error) fail('PROVISIONING_SERVICE_UNAVAILABLE', 503);
+    const coachRoles = coach.data?.[0]?.roles ?? [];
+    if (!COACH_CAPABLE_ROLES.some(r => coachRoles.includes(r))) fail('NO_PENDING_ACTIVATION', 422);
   }
 
   // Guarda (upsert por gym_id+user_id, nunca duplica) la solicitud de

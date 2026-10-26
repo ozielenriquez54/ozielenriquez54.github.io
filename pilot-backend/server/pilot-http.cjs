@@ -9,7 +9,16 @@ const {handleManualMacros}=require('./manual-macros-http.cjs');
 const {handleDiary}=require('./diary-http.cjs');
 const {handleAdminProvisioning}=require('./pilot-admin-provisioning-http.cjs');
 const PUBLIC_ROOT=path.resolve(__dirname,'../../nutrika');
-const CSP="default-src 'none'; script-src 'self'; connect-src 'self' https://otswebncqidqthqplztj.supabase.co; style-src 'unsafe-inline'; img-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'none'";
+// Corregido (auditoría sobre el commit 60afc33, "configuración de Supabase
+// aislado"): esta CSP estaba FIJA al proyecto Supabase compartido —
+// aunque pilot-config.cjs y pilot-auth.js ya aceptaran un proyecto
+// aislado distinto, el navegador habría bloqueado toda conexión a ese
+// otro origen por violar connect-src. Ahora se construye por request a
+// partir de `config.supabaseUrl` (ya validado estrictamente por
+// loadPilotConfig), nunca de un valor hardcodeado.
+function buildCsp(supabaseUrl){
+  return `default-src 'none'; script-src 'self'; connect-src 'self' ${supabaseUrl}; style-src 'unsafe-inline'; img-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'none'`;
+}
 
 function page(kind,config){
   // Reuse only trusted presentation CSS. Never serve the legacy document,
@@ -67,8 +76,10 @@ function createPilotServer({env=process.env,manualMacrosService,diaryService=nul
   routes.set('/auth/callback.html',routes.get('/index.html'));
   for(const name of ['pilot-auth.js','pilot-auth-ui.js',...(localAdmin?['pilot-admin.js','pilot-admin-ui.js']:[]),'pilot-macros.js','pilot-macros-service.js','pilot-macros-ui.js','pilot-macros-demo.js'])routes.set('/'+name,['text/javascript; charset=utf-8',fs.readFileSync(path.join(PUBLIC_ROOT,name))]);
   routes.set('/vendor/supabase.js',['text/javascript; charset=utf-8',fs.readFileSync(path.join(__dirname,'../node_modules/@supabase/supabase-js/dist/umd/supabase.js'))]);
+  const csp=buildCsp(config.supabaseUrl);
+  const previewCsp=buildCsp(config.supabaseUrl).replace(`connect-src 'self' ${config.supabaseUrl}`,"connect-src 'none'");
   const server=http.createServer(async(req,res)=>{
-    res.setHeader('Content-Security-Policy',CSP);
+    res.setHeader('Content-Security-Policy',csp);
     res.setHeader('Cache-Control','no-store');
     res.setHeader('X-Content-Type-Options','nosniff');
     res.setHeader('Referrer-Policy','no-referrer');
@@ -102,7 +113,7 @@ function createPilotServer({env=process.env,manualMacrosService,diaryService=nul
     if(readOnly&&(route==='/admin.html'||route==='/pilot-admin.js'||route==='/pilot-admin-ui.js'||route.startsWith('/preview/'))){res.writeHead(404);res.end();return;}
     const resource=routes.get(route);
     if(!resource){res.writeHead(404);res.end('PILOT_ROUTE_NOT_FOUND');return;}
-    if(route.startsWith('/preview/'))res.setHeader('Content-Security-Policy',CSP.replace("connect-src 'self' https://otswebncqidqthqplztj.supabase.co","connect-src 'none'"));
+    if(route.startsWith('/preview/'))res.setHeader('Content-Security-Policy',previewCsp);
     res.setHeader('Content-Type',resource[0]);res.setHeader('Content-Length',resource[1].length);
     res.writeHead(200);res.end(req.method==='HEAD'?undefined:resource[1]);
   });

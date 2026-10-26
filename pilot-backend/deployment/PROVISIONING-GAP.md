@@ -10,6 +10,114 @@ automatiza — **pero depende de infraestructura SQL que todavía no existe
 en Supabase real.** No se declara el flujo terminado de extremo a extremo:
 ver la sección "Bloqueo real" más abajo.
 
+## 11ª ronda: 5 hallazgos de Codex sobre el commit `60afc33` (COACH revocado, reenvío, proyecto Supabase aislado)
+
+**P1 — Reactivación de COACH revocado (SQL:415 de la v del commit 60afc33).**
+El bloqueo "P0" (restauración de privilegios) que impide reactivar sola una
+membresía propia inactiva solo comprobaba OWNER/ADMIN — un COACH revocado
+(`roles={COACH}`, `active=false`) pasaba de largo y se reactivaba igual,
+quedando `{COACH, CLIENT}` activo sin ninguna decisión administrativa.
+Corregido añadiendo `'COACH'` al arreglo de roles bloqueados en
+`PENDING-ACTIVATION-MIGRATION.sql`; esto ya era consistente con el
+equivalente en JS (`PRIVILEGED_ROLES` en
+`pilot-admin-provisioning-service.cjs`, que sí incluía COACH desde la 10ª
+ronda) — la inconsistencia estaba solo en el lado SQL. Regresión SQL
+agregada (P0d/P0e/P0f): `{COACH}` inactivo nunca pasa a `{COACH,CLIENT}`
+activo.
+
+**P1 — Reenvío de invitaciones inválidas (`pilot-admin-provisioning-service.cjs:463`).**
+`resendInvite` (corregido en la 10ª ronda para exigir `status='pending'`
+en ese `gym_id`/`user_id`) no revalidaba si esa autorización SEGUÍA siendo
+válida — una solicitud puede seguir marcada `pending` en la tabla aunque su
+autorizador original fue revocado o su coach destino ya no es COACH activo
+ahí. Corregido: `authorizePendingActivation` ahora también revalida en
+vivo que `created_by` sigue siendo OWNER/ADMIN activo en ese gimnasio, y
+que `coach_membership_id` sigue siendo COACH literal activo en ESE MISMO
+gimnasio — mismas comprobaciones que `pilot_resume_pending_activation()`
+hace al completar, pero exigidas ANTES de reenviar. Pruebas negativas
+agregadas: autorizador revocado, coach inactivo, coach de otro gimnasio.
+
+**P1 — Configuración de Supabase aislado (`pilot-config.cjs` y `pilot-auth.js`).**
+El project ref/URL de Supabase estaban hardcodeados en AMBOS archivos —
+`pilot-config.cjs` solo aceptaba que las variables de entorno
+CONFIRMARAN el proyecto compartido (cualquier otro valor se rechazaba), y
+`pilot-auth.js` exigía literalmente ese mismo ref fijo del lado del
+navegador, así que ni siquiera corrigiendo el servidor habría sido
+posible usar un proyecto Supabase realmente distinto para una
+preproducción aislada. Corregido: `pilot-config.cjs` acepta
+`PILOT_SUPABASE_PROJECT_REF`+`PILOT_SUPABASE_URL` dados JUNTOS y
+mutuamente consistentes (formato real de project ref validado, 20
+caracteres alfanuméricos en minúscula) para apuntar a un proyecto
+distinto; sin ninguna de las dos variables, sigue usando el compartido
+por defecto — el valor de producción no cambia. `pilot-auth.js` valida la
+ESTRUCTURA de lo que el servidor le entrega (en vez de un valor fijo), y
+deriva `storageKeyFor(projectRef)` en vez de una clave de almacenamiento
+fija. **Se encontró, al verificar con un arranque real, un tercer archivo
+con el mismo problema que no estaba en el hallazgo:** la
+Content-Security-Policy de `pilot-http.cjs` tenía el origen de Supabase
+hardcodeado en `connect-src` — aunque el servidor y el cliente ya
+aceptaran un proyecto aislado, el navegador habría bloqueado toda
+conexión a ese otro origen por violar la CSP. Corregido: la CSP se
+construye por request a partir de `config.supabaseUrl`. Pruebas nuevas:
+`pilot-config.test.cjs` (configuración aislada válida y combinaciones
+rechazadas: solo una variable, formato de ref inválido, ref/URL
+mezclados) y una prueba de integración real en `render-readonly.test.cjs`
+(servidor real + `pilot-auth.js` real aceptando un proyecto aislado, con
+la CSP reflejándolo).
+
+**P2 — Error de red (`pilot-auth.js:155`).** El código asumía que un
+fallo de red real durante `pilot_resume_pending_activation()` se vería
+como una EXCEPCIÓN lanzada — pero el SDK de Supabase instalado, por
+configuración por defecto (nunca se llama `.throwOnError()` en este
+archivo), NO lanza ante un fallo de fetch: lo captura internamente y
+resuelve `{error}` con `code` VACÍO, confirmado leyendo el código fuente
+instalado de `@supabase/postgrest-js` (`PostgrestBuilder.ts`). Esto hacía
+que un fallo de red real cayera en la misma rama que un error de
+activación genuino (`ACTIVATION_FAILED`), nunca distinguido como
+`ACTIVATION_NETWORK_ERROR`. Corregido: se distingue `code===''` (red) de
+`code==='PILOT_NOT_FOUND'` (tolerado) y de cualquier otro código (fallo
+real). Se conserva el `catch` original como defensa en profundidad. Prueba
+nueva reproduciendo la forma REAL en que el SDK resuelve esto (no una
+excepción simulada, que es lo que la prueba anterior de esta sesión
+hacía).
+
+**P2 — Selector multigimnasio (`pilot-admin-provisioning-ui.js:147`).**
+`form.reset()` solo restaura los valores VISIBLES de los controles — nunca
+dispara `change`, así que el listener del `<select>` de gimnasio no se
+ejecutaba y la variable `gymId` (fuera del DOM) seguía apuntando al
+gimnasio de la operación anterior aunque el selector ya se viera vacío
+otra vez; un reenvío posterior sin volver a elegir gimnasio podía usar un
+`gymId` distinto del que la interfaz mostraba. Corregido con
+`resetGymSelection()`, llamada junto a `form.reset()`, que sincroniza
+explícitamente el `<select>` y la variable al mismo estado que al montar.
+Regresión agregada: selección → alta exitosa → reset → intento de
+reenvío SIN re-seleccionar (rechazado) → selección explícita de OTRO
+gimnasio → reenvío correcto a ESE gimnasio.
+
+**Pruebas ejecutadas esta ronda:**
+- `npm test`: **136/136 PASS** (131 previas + 5 nuevas: COACH revocado se
+  cubre en SQL, no en JS; reenvío autorizador/coach inválido en JS;
+  configuración aislada en `pilot-config.test.cjs` nuevo + integración
+  real; red real del SDK; reset de selector multigimnasio).
+- SQL (`PENDING-ACTIVATION-MIGRATION-TEST.sql`, PostgreSQL 16.15 local
+  desechable): **28/28 PASS, 0 FAIL** (25 previas + P0d/P0e/P0f nuevas).
+- Concurrencia: PASS.
+- Verificación manual de un arranque real de Render: `readOnly` clínico
+  sigue cerrado, rutas administrativas antiguas siguen en 404, y la CSP
+  usa el proyecto compartido por defecto cuando no se configura ninguno
+  aislado.
+
+**Sin commit ni push esta ronda** (no autorizado). Archivos modificados:
+`pilot-backend/deployment/PENDING-ACTIVATION-MIGRATION.sql`,
+`PENDING-ACTIVATION-MIGRATION-TEST.sql`,
+`pilot-backend/server/pilot-admin-provisioning-service.cjs`,
+`pilot-backend/server/pilot-config.cjs`, `pilot-backend/server/pilot-http.cjs`,
+`nutrika/pilot-auth.js`, `nutrika/pilot-admin-provisioning-ui.js`,
+`pilot-backend/tests/pilot-admin-provisioning.test.cjs`,
+`pilot-backend/tests/pilot-auth.test.cjs`,
+`pilot-backend/tests/render-readonly.test.cjs`, y el archivo nuevo
+`pilot-backend/tests/pilot-config.test.cjs`.
+
 ## 10ª ronda: 5 hallazgos de Codex sobre el commit `26fd7fc` (servicio de alta, callback de invitación, UI)
 
 Esta ronda corrige 5 hallazgos sobre el backend/frontend del alta de

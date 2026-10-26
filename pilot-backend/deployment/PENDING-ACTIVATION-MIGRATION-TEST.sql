@@ -189,6 +189,28 @@ from gym_memberships where gym_id = '20000000-0000-0000-0000-000000000001' and u
 select case when status = 'blocked_privileged_role' then 'PASS P0c: la solicitud queda marcada para revisión administrativa explícita' else 'FAIL P0c: ' || status end
 from pilot_pending_activations where user_id = '30000000-0000-0000-0000-00000000000c';
 
+\echo '=== P0d) Restauración de privilegios: un COACH inactivo con roles {COACH} NO se reactiva solo (debe bloquearse) ==='
+-- Regresión explícita (auditoría sobre el commit 60afc33, SQL:415 de esa
+-- versión): el bloqueo de arriba (P0) solo cubría OWNER/ADMIN — un COACH
+-- revocado (active=false) con roles={COACH} pasaba de largo y se
+-- reactivaba igual, quedando {COACH, CLIENT} activo sin ninguna decisión
+-- administrativa explícita.
+insert into gym_memberships (gym_id, user_id, roles, active, revision) values
+  ('20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000012', '{COACH}', false, 2);
+insert into pilot_pending_activations (gym_id, user_id, coach_membership_id, created_by, status)
+select '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000012', gm.id, '30000000-0000-0000-0000-000000000004', 'pending'
+from gym_memberships gm where gm.gym_id = '20000000-0000-0000-0000-000000000001' and gm.user_id = '30000000-0000-0000-0000-000000000002'; -- coach1 destino; created_by = admin1 (activo)
+begin;
+set local role authenticated;
+set local "test.current_uid" = '30000000-0000-0000-0000-000000000012';
+select case when out_status = 'blocked_privileged_role' then 'PASS P0d: la reanudación se niega a reactivar sola un COACH inactivo' else 'FAIL P0d: ' || coalesce(out_status,'NULL') end
+from pilot_resume_pending_activation();
+commit;
+select case when active = false and roles = array['COACH']::pilot_role[] then 'PASS P0e: la membresía sigue inactiva, con roles {COACH} intactos (nunca {COACH,CLIENT} activo)' else 'FAIL P0e: active=' || active::text || ' roles=' || roles::text end
+from gym_memberships where gym_id = '20000000-0000-0000-0000-000000000001' and user_id = '30000000-0000-0000-0000-000000000012';
+select case when status = 'blocked_privileged_role' then 'PASS P0f: la solicitud queda marcada para revisión administrativa explícita' else 'FAIL P0f: ' || status end
+from pilot_pending_activations where user_id = '30000000-0000-0000-0000-000000000012';
+
 \echo '=== P1) Autoría falsificable: un ADMIN intenta crear una solicitud atribuida a OTRO OWNER/ADMIN (debe RECHAZARSE) (se espera un ERROR aquí) ==='
 begin;
 set local role authenticated;

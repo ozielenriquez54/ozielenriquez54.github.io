@@ -1,7 +1,21 @@
 (function(root){
   'use strict';
-  const REF='otswebncqidqthqplztj',URL_ROOT='https://'+REF+'.supabase.co';
-  const STORAGE_KEY='twogramms-pilot-auth-'+REF;
+  // P1 (auditoría sobre el commit 60afc33, "configuración de Supabase
+  // aislado"): antes, createClient() exigía que config.projectRef/
+  // config.supabaseUrl coincidieran EXACTAMENTE con un único proyecto
+  // compartido hardcodeado aquí — ningún despliegue (ni siquiera uno con
+  // el servidor ya corregido para aceptar un proyecto aislado, ver
+  // pilot-config.cjs) podía usar un proyecto Supabase distinto, porque
+  // este archivo lo rechazaba de todas formas. Corregido: se valida la
+  // ESTRUCTURA de lo que el propio servidor entregó (mismo formato real de
+  // project ref de Supabase — 20 caracteres alfanuméricos en minúscula — y
+  // que supabaseUrl sea EXACTAMENTE `https://<projectRef>.supabase.co`,
+  // nunca otro host), en vez de compararlo contra un único valor fijo.
+  // `storageKeyFor` deriva la clave de almacenamiento del projectRef
+  // configurado, para que dos proyectos nunca compartan la misma entrada
+  // de localStorage en el mismo origen.
+  const PROJECT_REF_FORMAT=/^[a-z0-9]{20}$/;
+  function storageKeyFor(projectRef){return 'twogramms-pilot-auth-'+projectRef;}
   function fail(){throw new Error('PILOT_AUTH_FAILED');}
   function recoveryError(error){
     if(['bad_jwt','session_not_found','refresh_token_not_found','refresh_token_already_used'].includes(error?.code))return {status:'RECOVERY_SESSION_MISSING'};
@@ -27,9 +41,10 @@
     return null;
   }
   function createClient(config,sdk,fetchImpl,{admin=false,macros=false}={}){
-    if(config.projectRef!==REF||config.supabaseUrl!==URL_ROOT||!/^sb_publishable_[A-Za-z0-9_-]+$/.test(config.publicKey??''))fail();
+    if(!PROJECT_REF_FORMAT.test(config.projectRef??'')||config.supabaseUrl!=='https://'+config.projectRef+'.supabase.co'||!/^sb_publishable_[A-Za-z0-9_-]+$/.test(config.publicKey??''))fail();
+    const URL_ROOT=config.supabaseUrl;
     return sdk.createClient(URL_ROOT,config.publicKey,{
-      auth:{storageKey:STORAGE_KEY,flowType:'pkce',detectSessionInUrl:false,persistSession:true,autoRefreshToken:true,debug:false},
+      auth:{storageKey:storageKeyFor(config.projectRef),flowType:'pkce',detectSessionInUrl:false,persistSession:true,autoRefreshToken:true,debug:false},
       global:{fetch:async(input,init={})=>{
         const url=new URL(typeof input==='string'?input:input.url??input.href);
         if(url.origin!==URL_ROOT||url.username||url.password)fail();
@@ -146,14 +161,28 @@
         //   - un error de transporte DISTINTO de "no existe todavía"
         //     (permiso denegado, 5xx, etc.): se reporta como fallo de
         //     activación explícito, nunca se finge que no pasó nada.
-        //   - una excepción real (fallo de red): se distingue de
-        //     AUTH_FAILED — la sesión sigue siendo válida, solo falló la
-        //     reanudación y conviene reintentar, no volver a iniciar sesión.
+        //   - un fallo de RED real: se distingue de AUTH_FAILED — la
+        //     sesión sigue siendo válida, solo falló la reanudación y
+        //     conviene reintentar, no volver a iniciar sesión.
+        //
+        // P2 (auditoría sobre el commit 60afc33, "error de red"): el SDK de
+        // Supabase, por configuración por defecto (nunca se llamó
+        // `.throwOnError()` en este archivo), NO lanza una excepción ante
+        // un fallo de fetch real — lo CAPTURA internamente y resuelve
+        // `{error}` igual que un error de PostgREST/Postgres, pero con
+        // `code` VACÍO (confirmado leyendo el código fuente instalado de
+        // @supabase/postgrest-js, PostgrestBuilder.ts: el catch de
+        // fetchError construye `{error:{code:'', ...}}`). El `catch` de
+        // abajo nunca se alcanza en la práctica para esto — queda solo
+        // como defensa en profundidad si una versión futura del SDK
+        // cambiara ese comportamiento.
         try{
           const resume=await client.rpc('pilot_resume_pending_activation');
           if(ticket!==generation)return {status:'SIGNED_OUT'};
           if(resume.error){
-            if(resume.error.code!=='PILOT_NOT_FOUND')return {status:'ACTIVATION_FAILED'};
+            if(resume.error.code==='PILOT_NOT_FOUND'){/* tolerado: la función todavía no existe */}
+            else if(!resume.error.code)return {status:'ACTIVATION_NETWORK_ERROR'};
+            else return {status:'ACTIVATION_FAILED'};
           }else{
             const row=Array.isArray(resume.data)?resume.data[0]:resume.data;
             if(row?.out_status==='blocked_privileged_role')return {status:'ACTIVATION_BLOCKED_PRIVILEGED_ROLE'};
@@ -230,7 +259,7 @@
       }catch{return {status:'AUTH_FAILED'};}}
     };
   }
-  const api={createClient,controller,parseCallback,STORAGE_KEY};
+  const api={createClient,controller,parseCallback,storageKeyFor};
   if(typeof module==='object'&&module.exports)module.exports=api;
   else root.PilotAuth=api;
 })(typeof globalThis==='object'?globalThis:this);

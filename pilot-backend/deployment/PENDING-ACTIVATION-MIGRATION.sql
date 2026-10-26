@@ -150,11 +150,12 @@ create table if not exists public.pilot_pending_activations (
   user_id uuid not null,                  -- el cliente invitado (auth.users.id)
   coach_membership_id uuid not null,      -- gym_memberships.id del coach destino, fijado en el momento de autorizar
   created_by uuid not null,               -- gym_memberships.user_id del OWNER/ADMIN que autorizó esto
-  -- 'blocked_privileged_role' (P0, auditoría sobre el commit 9462850): la
-  -- reanudación encontró que la membresía propia del solicitante ya existe,
-  -- está INACTIVA y conserva OWNER/ADMIN — nunca se reactiva sola; queda
-  -- aquí, distinta de 'cancelled', para que una revisión administrativa
-  -- explícita la encuentre y decida.
+  -- 'blocked_privileged_role' (P0, auditoría sobre el commit 9462850,
+  -- ampliado tras el commit 60afc33): la reanudación encontró que la
+  -- membresía propia del solicitante ya existe, está INACTIVA y conserva
+  -- OWNER, ADMIN o COACH — nunca se reactiva sola; queda aquí, distinta de
+  -- 'cancelled', para que una revisión administrativa explícita la
+  -- encuentre y decida.
   status text not null default 'pending' check (status in ('pending', 'completed', 'cancelled', 'blocked_privileged_role')),
   revision bigint not null default 0,
   created_at timestamptz not null default now(),
@@ -404,15 +405,23 @@ begin
   where gm.gym_id = v_request.gym_id and gm.user_id = v_uid
   for update;
 
-  -- P0 (Codex, SQL:317-318 de la v2, commit 9462850): "restauración de
-  -- privilegios" — si la membresía propia YA existe, está INACTIVA
-  -- (revocada) y conserva OWNER/ADMIN, el camino de abajo la reactivaría
-  -- sola (`active = true`) por el solo hecho de iniciar sesión, sin
-  -- ninguna decisión administrativa explícita. Se bloquea aquí, antes de
-  -- tocar la fila: la solicitud queda marcada para revisión administrativa
-  -- (nunca se completa sola) y la membresía permanece sin cambios.
+  -- P0 (Codex, SQL:317-318 de la v2, commit 9462850; ampliado tras la
+  -- auditoría sobre el commit 60afc33 — "reactivación de COACH revocado",
+  -- SQL:415 de esa versión): "restauración de privilegios" — si la
+  -- membresía propia YA existe, está INACTIVA (revocada) y conserva
+  -- OWNER, ADMIN o COACH, el camino de abajo la reactivaría sola
+  -- (`active = true`) por el solo hecho de iniciar sesión, sin ninguna
+  -- decisión administrativa explícita. La ronda anterior solo bloqueaba
+  -- OWNER/ADMIN — un COACH revocado con roles={COACH} se reactivaba igual
+  -- (quedando {COACH, CLIENT} activo) porque el arreglo de este chequeo
+  -- nunca incluyó 'COACH', a pesar de que el equivalente en JS
+  -- (pilot-admin-provisioning-service.cjs, PRIVILEGED_ROLES) SÍ lo incluye
+  -- desde esa misma ronda — inconsistencia corregida aquí. Se bloquea
+  -- antes de tocar la fila: la solicitud queda marcada para revisión
+  -- administrativa (nunca se completa sola) y la membresía permanece sin
+  -- cambios.
   if v_membership_id is not null and v_membership_active = false
-     and v_membership_roles && array['OWNER', 'ADMIN']::public.pilot_role[] then
+     and v_membership_roles && array['OWNER', 'ADMIN', 'COACH']::public.pilot_role[] then
     update public.pilot_pending_activations pa
       set status = 'blocked_privileged_role', revision = pa.revision + 1
       where pa.id = v_request.id;
@@ -455,7 +464,7 @@ end;
 $$;
 
 comment on function public.pilot_resume_pending_activation() is
-  'Autoservicio: completa, si existe, la ÚNICA solicitud de activación pendiente de auth.uid(). Revalida en vivo (con bloqueo) que el autorizador original (created_by) sigue siendo OWNER/ADMIN activo del gimnasio antes de aplicar nada. Nunca actúa sobre otro usuario, nunca reemplaza roles existentes (solo agrega CLIENT), nunca otorga rol OWNER/ADMIN al cliente, y nunca reactiva una membresía propia inactiva que conserve OWNER/ADMIN (status=blocked_privileged_role en ese caso, requiere acción administrativa explícita).';
+  'Autoservicio: completa, si existe, la ÚNICA solicitud de activación pendiente de auth.uid(). Revalida en vivo (con bloqueo) que el autorizador original (created_by) sigue siendo OWNER/ADMIN activo del gimnasio antes de aplicar nada. Nunca actúa sobre otro usuario, nunca reemplaza roles existentes (solo agrega CLIENT), nunca otorga rol OWNER/ADMIN al cliente, y nunca reactiva una membresía propia inactiva que conserve OWNER, ADMIN o COACH (status=blocked_privileged_role en ese caso, requiere acción administrativa explícita).';
 
 revoke all on function public.pilot_resume_pending_activation() from public;
 grant execute on function public.pilot_resume_pending_activation() to authenticated;
