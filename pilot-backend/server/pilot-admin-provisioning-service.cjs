@@ -468,12 +468,26 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
     if (typeof row.out_client_exists !== 'boolean') return false;
     if (row.out_coach_client_id !== null && (typeof row.out_coach_client_id !== 'string' || !UUID.test(row.out_coach_client_id))) return false;
     if (row.out_active !== null && typeof row.out_active !== 'boolean') return false;
-    if (row.out_revision !== null && !(Number.isSafeInteger(row.out_revision) && row.out_revision >= 0)) return false;
+    if (row.out_revision !== null && !Number.isSafeInteger(row.out_revision)) return false;
 
     const hasRelationship = row.out_coach_client_id !== null;
     // Coherencia entre id/activo/revisión: los tres deben venir definidos
     // juntos, o los tres en null juntos — nunca una mezcla.
     if (hasRelationship !== (row.out_active !== null) || hasRelationship !== (row.out_revision !== null)) return false;
+    // P2 (auditoría sobre el commit 7121958, "revisión 0 con relación
+    // existente"): `pilot_set_coach_client` SIEMPRE crea la primera fila
+    // con revision=1 y la incrementa en cada escritura posterior (ver el
+    // stub confirmado en COACH-CLIENT-STATE-MIGRATION-TEST-SCHEMA.sql) —
+    // una relación YA EXISTENTE (`out_coach_client_id` no nulo) nunca
+    // puede tener revisión 0 (ni `-0`, numéricamente igual a 0 en JS:
+    // `-0 > 0` es `false`, así que esta misma comprobación ya la rechaza
+    // sin un caso especial). Revisión 0 solo es válida como el valor
+    // IMPLÍCITO que setCoachClient() usa para la PRIMERA asignación,
+    // cuando NO existe relación todavía (`out_coach_client_id === null`,
+    // `out_revision === null` — ese caso ni siquiera llega aquí, por la
+    // comprobación de arriba) — nunca como un valor devuelto por la RPC
+    // para una fila que SÍ existe.
+    if (hasRelationship && !(row.out_revision > 0)) return false;
     // Coherencia entre los TRES estados reales de la RPC (ver cabecera):
     // perfil ausente -> cliente ausente; cliente ausente -> sin relación;
     // relación -> perfil Y cliente presentes.

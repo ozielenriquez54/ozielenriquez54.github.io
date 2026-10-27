@@ -562,7 +562,7 @@ test('setCoachClient: out_profile_exists===false (estrictamente boolean) -> PEND
   assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 0);
 });
 
-test('setCoachClient: out_profile_exists===true con fila completa y válida -> PROVISIONED (escribe normalmente)', async () => {
+test('setCoachClient: sin relación todavía (out_coach_client_id/out_revision en null) -> PROVISIONED, creación con revisión 0 implícita', async () => {
   const db = freshDb();
   const rpcOverride = (name) => name === 'pilot_get_coach_client_state'
     ? { data: { out_profile_exists: true, out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }, error: null }
@@ -570,8 +570,63 @@ test('setCoachClient: out_profile_exists===true con fila completa y válida -> P
   const { api, rpcCalls } = service({ db, findUserByEmail: findAna, rpcOverride });
   const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
   assert.equal(result.status, 'PROVISIONED');
-  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 1);
+  const writeCall = rpcCalls.find(c => c[0] === 'pilot_set_coach_client');
+  assert.ok(writeCall);
+  // "Primera asignación" — revisión 0 implícita, NUNCA tomada de
+  // out_revision (que viene en null porque no existe relación todavía).
+  assert.equal(writeCall[1].p_expected_revision, 0);
 });
+
+// ---------------------------------------------------------------------------
+// P2 (auditoría sobre el commit 7121958738fac35ec8ccbbdb086274a231cfbe82,
+// "revisión 0 con relación existente"): una relación coach-cliente YA
+// EXISTENTE (out_coach_client_id no nulo) solo es válida con una revisión
+// ESTRICTAMENTE mayor que cero — pilot_set_coach_client nunca crea una
+// fila con revisión 0 ni la deja en 0 tras una escritura, así que una RPC
+// que devuelva out_revision=0 (o -0) para una relación existente está
+// mintiendo sobre el estado real. Las pruebas que siguen cubren
+// explícitamente 0, -0, 1 y 100 con relación existente, además de la
+// creación sin relación (arriba).
+// ---------------------------------------------------------------------------
+
+for (const revision of [1, 100]) {
+  test(`setCoachClient: relación YA EXISTENTE con revisión real ${revision} (> 0) -> PROVISIONED, escribe con esa revisión EXACTA`, async () => {
+    // Misma base que "addClient: un OWNER NO asignado previamente
+    // reasigna..." (más abajo): membresía, `clients` y `coach_clients`
+    // reales pre-existentes, con la revisión bajo prueba — sin forzar la
+    // respuesta de la RPC de lectura, para que el estado que devuelve
+    // pilot_get_coach_client_state (vía el mock real) sea consistente con
+    // lo que pilot_set_coach_client (también vía el mock real) espera.
+    const db = freshDb([{ id: uuid(3), gym_id: GYM, user_id: ANA_ID, roles: ['CLIENT'], active: true, revision: 1 }]);
+    db.clients.push({ id: uuid(8000), gym_id: GYM, membership_id: uuid(3) });
+    db.coachClients.push({ id: uuid(5000), gym_id: GYM, coach_membership_id: uuid(2), client_id: uuid(8000), active: true, revision });
+    const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
+    const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+    assert.equal(result.status, 'PROVISIONED');
+    const writeCall = rpcCalls.find(c => c[0] === 'pilot_set_coach_client');
+    assert.ok(writeCall);
+    assert.equal(writeCall[1].p_expected_revision, revision); // exacta, nunca adivinada
+    assert.equal(db.coachClients[0].revision, revision + 1);
+  });
+}
+
+for (const revision of [0, -0]) {
+  test(`setCoachClient: relación YA EXISTENTE pero out_revision=${revision === 0 && Object.is(revision, -0) ? '-0' : revision} (nunca un estado real) -> PROVISIONING_RESULT_UNKNOWN, SIN activación pendiente ni escritura`, async () => {
+    const db = freshDb();
+    const coachClientId = uuid(5000);
+    const rpcOverride = (name) => name === 'pilot_get_coach_client_state'
+      ? { data: { out_profile_exists: true, out_client_exists: true, out_coach_client_id: coachClientId, out_active: true, out_revision: revision }, error: null }
+      : null;
+    const { api, rpcCalls } = service({ db, findUserByEmail: findAna, rpcOverride });
+    await assert.rejects(
+      api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } }),
+      e => e.code === 'PROVISIONING_RESULT_UNKNOWN' && e.status === 503,
+    );
+    assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 0);
+    assert.equal(db.coachClients.length, 0);
+    assert.equal(db.pendingActivations.length, 0);
+  });
+}
 
 for (const [label, malformedRow] of [
   ['out_profile_exists es null (no estrictamente false)', { out_profile_exists: null, out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }],
@@ -604,10 +659,10 @@ for (const [label, malformedRow] of [
   // ser string); out_revision debe ser un entero seguro no negativo (no
   // basta con ser number).
   // -------------------------------------------------------------------------
-  ['out_coach_client_id es una cadena vacía (no un UUID real)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: '', out_active: true, out_revision: 0 }],
-  ['out_coach_client_id no tiene formato UUID', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: 'not-a-uuid', out_active: true, out_revision: 0 }],
-  ['out_coach_client_id es un UUID truncado (un carácter corto)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: '00000000-0000-0000-0000-00000000000', out_active: true, out_revision: 0 }],
-  ['out_coach_client_id tiene caracteres no hexadecimales', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: '00000000-0000-0000-0000-0000000000zz', out_active: true, out_revision: 0 }],
+  ['out_coach_client_id es una cadena vacía (no un UUID real)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: '', out_active: true, out_revision: 1 }],
+  ['out_coach_client_id no tiene formato UUID', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: 'not-a-uuid', out_active: true, out_revision: 1 }],
+  ['out_coach_client_id es un UUID truncado (un carácter corto)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: '00000000-0000-0000-0000-00000000000', out_active: true, out_revision: 1 }],
+  ['out_coach_client_id tiene caracteres no hexadecimales', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: '00000000-0000-0000-0000-0000000000zz', out_active: true, out_revision: 1 }],
   ['out_revision es negativa', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: -1 }],
   ['out_revision es fraccionaria', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: 1.5 }],
   ['out_revision es NaN', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: NaN }],
@@ -615,6 +670,13 @@ for (const [label, malformedRow] of [
   ['out_revision es -Infinity', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: -Infinity }],
   ['out_revision excede el rango entero seguro de JavaScript', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: Number.MAX_SAFE_INTEGER + 1 }],
   ['out_revision tiene un tipo incompatible (string en vez de number)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: '3' }],
+  // P2 (auditoría sobre el commit 7121958, "revisión 0 con relación
+  // existente"): pilot_set_coach_client SIEMPRE crea la primera fila con
+  // revision=1 — una relación YA EXISTENTE con revisión 0 (o -0, su
+  // equivalente numérico) nunca es un estado real, solo el valor
+  // IMPLÍCITO que esta capa usa cuando NO hay relación todavía.
+  ['out_revision es 0 con una relación YA EXISTENTE (revisión real nunca es 0)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: 0 }],
+  ['out_revision es -0 con una relación YA EXISTENTE (equivalente numérico de 0)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: -0 }],
 ]) {
   test(`setCoachClient: respuesta inválida de pilot_get_coach_client_state (${label}) -> error explícito de contrato (PROVISIONING_RESULT_UNKNOWN), SIN activación pendiente ni escritura de asignación`, async () => {
     const db = freshDb();

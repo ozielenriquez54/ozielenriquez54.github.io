@@ -10,6 +10,35 @@ automatiza — **pero depende de infraestructura SQL que todavía no existe
 en Supabase real.** No se declara el flujo terminado de extremo a extremo:
 ver la sección "Bloqueo real" más abajo.
 
+## 17ª ronda: 1 hallazgo P2 de Codex sobre el commit `7121958738fac35ec8ccbbdb086274a231cfbe82` (revisión 0 con relación coach-cliente YA existente)
+
+**`validateCoachClientStateRow()` aceptaba `out_revision=0` (y `-0`,
+numéricamente igual) incluso cuando `out_coach_client_id` NO era nulo** —
+es decir, cuando la RPC afirmaba que YA existía una relación coach-cliente.
+`pilot_set_coach_client` SIEMPRE crea la primera fila con `revision=1` y
+la incrementa en cada escritura posterior (ver el stub confirmado en
+`COACH-CLIENT-STATE-MIGRATION-TEST-SCHEMA.sql`) — una relación existente
+con revisión 0 nunca es un estado real; 0 solo es válido como el valor
+IMPLÍCITO que `setCoachClient()` usa para la PRIMERA asignación, cuando
+`out_coach_client_id` es `null` (y por lo tanto `out_revision` también lo
+es). Corregido exigiendo `out_revision > 0` (`-0 > 0` ya es `false` en JS,
+así que no hace falta un caso especial) exclusivamente cuando existe
+relación — el caso "sin relación todavía" sigue sin tocarse.
+
+**Pruebas ejecutadas esta ronda:**
+- `npm test`: **181/181 PASS, 0 FAIL** (6 pruebas nuevas: revisión 0 y -0
+  con relación existente → `PROVISIONING_RESULT_UNKNOWN`; revisión 1 y
+  100 con relación existente → `PROVISIONED`, escritura con esa revisión
+  exacta; creación sin relación → `PROVISIONED` con revisión 0 implícita
+  confirmada explícitamente en el argumento de la escritura).
+- Sin pruebas SQL esta ronda: el fix es exclusivamente de validación
+  defensiva en la capa JS, sin cambios en ningún archivo `.sql` — no
+  aplica repetir baterías que no dependen de este cambio.
+
+**Sin commit ni push esta ronda** (no autorizado). Archivos modificados:
+`pilot-backend/server/pilot-admin-provisioning-service.cjs`,
+`pilot-backend/tests/pilot-admin-provisioning.test.cjs`, y este archivo.
+
 ## 16ª ronda: 3 hallazgos P2 de Codex sobre el commit `17a1ad1ed78329e23300add454ce9d3e4eb2765e` (consistencia de estados, validación estricta de IDs/revisiones, cardinalidad de la RPC)
 
 **1) Consistencia de estados.** `validateCoachClientStateRow()` validaba el
