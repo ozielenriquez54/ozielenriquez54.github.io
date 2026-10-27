@@ -430,6 +430,29 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
     return { membershipId: membership.id };
   }
 
+  // Valida el CONTRATO completo de pilot_get_coach_client_state() antes de
+  // que setCoachClient() decida nada con su respuesta (ver la nota P2,
+  // auditoría sobre el commit a8e22a3, justo antes de esa función). Cada
+  // campo obligatorio debe tener el TIPO exacto esperado — nunca se acepta
+  // un valor "parecido" (p. ej. un string donde se espera boolean) ni se
+  // asume un significado por defecto cuando algo falta. También se exige
+  // consistencia cruzada entre campos: si no hay relación coach-cliente
+  // (`out_coach_client_id === null`), activo/revisión deben venir ambos en
+  // `null`; si SÍ hay relación, deben venir ambos definidos — una RPC real
+  // nunca devolvería una combinación a medias, así que si esta mezcla
+  // aparece es la propia señal de que la respuesta no es de confianza.
+  function validateCoachClientStateRow(row) {
+    if (!row || typeof row !== 'object') return false;
+    if (typeof row.out_profile_exists !== 'boolean') return false;
+    if (typeof row.out_client_exists !== 'boolean') return false;
+    if (row.out_coach_client_id !== null && typeof row.out_coach_client_id !== 'string') return false;
+    if (row.out_active !== null && typeof row.out_active !== 'boolean') return false;
+    if (row.out_revision !== null && typeof row.out_revision !== 'number') return false;
+    const hasRelationship = row.out_coach_client_id !== null;
+    if (hasRelationship !== (row.out_active !== null) || hasRelationship !== (row.out_revision !== null)) return false;
+    return true;
+  }
+
   // Vincula coach y cliente. p_client_membership_id es el id en
   // gym_memberships del cliente (NUNCA el de `clients`) — la propia RPC
   // resuelve `clients.id` internamente a partir de ese id de membresía.
@@ -484,14 +507,32 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   //   - out_profile_exists=true, out_client_exists=true: estado normal —
   //     continúa igual que antes (coach_client existente o primera
   //     asignación).
+  //
+  // P2 (auditoría sobre el commit a8e22a3, "`!row.out_profile_exists`
+  // interpreta `undefined`/`null` como ausencia de perfil"): `!valor` en
+  // JS trata CUALQUIER valor falsy (undefined, null, 0, '', NaN) como "el
+  // perfil no existe" — así que una respuesta de la RPC con el campo
+  // AUSENTE, en `null` o con un tipo incompatible (p. ej. un string en vez
+  // de boolean, por un contrato roto o una versión distinta de la RPC)
+  // creaba una activación pendiente IGUAL que un perfil genuinamente
+  // ausente, sin ninguna forma de distinguir "sé con certeza que no
+  // existe" de "no puedo confiar en esta respuesta". `validateCoachClientStateRow`
+  // (abajo) exige que CADA campo obligatorio tenga el tipo exacto
+  // esperado — boolean estricto para los dos primeros, nunca truthy/falsy
+  // genérico — antes de que esta función decida nada. Cualquier
+  // desviación del contrato se reporta como PROVISIONING_RESULT_UNKNOWN
+  // (mismo código ya usado en este archivo para "no se puede confirmar el
+  // resultado") y SIN tocar ninguna membresía/asignación ni programar una
+  // activación pendiente — eso solo puede ocurrir cuando el campo es
+  // ESTRICTAMENTE `false`, nunca por descarte.
   async function setCoachClient(client, { gymId, coachMembershipId, clientMembershipId }, check) {
     const state = await client.rpc('pilot_get_coach_client_state', { p_gym_id: gymId, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId });
     check();
     if (state.error) throw mapRpcError(state.error);
     const row = Array.isArray(state.data) ? state.data[0] : state.data;
-    if (!row) fail('PROVISIONING_RESULT_UNKNOWN', 503);
-    if (!row.out_profile_exists) fail('PROFILE_NOT_FOUND', 404);
-    if (!row.out_client_exists) fail('CLIENT_RECORD_MISSING', 409);
+    if (!validateCoachClientStateRow(row)) fail('PROVISIONING_RESULT_UNKNOWN', 503);
+    if (row.out_profile_exists === false) fail('PROFILE_NOT_FOUND', 404);
+    if (row.out_client_exists === false) fail('CLIENT_RECORD_MISSING', 409);
     if (row.out_coach_client_id !== null && row.out_active === false) {
       fail('BLOCKED_INACTIVE_RELATIONSHIP', 409);
     }

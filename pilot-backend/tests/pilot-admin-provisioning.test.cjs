@@ -539,6 +539,71 @@ test('setCoachClient reporta CLIENT_RECORD_MISSING (inconsistencia administrativ
   db.clients.push = realPush;
 });
 
+// ---------------------------------------------------------------------------
+// P2 (auditoría sobre el commit a8e22a3b6f97838ecbdf496e0670185397807e2a,
+// "`!row.out_profile_exists` interpreta `undefined`/`null` como ausencia de
+// perfil"): `!valor` en JS trata CUALQUIER valor falsy (undefined, null, 0,
+// '', NaN) como "el perfil no existe" — una respuesta MALFORMADA de la RPC
+// (campo ausente, null, o con un tipo incompatible) creaba una activación
+// pendiente igual que un perfil genuinamente ausente. validateCoachClientStateRow()
+// ahora exige el tipo exacto de cada campo obligatorio antes de decidir
+// nada; cualquier desviación se reporta como PROVISIONING_RESULT_UNKNOWN,
+// SIN crear una activación pendiente ni llegar a llamar pilot_set_coach_client.
+// ---------------------------------------------------------------------------
+
+test('setCoachClient: out_profile_exists===false (estrictamente boolean) -> PENDING_PROFILE', async () => {
+  const db = freshDb();
+  const rpcOverride = (name) => name === 'pilot_get_coach_client_state'
+    ? { data: { out_profile_exists: false, out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }, error: null }
+    : null;
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna, rpcOverride });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PENDING_PROFILE');
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 0);
+});
+
+test('setCoachClient: out_profile_exists===true con fila completa y válida -> PROVISIONED (escribe normalmente)', async () => {
+  const db = freshDb();
+  const rpcOverride = (name) => name === 'pilot_get_coach_client_state'
+    ? { data: { out_profile_exists: true, out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }, error: null }
+    : null;
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna, rpcOverride });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PROVISIONED');
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 1);
+});
+
+for (const [label, malformedRow] of [
+  ['out_profile_exists es null (no estrictamente false)', { out_profile_exists: null, out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }],
+  ['out_profile_exists está AUSENTE del objeto (campo obligatorio faltante)', { out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }],
+  ['out_profile_exists es undefined explícito', { out_profile_exists: undefined, out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }],
+  ['out_profile_exists tiene un tipo incompatible (string en vez de boolean)', { out_profile_exists: 'false', out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }],
+  ['out_profile_exists tiene un tipo incompatible (number en vez de boolean)', { out_profile_exists: 1, out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }],
+  ['out_client_exists está AUSENTE del objeto', { out_profile_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }],
+  ['out_client_exists es null', { out_profile_exists: true, out_client_exists: null, out_coach_client_id: null, out_active: null, out_revision: null }],
+  ['la fila completa es null', null],
+  ['la respuesta es un objeto vacío', {}],
+  ['hay coach_client_id pero out_active/out_revision quedan en null (inconsistencia cruzada)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: null, out_revision: null }],
+  ['no hay coach_client_id pero out_revision SÍ viene definida (inconsistencia cruzada)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: 3 }],
+]) {
+  test(`setCoachClient: respuesta inválida de pilot_get_coach_client_state (${label}) -> error explícito de contrato (PROVISIONING_RESULT_UNKNOWN), SIN activación pendiente ni escritura de asignación`, async () => {
+    const db = freshDb();
+    const rpcOverride = (name) => name === 'pilot_get_coach_client_state' ? { data: malformedRow, error: null } : null;
+    const { api, rpcCalls } = service({ db, findUserByEmail: findAna, rpcOverride });
+    await assert.rejects(
+      api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } }),
+      e => e.code === 'PROVISIONING_RESULT_UNKNOWN' && e.status === 503,
+    );
+    // Nunca llega a intentar escribir la asignación coach-cliente con una
+    // respuesta en la que no se puede confiar.
+    assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 0);
+    assert.equal(db.coachClients.length, 0);
+    // Nunca se crea una activación pendiente a partir de una respuesta
+    // que ni siquiera se pudo interpretar con certeza.
+    assert.equal(db.pendingActivations.length, 0);
+  });
+}
+
 test('addClient: un OWNER NO asignado previamente reasigna a un cliente YA EXISTENTE a un coach válido, sin leer NUNCA `clients` ni `coach_clients` (RLS clínica real lo bloquearía)', async () => {
   // P1 (auditoría sobre el commit a201ed1, "alta directa bloqueada por
   // RLS"): reproduce el caso exacto del hallazgo — el OWNER que llama

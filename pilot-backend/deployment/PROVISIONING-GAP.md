@@ -10,6 +10,54 @@ automatiza — **pero depende de infraestructura SQL que todavía no existe
 en Supabase real.** No se declara el flujo terminado de extremo a extremo:
 ver la sección "Bloqueo real" más abajo.
 
+## 15ª ronda: 1 hallazgo P2 de Codex sobre el commit `a8e22a3b6f97838ecbdf496e0670185397807e2a` (`!row.out_profile_exists` trataba cualquier valor falsy como perfil ausente)
+
+**`setCoachClient()` (`pilot-admin-provisioning-service.cjs:493`).**
+`if (!row.out_profile_exists) fail('PROFILE_NOT_FOUND', 404);` usaba la
+negación genérica de JS, que trata CUALQUIER valor falsy (`undefined`,
+`null`, `0`, `''`, `NaN`) igual que `false` — así que una respuesta
+MALFORMADA de `pilot_get_coach_client_state` (campo ausente, en `null`, o
+con un tipo incompatible, por ejemplo por una versión distinta de la RPC
+o un contrato roto) creaba una activación pendiente exactamente igual que
+un perfil genuinamente ausente, sin ninguna forma de distinguir "sé con
+certeza que no existe" de "no puedo confiar en esta respuesta". Corregido
+con `validateCoachClientStateRow()`, que exige el TIPO exacto de cada
+campo obligatorio de la respuesta (boolean estricto para
+`out_profile_exists`/`out_client_exists`; string o null para
+`out_coach_client_id`; boolean o null para `out_active`; number o null
+para `out_revision`) y la consistencia cruzada entre ellos (si hay
+`out_coach_client_id`, `out_active`/`out_revision` deben venir ambos
+definidos; si no hay, deben venir ambos en `null`) ANTES de que
+`setCoachClient()` decida nada. Cualquier desviación se reporta como
+`PROVISIONING_RESULT_UNKNOWN` (503) — el mismo código que este archivo ya
+usa en otros puntos para "no se puede confirmar el resultado" — sin crear
+ninguna activación pendiente ni llegar a llamar `pilot_set_coach_client`.
+Solo `out_profile_exists === false` (estrictamente) sigue significando
+"perfil ausente, genuinamente pendiente".
+
+**Pruebas ejecutadas esta ronda:**
+- `npm test`: **153/153 PASS, 0 FAIL** (13 pruebas nuevas: `false`/`true`
+  explícitos vía `rpcOverride`, y 11 variantes de respuesta inválida —
+  `null`, `undefined`, campo ausente, tipos incompatibles, objeto vacío,
+  fila completa `null`, e inconsistencia cruzada entre campos — todas
+  confirmando `PROVISIONING_RESULT_UNKNOWN`, cero llamadas a
+  `pilot_set_coach_client` y cero activaciones pendientes guardadas).
+- SQL: sin cambios esta ronda (el fix es exclusivamente de validación
+  defensiva en la capa JS — la columna `out_profile_exists boolean` de
+  Postgres ya garantiza su tipo en el origen). Reconfirmado sin regresión:
+  `COACH-CLIENT-STATE-MIGRATION-TEST.sql` **18/18 PASS, 0 FAIL**;
+  `PENDING-ACTIVATION-MIGRATION-TEST.sql` (BD separada) **28/28 PASS, 0
+  FAIL**.
+- Concurrencia (`PENDING-ACTIVATION-MIGRATION-CONCURRENCY-TEST.sh`): PASS.
+- Confirmado explícitamente que las protecciones de concurrencia
+  (revocación concurrente entre lectura y escritura → `REVISION_CONFLICT`,
+  sin reintento ni reversión silenciosa) y de permisos (OWNER/ADMIN vs.
+  COACH/CLIENT) siguen funcionando sin cambios.
+
+**Sin commit ni push esta ronda** (no autorizado). Archivo modificado:
+`pilot-backend/server/pilot-admin-provisioning-service.cjs` (más
+`pilot-backend/tests/pilot-admin-provisioning.test.cjs` y este archivo).
+
 ## 14ª ronda: 2 hallazgos P2 de Codex sobre el commit `206d95e3f300f749efd7c7b42fe2f322717dc199` (clasificación de 23503, cliente inexistente confundido con perfil pendiente)
 
 **1) Error 23503 clasificado incorrectamente (`pilot-admin-provisioning-service.cjs:313,568`).**
