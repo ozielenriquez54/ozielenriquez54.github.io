@@ -435,22 +435,79 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   // auditoría sobre el commit a8e22a3, justo antes de esa función). Cada
   // campo obligatorio debe tener el TIPO exacto esperado — nunca se acepta
   // un valor "parecido" (p. ej. un string donde se espera boolean) ni se
-  // asume un significado por defecto cuando algo falta. También se exige
-  // consistencia cruzada entre campos: si no hay relación coach-cliente
-  // (`out_coach_client_id === null`), activo/revisión deben venir ambos en
-  // `null`; si SÍ hay relación, deben venir ambos definidos — una RPC real
-  // nunca devolvería una combinación a medias, así que si esta mezcla
-  // aparece es la propia señal de que la respuesta no es de confianza.
+  // asume un significado por defecto cuando algo falta.
+  //
+  // P2 (auditoría sobre el commit 17a1ad1, 3 defectos):
+  //   1) Consistencia de ESTADOS, no solo de tipos: de los cinco campos,
+  //      solo existen CUATRO combinaciones válidas (ver
+  //      COACH-CLIENT-STATE-MIGRATION.sql) — perfil ausente SIEMPRE implica
+  //      cliente ausente (sin perfil no puede haber `clients`); cliente
+  //      ausente SIEMPRE implica que no hay relación coach-cliente (sin
+  //      `clients` no puede haber `coach_clients`); y una relación SOLO
+  //      puede existir si perfil Y cliente están presentes. Antes solo se
+  //      validaba la coherencia entre id/activo/revisión entre sí — nunca
+  //      su coherencia con out_profile_exists/out_client_exists, así que
+  //      una respuesta con out_profile_exists=false pero
+  //      out_client_exists=true (o con una relación "fantasma" sin
+  //      cliente) pasaba como válida.
+  //   2) Identificadores y revisiones: `out_coach_client_id` ahora debe
+  //      cumplir el formato UUID real (reutilizando el mismo regex `UUID`
+  //      que el resto de este archivo ya usa para validar entradas) — un
+  //      string vacío o malformado ya no basta con "ser string".
+  //      `out_revision` debe ser un entero seguro (`Number.isSafeInteger`)
+  //      y no negativo — se rechazan fracciones, `NaN`, `Infinity`/`-Infinity`
+  //      y cualquier valor fuera del rango entero seguro de JS (el límite
+  //      real donde un `bigint` de Postgres deja de representarse sin
+  //      pérdida como `number`).
+  //   3) Cardinalidad: ver extractCoachClientStateRow(), que esta función
+  //      ya recibe como una ÚNICA fila candidata — nunca decide ella misma
+  //      cuántas filas había.
   function validateCoachClientStateRow(row) {
     if (!row || typeof row !== 'object') return false;
     if (typeof row.out_profile_exists !== 'boolean') return false;
     if (typeof row.out_client_exists !== 'boolean') return false;
-    if (row.out_coach_client_id !== null && typeof row.out_coach_client_id !== 'string') return false;
+    if (row.out_coach_client_id !== null && (typeof row.out_coach_client_id !== 'string' || !UUID.test(row.out_coach_client_id))) return false;
     if (row.out_active !== null && typeof row.out_active !== 'boolean') return false;
-    if (row.out_revision !== null && typeof row.out_revision !== 'number') return false;
+    if (row.out_revision !== null && !(Number.isSafeInteger(row.out_revision) && row.out_revision >= 0)) return false;
+
     const hasRelationship = row.out_coach_client_id !== null;
+    // Coherencia entre id/activo/revisión: los tres deben venir definidos
+    // juntos, o los tres en null juntos — nunca una mezcla.
     if (hasRelationship !== (row.out_active !== null) || hasRelationship !== (row.out_revision !== null)) return false;
+    // Coherencia entre los TRES estados reales de la RPC (ver cabecera):
+    // perfil ausente -> cliente ausente; cliente ausente -> sin relación;
+    // relación -> perfil Y cliente presentes.
+    if (row.out_profile_exists === false && row.out_client_exists !== false) return false;
+    if (row.out_client_exists === false && hasRelationship) return false;
+    if (hasRelationship && (row.out_profile_exists !== true || row.out_client_exists !== true)) return false;
+
     return true;
+  }
+
+  // P2 (auditoría sobre el commit 17a1ad1, "cardinalidad de respuesta
+  // RPC"): la versión anterior hacía `Array.isArray(state.data) ?
+  // state.data[0] : state.data`, que toma el PRIMER elemento sin
+  // comprobar nunca cuántos había — cero filas (`[]`) devolvía
+  // `undefined` (que entonces fallaba la validación por "falsy", no por
+  // cardinalidad incorrecta — un accidente, no una verificación real), y
+  // más de una fila elegía la primera EN SILENCIO, ignorando el resto. Una
+  // función SQL `returns table(...)` que de verdad promete una sola fila
+  // nunca debería dar más de una — si lo hace, es la señal de que algo en
+  // el contrato está roto, nunca algo que esta capa deba decidir por su
+  // cuenta cuál de las filas "vale". Esta función exige EXACTAMENTE una
+  // fila candidata antes de pasársela a validateCoachClientStateRow():
+  //   - un arreglo (la forma real que devuelve PostgREST para `returns
+  //     table`) debe tener longitud EXACTAMENTE 1 — 0 o 2+ se rechazan,
+  //     nunca se usa el índice 0 a ciegas.
+  //   - un objeto plano no-null (la forma que usan los mocks de prueba de
+  //     este archivo para representar "una fila") se acepta como esa
+  //     única fila.
+  //   - cualquier otra forma (null, string, number, arreglo de algo que no
+  //     sea un objeto) no es una fila válida en absoluto.
+  function extractCoachClientStateRow(data) {
+    if (Array.isArray(data)) return data.length === 1 ? data[0] : undefined;
+    if (data !== null && typeof data === 'object') return data;
+    return undefined;
   }
 
   // Vincula coach y cliente. p_client_membership_id es el id en
@@ -529,7 +586,7 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
     const state = await client.rpc('pilot_get_coach_client_state', { p_gym_id: gymId, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId });
     check();
     if (state.error) throw mapRpcError(state.error);
-    const row = Array.isArray(state.data) ? state.data[0] : state.data;
+    const row = extractCoachClientStateRow(state.data);
     if (!validateCoachClientStateRow(row)) fail('PROVISIONING_RESULT_UNKNOWN', 503);
     if (row.out_profile_exists === false) fail('PROFILE_NOT_FOUND', 404);
     if (row.out_client_exists === false) fail('CLIENT_RECORD_MISSING', 409);

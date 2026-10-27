@@ -10,6 +10,59 @@ automatiza — **pero depende de infraestructura SQL que todavía no existe
 en Supabase real.** No se declara el flujo terminado de extremo a extremo:
 ver la sección "Bloqueo real" más abajo.
 
+## 16ª ronda: 3 hallazgos P2 de Codex sobre el commit `17a1ad1ed78329e23300add454ce9d3e4eb2765e` (consistencia de estados, validación estricta de IDs/revisiones, cardinalidad de la RPC)
+
+**1) Consistencia de estados.** `validateCoachClientStateRow()` validaba el
+TIPO de cada campo y la coherencia entre id/activo/revisión entre sí, pero
+nunca su coherencia con `out_profile_exists`/`out_client_exists` — una
+respuesta con `out_profile_exists=false` pero `out_client_exists=true` (o
+con una relación coach-cliente "fantasma" sin perfil ni cliente) pasaba
+como válida. Corregido exigiendo las 3 implicaciones reales entre los
+cuatro estados posibles de la RPC (ver COACH-CLIENT-STATE-MIGRATION.sql):
+perfil ausente implica cliente ausente; cliente ausente implica ninguna
+relación coach-cliente; una relación exige perfil Y cliente presentes.
+
+**2) Validación estricta de identificadores y revisiones.** `out_coach_client_id`
+solo se comprobaba como `typeof === 'string'` (aceptaba `''`, `'no-es-un-uuid'`,
+cualquier string); `out_revision` solo se comprobaba como `typeof === 'number'`
+(aceptaba negativos, fraccionarios, `NaN`, `Infinity` y valores fuera del
+rango entero seguro de JS, donde un `bigint` real de Postgres ya no se
+representa sin pérdida). Corregido reutilizando el mismo regex `UUID` que
+el resto del archivo ya usa para validar entradas, y exigiendo
+`Number.isSafeInteger(valor) && valor >= 0` para la revisión.
+
+**3) Cardinalidad de respuesta RPC.** `Array.isArray(state.data) ?
+state.data[0] : state.data` tomaba el primer elemento sin comprobar nunca
+cuántas filas había — cero filas u más de una elegían una fila en
+silencio. Corregido con `extractCoachClientStateRow()`: un arreglo debe
+tener longitud EXACTAMENTE 1 (nunca se usa el índice 0 a ciegas); un
+objeto plano no-null (la forma que usan los mocks de este archivo) se
+acepta como esa única fila; cualquier otra forma (null, string, number,
+arreglo de algo que no sea un objeto) se rechaza.
+
+**Pruebas ejecutadas esta ronda:**
+- `npm test`: **175/175 PASS, 0 FAIL** (22 pruebas nuevas: 4 de
+  consistencia de estados, 4 de formato UUID, 7 de validación de
+  revisión, 6 de cardinalidad/estructura, y 1 confirmando que exactamente
+  una fila envuelta en un arreglo SÍ se acepta y procesa normalmente —
+  las 15+ reproducciones pedidas, todas confirmando
+  `PROVISIONING_RESULT_UNKNOWN`, cero llamadas a `pilot_set_coach_client`
+  y cero activaciones pendientes guardadas).
+- SQL: sin cambios esta ronda (el fix es exclusivamente de validación
+  defensiva en la capa JS). Reconfirmado sin regresión:
+  `COACH-CLIENT-STATE-MIGRATION-TEST.sql` **18/18 PASS, 0 FAIL**;
+  `PENDING-ACTIVATION-MIGRATION-TEST.sql` (BD separada) **28/28 PASS, 0
+  FAIL**.
+- Concurrencia (`PENDING-ACTIVATION-MIGRATION-CONCURRENCY-TEST.sh`): PASS.
+- Confirmado explícitamente que las protecciones de permisos (OWNER/ADMIN
+  vs. COACH/CLIENT), concurrencia (revocación concurrente →
+  `REVISION_CONFLICT`, sin reintento ni reversión silenciosa) y lectura
+  de revisiones exactas (0/8/100) siguen funcionando sin cambios.
+
+**Sin commit ni push esta ronda** (no autorizado). Archivos modificados:
+`pilot-backend/server/pilot-admin-provisioning-service.cjs`,
+`pilot-backend/tests/pilot-admin-provisioning.test.cjs`, y este archivo.
+
 ## 15ª ronda: 1 hallazgo P2 de Codex sobre el commit `a8e22a3b6f97838ecbdf496e0670185397807e2a` (`!row.out_profile_exists` trataba cualquier valor falsy como perfil ausente)
 
 **`setCoachClient()` (`pilot-admin-provisioning-service.cjs:493`).**

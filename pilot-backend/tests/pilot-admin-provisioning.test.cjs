@@ -585,6 +585,36 @@ for (const [label, malformedRow] of [
   ['la respuesta es un objeto vacío', {}],
   ['hay coach_client_id pero out_active/out_revision quedan en null (inconsistencia cruzada)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: null, out_revision: null }],
   ['no hay coach_client_id pero out_revision SÍ viene definida (inconsistencia cruzada)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: 3 }],
+  // -------------------------------------------------------------------------
+  // P2 (auditoría sobre el commit 17a1ad1, defecto 1 — "consistencia de
+  // estados"): de los 5 campos, solo existen 4 combinaciones de ESTADO
+  // válidas (ver COACH-CLIENT-STATE-MIGRATION.sql) — perfil ausente
+  // implica cliente ausente; cliente ausente implica ninguna relación;
+  // una relación exige perfil Y cliente presentes. Las 4 pruebas que
+  // siguen violan cada una de esas implicaciones por separado (y la
+  // última, las dos primeras juntas).
+  // -------------------------------------------------------------------------
+  ['out_profile_exists=false pero out_client_exists=true (contradice "sin perfil no puede haber clients")', { out_profile_exists: false, out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }],
+  ['out_profile_exists=false pero declara una relación coach-cliente existente', { out_profile_exists: false, out_client_exists: false, out_coach_client_id: uuid(5000), out_active: true, out_revision: 0 }],
+  ['out_client_exists=false pero declara una relación coach-cliente existente', { out_profile_exists: true, out_client_exists: false, out_coach_client_id: uuid(5000), out_active: true, out_revision: 0 }],
+  ['out_profile_exists=false Y out_client_exists=true Y además declara una relación (violación combinada)', { out_profile_exists: false, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: 0 }],
+  // -------------------------------------------------------------------------
+  // P2, defecto 2 — "validación estricta de identificadores y revisiones":
+  // out_coach_client_id debe cumplir el formato UUID real (no basta con
+  // ser string); out_revision debe ser un entero seguro no negativo (no
+  // basta con ser number).
+  // -------------------------------------------------------------------------
+  ['out_coach_client_id es una cadena vacía (no un UUID real)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: '', out_active: true, out_revision: 0 }],
+  ['out_coach_client_id no tiene formato UUID', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: 'not-a-uuid', out_active: true, out_revision: 0 }],
+  ['out_coach_client_id es un UUID truncado (un carácter corto)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: '00000000-0000-0000-0000-00000000000', out_active: true, out_revision: 0 }],
+  ['out_coach_client_id tiene caracteres no hexadecimales', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: '00000000-0000-0000-0000-0000000000zz', out_active: true, out_revision: 0 }],
+  ['out_revision es negativa', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: -1 }],
+  ['out_revision es fraccionaria', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: 1.5 }],
+  ['out_revision es NaN', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: NaN }],
+  ['out_revision es Infinity', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: Infinity }],
+  ['out_revision es -Infinity', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: -Infinity }],
+  ['out_revision excede el rango entero seguro de JavaScript', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: Number.MAX_SAFE_INTEGER + 1 }],
+  ['out_revision tiene un tipo incompatible (string en vez de number)', { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: '3' }],
 ]) {
   test(`setCoachClient: respuesta inválida de pilot_get_coach_client_state (${label}) -> error explícito de contrato (PROVISIONING_RESULT_UNKNOWN), SIN activación pendiente ni escritura de asignación`, async () => {
     const db = freshDb();
@@ -603,6 +633,50 @@ for (const [label, malformedRow] of [
     assert.equal(db.pendingActivations.length, 0);
   });
 }
+
+// ---------------------------------------------------------------------------
+// P2 (auditoría sobre el commit 17a1ad1, defecto 3 — "cardinalidad de
+// respuesta RPC"): `Array.isArray(state.data) ? state.data[0] : state.data`
+// tomaba el PRIMER elemento sin comprobar nunca cuántos había — cero filas
+// u más de una fila nunca se distinguían de "exactamente una". Las
+// pruebas que siguen operan sobre `state.data` directamente (no sobre la
+// forma de una fila ya extraída), para cubrir exactamente ese defecto.
+// ---------------------------------------------------------------------------
+for (const [label, rawData] of [
+  ['cero filas (arreglo vacío)', []],
+  ['dos filas válidas (nunca se elige la primera en silencio)', [
+    { out_profile_exists: true, out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null },
+    { out_profile_exists: true, out_client_exists: true, out_coach_client_id: uuid(5000), out_active: true, out_revision: 3 },
+  ]],
+  ['la respuesta es un string, no un objeto ni un arreglo', 'unexpected-string'],
+  ['la respuesta es un number, no un objeto ni un arreglo', 42],
+  ['la respuesta es un boolean, no un objeto ni un arreglo', true],
+  ['un arreglo cuyo único elemento no es un objeto', [42]],
+]) {
+  test(`setCoachClient: cardinalidad/estructura inválida de pilot_get_coach_client_state (${label}) -> PROVISIONING_RESULT_UNKNOWN, nunca elige una fila en silencio`, async () => {
+    const db = freshDb();
+    const rpcOverride = (name) => name === 'pilot_get_coach_client_state' ? { data: rawData, error: null } : null;
+    const { api, rpcCalls } = service({ db, findUserByEmail: findAna, rpcOverride });
+    await assert.rejects(
+      api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } }),
+      e => e.code === 'PROVISIONING_RESULT_UNKNOWN' && e.status === 503,
+    );
+    assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 0);
+    assert.equal(db.coachClients.length, 0);
+    assert.equal(db.pendingActivations.length, 0);
+  });
+}
+
+test('setCoachClient: exactamente UNA fila envuelta en un arreglo (la forma real de una RPC `returns table`) se acepta y se procesa normalmente', async () => {
+  const db = freshDb();
+  const rpcOverride = (name) => name === 'pilot_get_coach_client_state'
+    ? { data: [{ out_profile_exists: true, out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }], error: null }
+    : null;
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna, rpcOverride });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PROVISIONED');
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 1);
+});
 
 test('addClient: un OWNER NO asignado previamente reasigna a un cliente YA EXISTENTE a un coach válido, sin leer NUNCA `clients` ni `coach_clients` (RLS clínica real lo bloquearía)', async () => {
   // P1 (auditoría sobre el commit a201ed1, "alta directa bloqueada por
