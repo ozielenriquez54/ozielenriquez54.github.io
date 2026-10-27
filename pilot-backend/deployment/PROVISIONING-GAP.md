@@ -10,6 +10,75 @@ automatiza — **pero depende de infraestructura SQL que todavía no existe
 en Supabase real.** No se declara el flujo terminado de extremo a extremo:
 ver la sección "Bloqueo real" más abajo.
 
+## 14ª ronda: 2 hallazgos P2 de Codex sobre el commit `206d95e3f300f749efd7c7b42fe2f322717dc199` (clasificación de 23503, cliente inexistente confundido con perfil pendiente)
+
+**1) Error 23503 clasificado incorrectamente (`pilot-admin-provisioning-service.cjs:313,568`).**
+`mapRpcError` traducía CUALQUIER violación de llave foránea (23503), sin
+importar de qué RPC viniera, al mismo código genérico
+(`RELATED_RECORD_NOT_FOUND`), y `addClient()` convertía SIEMPRE ese código
+en `PENDING_PROFILE` con una activación pendiente guardada — incluso
+cuando la membresía y el perfil YA existían y lo que de verdad falló fue
+la escritura de `pilot_set_coach_client` (un error de integridad real,
+nunca "todavía no existe"). Corregido eliminando el mapeo genérico: cada
+llamada decide ahora su propio significado para 23503 según en qué punto
+del flujo ocurre — en `setMembership` (la PRIMERA escritura, antes de que
+exista cualquier membresía confirmada) sigue significando "perfil
+ausente" (`PROFILE_NOT_FOUND`, pendiente genuino); en `setCoachClient`
+(que corre DESPUÉS de que `setMembership` ya confirmó membresía+perfil)
+significa una inconsistencia real (`CLIENT_RECORD_MISSING`, 409), que
+`addClient()` propaga explícito SIN guardar ninguna activación pendiente.
+
+**2) Cliente inexistente confundido con perfil pendiente
+(`COACH-CLIENT-STATE-MIGRATION.sql:137`, `pilot-admin-provisioning-service.cjs:458`).**
+`pilot_get_coach_client_state` solo comprobaba `clients`, e INFERÍA (sin
+verificarlo nunca) que su ausencia significaba "el perfil todavía no
+existe" — pero para cuando esta función se llama, la membresía del
+cliente YA está confirmada (por la propia validación de la función) y,
+por construcción, el perfil también debería existir ya. Si `clients` de
+todos modos faltaba, eso era una inconsistencia administrativa real
+(el alta nunca terminó de crear esa fila), nunca "pendiente". Corregido
+agregando una comprobación EXPLÍCITA de la existencia del perfil
+(`public.profiles`, nombre/columna SIN confirmar en esta sesión — mismo
+punto no verificado que `pilot_private.lock_admin`) antes de mirar
+`clients`, con tres estados ahora distinguibles sin ambigüedad: perfil
+ausente (`out_profile_exists=false`, genuinamente pendiente), perfil Y
+membresía presentes pero `clients` ausente (`out_client_exists=false`,
+inconsistencia administrativa — `CLIENT_RECORD_MISSING`, nunca
+programa una reanudación automática) y cliente válido (ambos presentes).
+
+**Pruebas ejecutadas esta ronda:**
+- `npm test`: **140/140 PASS, 0 FAIL** (3 pruebas reescritas para los
+  nuevos códigos + 1 prueba nueva para el caso defensivo "perfil ausente"
+  detectado directamente por la RPC).
+- SQL (`COACH-CLIENT-STATE-MIGRATION-TEST.sql`, contra PostgreSQL 16.15
+  local desechable, recreada desde cero — la función cambió su tabla de
+  retorno, así que la migración ahora hace `drop function` antes de
+  `create function`): **18/18 PASS, 0 FAIL** (15 previas + 3 nuevas:
+  perfil ausente, `clients` ausente con perfil válido, cliente válido).
+- SQL de regresión (`PENDING-ACTIVATION-MIGRATION-TEST.sql`, sin cambios
+  esta ronda, base de datos separada): **28/28 PASS, 0 FAIL** — las
+  protecciones de revisión, revocación concurrente y permisos de rondas
+  anteriores siguen intactas (nunca se reintrodujeron).
+- Concurrencia (`PENDING-ACTIVATION-MIGRATION-CONCURRENCY-TEST.sh`, sin
+  cambios esta ronda): PASS.
+
+**Pendiente (no se puede cerrar sin acceso a Supabase real):**
+- Confirmar el nombre real de la tabla `profiles` y de su columna de
+  enlace con `gym_memberships.user_id` antes de aplicar
+  `COACH-CLIENT-STATE-MIGRATION.sql` — ver la cabecera de ese archivo.
+- Mismos pendientes ya documentados en la 13ª ronda (`pilot_private.lock_admin`,
+  nombres de columna de `gym_memberships`/`clients`/`coach_clients`).
+- Probar en un proyecto de Supabase DESECHABLE antes de producción.
+
+**Sin commit ni push esta ronda** (no autorizado). Archivos modificados:
+`nutrika/pilot-admin-provisioning-ui.js`,
+`pilot-backend/server/pilot-admin-provisioning-service.cjs`,
+`pilot-backend/tests/pilot-admin-provisioning.test.cjs`,
+`pilot-backend/deployment/COACH-CLIENT-STATE-MIGRATION.sql`,
+`pilot-backend/deployment/COACH-CLIENT-STATE-MIGRATION-TEST-SCHEMA.sql`,
+`pilot-backend/deployment/COACH-CLIENT-STATE-MIGRATION-TEST.sql`, y este
+archivo.
+
 ## 13ª ronda: hallazgos de Codex sobre `setCoachClient()` en el commit `e6554ff` (reemplaza la adivinanza de revisiones de la ronda anterior)
 
 La 12ª ronda (punto 2, más abajo) "resolvió" el bloqueo de RLS sobre

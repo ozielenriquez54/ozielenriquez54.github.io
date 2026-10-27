@@ -29,6 +29,16 @@
 --      contra un Postgres real — no es, ni pretende ser, el código fuente
 --      real de esa RPC.
 --
+--   3. `public.profiles` — tabla que COACH-CLIENT-STATE-MIGRATION.sql
+--      (tras el hallazgo P2 de Codex sobre el commit 206d95e, "cliente
+--      inexistente confundido con perfil pendiente") ahora consulta para
+--      distinguir "perfil ausente" de "`clients` ausente con perfil
+--      válido" — NUNCA confirmada contra el esquema real de Supabase (ver
+--      la cabecera de esa migración). Este stub asume la forma más común
+--      en proyectos Supabase: una fila por usuario de `auth.users`, con
+--      `profiles.id` igual a ese mismo id. Las pruebas la pueblan o la
+--      dejan vacía según el estado que cada escenario necesite simular.
+--
 -- Uso (en ese orden, sobre una base de datos creada solo para esto):
 --   createdb twogramms_disposable_test
 --   psql -d twogramms_disposable_test -f PENDING-ACTIVATION-MIGRATION-TEST-SCHEMA.sql
@@ -36,6 +46,12 @@
 --   psql -d twogramms_disposable_test -f COACH-CLIENT-STATE-MIGRATION.sql
 --   psql -d twogramms_disposable_test -f COACH-CLIENT-STATE-MIGRATION-TEST.sql
 -- ============================================================================
+
+create table if not exists public.profiles (
+  id uuid primary key
+);
+
+grant select on public.profiles to authenticated;
 
 create schema if not exists pilot_private;
 

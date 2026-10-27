@@ -57,22 +57,55 @@
 -- `gym_memberships`, no `lock_admin` (que aquí es, como mucho, una
 -- serialización adicional, no la única barrera de autorización).
 --
+-- ⚠️ ACTUALIZACIÓN (hallazgo P2 de Codex sobre el commit
+-- 206d95e3f300f749efd7c7b42fe2f322717dc199, "cliente inexistente
+-- confundido con perfil pendiente"): el comentario original de la línea
+-- 137 ("profiles.id del cliente todavía no existe") era una INFERENCIA
+-- nunca verificada — esta función solo comprobaba `clients`, sin
+-- consultar jamás si el perfil (`profiles`) existía de verdad, así que
+-- "falta la fila en `clients`" y "el perfil todavía no existe" quedaban
+-- indistinguibles para quien llama. Corregido consultando EXPLÍCITAMENTE
+-- la existencia del perfil antes de mirar `clients`:
+--   - perfil ausente -> out_profile_exists=false, out_client_exists=false
+--     (genuinamente pendiente: la invitación nunca se aceptó).
+--   - perfil presente pero `clients` ausente -> out_profile_exists=true,
+--     out_client_exists=false (inconsistencia ADMINISTRATIVA: la
+--     membresía y el perfil ya existen, pero el alta nunca terminó de
+--     crear `clients` — la capa JS NUNCA debe interpretar esto como
+--     "pendiente" ni programar una reanudación automática para
+--     "corregirlo" solo, porque nada en el flujo normal vuelve a crear
+--     esa fila por sí sola).
+--   - ambos presentes -> continúa igual que antes (estado de
+--     coach_clients, si existe).
+-- ⚠️ Nombre/columna de `profiles` TAMPOCO confirmados en esta sesión
+-- (mismo motivo que `pilot_private.lock_admin`, arriba): se asume
+-- `public.profiles(id uuid primary key)`, con `profiles.id` igual al
+-- `user_id` de `gym_memberships` (el patrón más común en proyectos
+-- Supabase, un perfil por fila de `auth.users`) — si el nombre real de la
+-- tabla o de su columna de enlace es distinto, esta función no
+-- compilará/fallará al aplicarse, nunca se comportará mal en silencio.
+-- Quien aplique esto debe confirmar/ajustar esa referencia contra el
+-- esquema real antes de desplegar.
+--
 -- Quien aplique esto debe:
 --   1. Confirmar/ajustar la llamada a `pilot_private.lock_admin` (ver
 --      arriba).
 --   2. Confirmar los nombres reales de columna en gym_memberships/
---      clients/coach_clients (mismo punto no verificado que el resto de
---      esta sesión).
+--      clients/coach_clients/profiles (mismo punto no verificado que el
+--      resto de esta sesión).
 --   3. Probar esto en un proyecto de Supabase DESECHABLE antes que en
 --      producción.
 -- ============================================================================
 
-create or replace function public.pilot_get_coach_client_state(
+drop function if exists public.pilot_get_coach_client_state(uuid, uuid, uuid);
+
+create function public.pilot_get_coach_client_state(
   p_gym_id uuid,
   p_coach_membership_id uuid,
   p_client_membership_id uuid
 )
 returns table (
+  out_profile_exists boolean,
   out_client_exists boolean,
   out_coach_client_id uuid,
   out_active boolean,
@@ -86,7 +119,8 @@ set search_path = ''
 as $$
 declare
   v_coach_membership_valid boolean;
-  v_client_membership_valid boolean;
+  v_client_user_id uuid;
+  v_profile_exists boolean;
   v_client_id uuid;
 begin
   if auth.uid() is null then
@@ -122,12 +156,30 @@ begin
     raise exception 'INVALID_COACH_RELATIONSHIP' using errcode = '22023';
   end if;
 
-  select exists (
-    select 1 from public.gym_memberships gm
-    where gm.id = p_client_membership_id and gm.gym_id = p_gym_id
-  ) into v_client_membership_valid;
-  if not v_client_membership_valid then
+  -- La membresía del cliente debe existir EN ESE MISMO gimnasio — se
+  -- obtiene su user_id en la misma consulta, para la comprobación de
+  -- perfil que sigue (evita una segunda lectura de gym_memberships).
+  select gm.user_id into v_client_user_id
+  from public.gym_memberships gm
+  where gm.id = p_client_membership_id and gm.gym_id = p_gym_id;
+  if v_client_user_id is null then
     raise exception 'INVALID_CLIENT_RELATIONSHIP' using errcode = '22023';
+  end if;
+
+  -- P2 (auditoría sobre el commit 206d95e, "cliente inexistente
+  -- confundido con perfil pendiente"): se comprueba EXPLÍCITAMENTE si el
+  -- perfil existe, en vez de inferirlo de la ausencia de `clients` — ver
+  -- la nota de cabecera sobre el nombre/columna de `profiles`, sin
+  -- confirmar en esta sesión.
+  select exists (
+    select 1 from public.profiles pr where pr.id = v_client_user_id
+  ) into v_profile_exists;
+
+  if not v_profile_exists then
+    -- Perfil genuinamente ausente (invitación nunca aceptada) — esto SÍ
+    -- es "pendiente", nunca un error de integridad.
+    return query select false, false, null::uuid, null::boolean, null::bigint;
+    return;
   end if;
 
   select c.id into v_client_id
@@ -135,15 +187,18 @@ begin
   where c.gym_id = p_gym_id and c.membership_id = p_client_membership_id;
 
   if v_client_id is null then
-    -- profiles.id del cliente todavía no existe (pilot_set_membership no
-    -- pudo crear `clients` todavía) — esto SÍ es "pendiente", nunca un
-    -- error de integridad.
-    return query select false, null::uuid, null::boolean, null::bigint;
+    -- El perfil Y la membresía YA existen, pero `clients` nunca se creó
+    -- para esta membresía: esto es una INCONSISTENCIA ADMINISTRATIVA
+    -- (el alta nunca terminó de crear ese registro), nunca "perfil
+    -- pendiente" — la capa JS no debe programar una reanudación
+    -- automática para "corregirla" sola, porque nada en el flujo normal
+    -- vuelve a crear esa fila por sí mismo.
+    return query select true, false, null::uuid, null::boolean, null::bigint;
     return;
   end if;
 
   return query
-    select true, cc.id, cc.active, cc.revision
+    select true, true, cc.id, cc.active, cc.revision
     from public.coach_clients cc
     where cc.gym_id = p_gym_id
       and cc.coach_membership_id = p_coach_membership_id
@@ -152,13 +207,13 @@ begin
   if not found then
     -- El cliente existe, pero nunca se le asignó ESTE coach — primera
     -- asignación (revisión 0 desde la perspectiva de la capa JS).
-    return query select true, null::uuid, null::boolean, null::bigint;
+    return query select true, true, null::uuid, null::boolean, null::bigint;
   end if;
 end;
 $$;
 
 comment on function public.pilot_get_coach_client_state(uuid, uuid, uuid) is
-  'Lectura administrativa SEGURA (nunca clínica) del estado de coach_clients para un (gym, coach, cliente) exacto. Exclusiva para OWNER/ADMIN activo de ESE gimnasio. Nunca escribe nada — pilot_set_coach_client sigue siendo la única escritura. Distingue "cliente sin perfil todavía" de "relación coach/cliente inválida" explícitamente.';
+  'Lectura administrativa SEGURA (nunca clínica) del estado de coach_clients para un (gym, coach, cliente) exacto. Exclusiva para OWNER/ADMIN activo de ESE gimnasio. Nunca escribe nada — pilot_set_coach_client sigue siendo la única escritura. Distingue explícitamente perfil ausente (genuinamente pendiente), `clients` ausente con perfil y membresía válidos (inconsistencia administrativa, nunca "pendiente") y relación coach/cliente inválida.';
 
 revoke all on function public.pilot_get_coach_client_state(uuid, uuid, uuid) from public;
 grant execute on function public.pilot_get_coach_client_state(uuid, uuid, uuid) to authenticated;

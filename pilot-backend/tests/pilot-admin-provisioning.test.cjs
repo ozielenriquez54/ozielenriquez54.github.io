@@ -148,15 +148,25 @@ function applyGetCoachClientState(db, actor, { p_gym_id, p_coach_membership_id, 
   if (!clientMembership || clientMembership.gym_id !== p_gym_id) {
     return { data: null, error: { code: '22023', message: 'INVALID_CLIENT_RELATIONSHIP' } };
   }
+  // P2 (auditoría sobre el commit 206d95e, "cliente inexistente confundido
+  // con perfil pendiente"): el perfil se comprueba EXPLÍCITAMENTE primero
+  // (igual que COACH-CLIENT-STATE-MIGRATION.sql), nunca se infiere de la
+  // ausencia de `clients` — reutiliza el mismo db.missingProfiles que
+  // applySetMembership ya usa para simular el 23503 de pilot_set_membership.
+  if (db.missingProfiles?.has(clientMembership.user_id)) {
+    return { data: { out_profile_exists: false, out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }, error: null };
+  }
   const clientRecord = db.clients.find(c => c.gym_id === p_gym_id && c.membership_id === p_client_membership_id);
   if (!clientRecord) {
-    return { data: { out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }, error: null };
+    // Perfil Y membresía existen, pero `clients` nunca se creó —
+    // inconsistencia administrativa, nunca "perfil pendiente".
+    return { data: { out_profile_exists: true, out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }, error: null };
   }
   const row = db.coachClients.find(c => c.gym_id === p_gym_id && c.coach_membership_id === p_coach_membership_id && c.client_id === clientRecord.id);
   if (!row) {
-    return { data: { out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }, error: null };
+    return { data: { out_profile_exists: true, out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }, error: null };
   }
-  return { data: { out_client_exists: true, out_coach_client_id: row.id, out_active: row.active, out_revision: row.revision }, error: null };
+  return { data: { out_profile_exists: true, out_client_exists: true, out_coach_client_id: row.id, out_active: row.active, out_revision: row.revision }, error: null };
 }
 
 function fakeClient({ actor = OWNER, db, rpcOverride = null, rpcCalls = [] }) {
@@ -457,34 +467,75 @@ test('REVISION_CONFLICT persistente se reporta tras un número acotado de reinte
   assert.ok(!JSON.stringify(membershipCalls).includes('secreto')); // no se filtra el mensaje crudo
 });
 
-test('un 23503 inesperado en pilot_set_coach_client también se trata como pendiente (nunca se filtra el mensaje crudo)', async () => {
+// ---------------------------------------------------------------------------
+// P2 (auditoría sobre el commit 206d95e3f300f749efd7c7b42fe2f322717dc199,
+// "error 23503 clasificado incorrectamente" + "cliente inexistente
+// confundido con perfil pendiente"): las tres pruebas que siguen cubren,
+// explícitamente, los TRES estados que ahora distingue
+// pilot_get_coach_client_state (ver COACH-CLIENT-STATE-MIGRATION.sql):
+// perfil ausente (genuinamente pendiente), `clients` ausente con perfil Y
+// membresía ya válidos (inconsistencia administrativa, NUNCA "pendiente"),
+// y cliente válido (las pruebas de más arriba, p. ej. "provisiona un
+// cliente que ya tiene cuenta Auth...", ya cubren este tercer estado).
+// ---------------------------------------------------------------------------
+
+test('setCoachClient: perfil AUSENTE (según pilot_get_coach_client_state) -> PENDING_PROFILE, nunca CLIENT_RECORD_MISSING', async () => {
+  // Caso defensivo: en el flujo normal, setMembership() ya garantiza que
+  // el perfil existe antes de llegar aquí (ver su propia postcondición) —
+  // esta prueba fuerza la respuesta de la RPC directamente para probar
+  // que setCoachClient() SÍ distingue este estado del de "clients ausente"
+  // si, por lo que sea, llegara a ocurrir.
+  const db = freshDb();
+  const rpcOverride = (name) => name === 'pilot_get_coach_client_state'
+    ? { data: { out_profile_exists: false, out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }, error: null }
+    : null;
+  const { api, rpcCalls } = service({ db, findUserByEmail: findAna, rpcOverride });
+  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
+  assert.equal(result.status, 'PENDING_PROFILE');
+  assert.equal(result.autoResumable, true);
+  assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 0);
+});
+
+test('un 23503 inesperado en pilot_set_coach_client (membresía y perfil YA válidos) se reporta como CLIENT_RECORD_MISSING explícito, nunca como PENDING_PROFILE ni con una activación pendiente guardada', async () => {
+  // Por el momento en que esta RPC se llama, setMembership() YA confirmó
+  // que la membresía existe, está activa y tiene CLIENT — un 23503 aquí es
+  // una inconsistencia real (o una carrera entre la lectura del estado y
+  // esta escritura), nunca "todavía no existe". addClient() debe
+  // propagarlo explícito, SIN guardar ninguna activación pendiente:
+  // guardarla sugeriría que se resolverá sola, y nada en el flujo normal
+  // vuelve a crear ese registro.
   const db = freshDb();
   const rpcOverride = (name) => name === 'pilot_set_coach_client' ? { data: null, error: { code: '23503', message: 'detalle-interno-secreto' } } : null;
   const { api } = service({ db, findUserByEmail: findAna, rpcOverride });
-  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
-  assert.equal(result.status, 'PENDING_PROFILE');
-  assert.ok(!JSON.stringify(result).includes('secreto'));
+  await assert.rejects(
+    api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } }),
+    e => { assert.ok(!JSON.stringify(e).includes('secreto')); return e.code === 'CLIENT_RECORD_MISSING' && e.status === 409; },
+  );
+  assert.equal(db.pendingActivations.length, 0);
 });
 
-test('setCoachClient reporta PENDING_PROFILE si `clients` todavía no tiene la fila del cliente, SIN leer `clients` con la sesión propia (la RPC administrativa de solo lectura lo detecta)', async () => {
-  // P1 (auditoría sobre los commits a201ed1 y e6554ff): ni la existencia
-  // de `clients` ni la revisión de `coach_clients` se leen con la sesión
-  // del propio OWNER/ADMIN — pilot_get_coach_client_state (administrativa,
-  // SECURITY DEFINER) es quien detecta "el cliente todavía no existe" y
-  // lo distingue explícitamente de una relación inválida; nunca se llega
-  // a llamar pilot_set_coach_client cuando esto ocurre.
+test('setCoachClient reporta CLIENT_RECORD_MISSING (inconsistencia administrativa, nunca PENDING_PROFILE) si `clients` no tiene la fila del cliente aunque la membresía y el perfil YA existan, SIN leer `clients` con la sesión propia', async () => {
+  // La RPC administrativa de solo lectura (pilot_get_coach_client_state)
+  // distingue explícitamente este caso de "perfil ausente" — ver
+  // COACH-CLIENT-STATE-MIGRATION.sql. Nunca se lee `clients` con la sesión
+  // propia del OWNER/ADMIN, y nunca se llega a llamar pilot_set_coach_client
+  // cuando esto ocurre.
   const db = freshDb();
   const { api, rpcCalls } = service({ db, findUserByEmail: findAna });
   // Fuerza que, tras la membresía, NUNCA aparezca la fila en `clients`
-  // (simula justo el instante en que pilot_set_membership aún no la creó).
+  // (simula justo la inconsistencia: la membresía quedó activa con CLIENT,
+  // pero `clients` nunca se creó).
   const realPush = db.clients.push.bind(db.clients);
   db.clients.push = () => {}; // absorbe cualquier intento de "crearla" en el mock
-  const result = await api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } });
-  assert.equal(result.status, 'PENDING_PROFILE');
+  await assert.rejects(
+    api.addClient({ token: 'tok', command: { name: 'Ana', email: 'ana@example.com', coachId: COACH, gymId: GYM } }),
+    e => e.code === 'CLIENT_RECORD_MISSING' && e.status === 409,
+  );
   assert.equal(rpcCalls.filter(c => c[0] === 'pilot_get_coach_client_state').length, 1);
-  // pilot_set_coach_client NUNCA se llega a invocar: el estado ya dijo
-  // "el cliente no existe todavía", sin necesidad de intentar escribir.
+  // pilot_set_coach_client NUNCA se llega a invocar: el estado ya dijo que
+  // `clients` no existía, sin necesidad de intentar escribir.
   assert.equal(rpcCalls.filter(c => c[0] === 'pilot_set_coach_client').length, 0);
+  assert.equal(db.pendingActivations.length, 0); // nunca se guarda una reanudación automática para esto
   db.clients.push = realPush;
 });
 
@@ -538,7 +589,7 @@ test('addClient: revocación CONCURRENTE entre la lectura del estado y la escrit
       // activa) — pero, ENTRE esta lectura y la escritura que sigue, OTRA
       // transacción revoca la relación. La captura ANTES de mutar es,
       // deliberadamente, lo que esta función ya devolvió.
-      const snapshot = { out_client_exists: true, out_coach_client_id: row.id, out_active: row.active, out_revision: row.revision };
+      const snapshot = { out_profile_exists: true, out_client_exists: true, out_coach_client_id: row.id, out_active: row.active, out_revision: row.revision };
       row.active = false;
       row.revision += 1;
       return { data: snapshot, error: null };
@@ -1164,11 +1215,16 @@ test('createProvisioningInfrastructure: resuelve un correo existente paginando l
             // de escribir — nunca lee `clients`/`coach_clients` con la
             // sesión propia.
             if (name === 'pilot_get_coach_client_state') {
+              // Este mock nunca modela "perfil ausente" (el actor y los
+              // correos usados aquí siempre tienen cuenta Auth resuelta ya
+              // antes de llegar a esta RPC) — out_profile_exists es
+              // siempre true, igual que en el flujo normal tras
+              // setMembership().
               const clientRecord = clients.find(c => c.gym_id === args.p_gym_id && c.membership_id === args.p_client_membership_id);
-              if (!clientRecord) return Promise.resolve({ data: { out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }, error: null });
+              if (!clientRecord) return Promise.resolve({ data: { out_profile_exists: true, out_client_exists: false, out_coach_client_id: null, out_active: null, out_revision: null }, error: null });
               const row = coachClients.find(c => c.gym_id === args.p_gym_id && c.coach_membership_id === args.p_coach_membership_id && c.client_id === clientRecord.id);
-              if (!row) return Promise.resolve({ data: { out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }, error: null });
-              return Promise.resolve({ data: { out_client_exists: true, out_coach_client_id: row.id, out_active: row.active, out_revision: row.revision }, error: null });
+              if (!row) return Promise.resolve({ data: { out_profile_exists: true, out_client_exists: true, out_coach_client_id: null, out_active: null, out_revision: null }, error: null });
+              return Promise.resolve({ data: { out_profile_exists: true, out_client_exists: true, out_coach_client_id: row.id, out_active: row.active, out_revision: row.revision }, error: null });
             }
             if (name === 'pilot_set_coach_client') {
               const clientRecord = clients.find(c => c.gym_id === args.p_gym_id && c.membership_id === args.p_client_membership_id);

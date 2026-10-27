@@ -310,15 +310,17 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   function mapRpcError(rpcError) {
     const code = rpcError?.code;
     if (code === '40001') return new ProvisioningError('REVISION_CONFLICT', 409);
-    if (code === '23503') return new ProvisioningError('RELATED_RECORD_NOT_FOUND', 404);
-    // P1 (auditoría sobre el commit e6554ff, "corregir diagnóstico
-    // 23503"): pilot_get_coach_client_state (ver
-    // COACH-CLIENT-STATE-MIGRATION.sql) distingue explícitamente una
-    // relación INVÁLIDA (coach/cliente de otro gimnasio, o inexistente)
-    // de "el perfil todavía no existe" — nunca se oculta como un simple
-    // PENDING_PROFILE. Los mensajes son centinelas propios, fijados por
-    // esta misma sesión en el RAISE EXCEPTION correspondiente — nunca el
-    // texto crudo de un error real de Postgres.
+    // P2 (auditoría sobre el commit 206d95e, "error 23503 clasificado
+    // incorrectamente"): aquí YA NO se traduce 23503 a un código genérico.
+    // Antes CUALQUIER violación de llave foránea, viniera de la RPC que
+    // fuera, se interpretaba igual ("registro relacionado no encontrado")
+    // y addClient() lo convertía SIEMPRE en PENDING_PROFILE — incluso
+    // cuando la membresía y el perfil ya existían y lo que de verdad
+    // falló fue la escritura de la asignación coach-cliente (un fallo de
+    // integridad real, no "todavía no existe"). Cada llamada que puede
+    // recibir 23503 (ver setMembership y setCoachClient más abajo) ahora
+    // decide su propio significado ANTES de llegar aquí, según en qué
+    // punto del flujo ocurre — nunca con un mapeo único por código.
     if (code === '22023' && rpcError?.message === 'INVALID_COACH_RELATIONSHIP') return new ProvisioningError('INVALID_COACH_RELATIONSHIP', 422);
     if (code === '22023' && rpcError?.message === 'INVALID_CLIENT_RELATIONSHIP') return new ProvisioningError('INVALID_CLIENT_RELATIONSHIP', 422);
     const status = typeof code === 'string' && Object.hasOwn(PG_STATUS, code) ? PG_STATUS[code] : undefined;
@@ -368,11 +370,17 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   // Asegura la membresía CLIENT activa del usuario en el gimnasio dado —
   // idempotente, con reintento de revisión. pilot_set_membership crea el
   // registro en `clients` por su cuenta: esta función nunca escribe ahí.
-  // Si la RPC falla por "registro relacionado no encontrado" (23503) —
-  // típicamente porque `profiles.id` del usuario todavía no existe — NO se
-  // reintenta aquí con esperas (ver nota de "Profiles" al inicio del
-  // archivo): el error se deja subir tal cual para que addClient() lo
-  // traduzca en un resultado PENDING_PROFILE, nunca en un bucle.
+  // Si la RPC falla por violación de llave foránea (23503) — típicamente
+  // porque `profiles.id` del usuario todavía no existe — NO se reintenta
+  // aquí con esperas (ver nota de "Profiles" al inicio del archivo): se
+  // lanza explícitamente como PROFILE_NOT_FOUND (nunca el código genérico
+  // RELATED_RECORD_NOT_FOUND que existía antes de la auditoría sobre el
+  // commit 206d95e) para que addClient() lo traduzca en un resultado
+  // PENDING_PROFILE, nunca en un bucle. Esta es la ÚNICA llamada de este
+  // archivo donde un 23503 significa genuinamente "todavía no existe": es
+  // la PRIMERA escritura del flujo, antes de que exista cualquier
+  // membresía o perfil confirmados — ver setCoachClient más abajo, donde
+  // un 23503 en ESE punto significa algo completamente distinto.
   // Roles que esta capa NUNCA debe pisar ni reactivar como efecto
   // secundario de "agregar cliente" (ver el bloqueo explícito más abajo).
   const PRIVILEGED_ROLES = ['OWNER', 'ADMIN', 'COACH'];
@@ -406,7 +414,10 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
         const roles = existingRoles.includes('CLIENT') ? existingRoles : [...existingRoles, 'CLIENT'];
         const call = await client.rpc('pilot_set_membership', { p_gym_id: gymId, p_user_id: userId, p_roles: roles, p_active: true, p_expected_revision: expectedRevision });
         check();
-        if (call.error) throw mapRpcError(call.error);
+        if (call.error) {
+          if (call.error.code === '23503') fail('PROFILE_NOT_FOUND', 404);
+          throw mapRpcError(call.error);
+        }
         return call;
       },
       check,
@@ -450,19 +461,53 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
   //     revocación concurrente) — se reporta tal cual, SIN reintentar
   //     automáticamente con otra revisión: nunca se arriesga a revertir
   //     en silencio ese cambio concurrente.
+  //
+  // P2 (auditoría sobre el commit 206d95e, "cliente inexistente confundido
+  // con perfil pendiente"): esta función se llama SIEMPRE después de que
+  // setMembership() ya confirmó (postcondición propia, más arriba) que la
+  // membresía existe, está activa y tiene el rol CLIENT — es decir, el
+  // PERFIL de esa persona ya existía cuando pilot_set_membership corrió.
+  // `pilot_get_coach_client_state` ahora distingue, de forma explícita y
+  // verificada dentro de la propia RPC (ver COACH-CLIENT-STATE-MIGRATION.sql),
+  // tres estados en vez de dos:
+  //   - out_profile_exists=false: el perfil NO existe (caso defensivo —
+  //     no debería ocurrir dado lo anterior, pero si ocurre es genuinamente
+  //     "pendiente", nunca un error de integridad).
+  //   - out_profile_exists=true, out_client_exists=false: el perfil Y la
+  //     membresía YA existen, pero `clients` nunca se creó para esa
+  //     membresía — esto es una INCONSISTENCIA ADMINISTRATIVA real (algo
+  //     en el alta nunca terminó de crear ese registro), NUNCA "perfil
+  //     pendiente": nada en el flujo normal vuelve a crear esa fila por sí
+  //     solo, así que addClient() NUNCA debe programar aquí una
+  //     reanudación automática (eso solo ocultaría el problema, repitiendo
+  //     el mismo fallo cada vez que se reintente).
+  //   - out_profile_exists=true, out_client_exists=true: estado normal —
+  //     continúa igual que antes (coach_client existente o primera
+  //     asignación).
   async function setCoachClient(client, { gymId, coachMembershipId, clientMembershipId }, check) {
     const state = await client.rpc('pilot_get_coach_client_state', { p_gym_id: gymId, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId });
     check();
     if (state.error) throw mapRpcError(state.error);
     const row = Array.isArray(state.data) ? state.data[0] : state.data;
-    if (!row || !row.out_client_exists) fail('RELATED_RECORD_NOT_FOUND', 404);
+    if (!row) fail('PROVISIONING_RESULT_UNKNOWN', 503);
+    if (!row.out_profile_exists) fail('PROFILE_NOT_FOUND', 404);
+    if (!row.out_client_exists) fail('CLIENT_RECORD_MISSING', 409);
     if (row.out_coach_client_id !== null && row.out_active === false) {
       fail('BLOCKED_INACTIVE_RELATIONSHIP', 409);
     }
     const expectedRevision = row.out_coach_client_id !== null ? row.out_revision : 0;
     const call = await client.rpc('pilot_set_coach_client', { p_gym_id: gymId, p_coach_membership_id: coachMembershipId, p_client_membership_id: clientMembershipId, p_active: true, p_expected_revision: expectedRevision });
     check();
-    if (call.error) throw mapRpcError(call.error);
+    if (call.error) {
+      // Un 23503 AQUÍ nunca significa "todavía no existe": el estado leído
+      // arriba ya confirmó que `clients` existía en ese instante — si la
+      // escritura falla igual por llave foránea, es una carrera real (la
+      // fila desapareció entre la lectura y la escritura) o un error de
+      // integridad genuino, nunca un perfil pendiente. Se reporta explícito,
+      // SIN guardar ninguna activación pendiente (ver addClient más abajo).
+      if (call.error.code === '23503') fail('CLIENT_RECORD_MISSING', 409);
+      throw mapRpcError(call.error);
+    }
     return call;
   }
 
@@ -547,6 +592,18 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
     // inicie sesión por primera vez retoma y completa membresía/asignación
     // sin reenviar ninguna invitación (resolveOrCreateAuthUser la encuentra
     // vía listUsers en ese segundo intento).
+    //
+    // P2 (auditoría sobre el commit 206d95e, "error 23503 clasificado
+    // incorrectamente"): SOLO PROFILE_NOT_FOUND (perfil genuinamente
+    // ausente) se convierte en PENDING_PROFILE con una activación pendiente
+    // guardada. Cualquier otro fallo del paso 3/4 — en particular
+    // CLIENT_RECORD_MISSING, cuando la membresía y el perfil YA existían
+    // pero la asignación coach-cliente no pudo completarse por una
+    // inconsistencia real — se propaga tal cual, como error explícito, SIN
+    // guardar ninguna activación pendiente: guardarla implicaría que algo
+    // la resolverá sola en un futuro login, y nada en el flujo normal
+    // vuelve a crear `clients` por sí mismo, así que "reintentarlo después"
+    // solo repetiría el mismo fallo en silencio.
     async addClient({ token, command, signal }) {
       const input = validateAddClientCommand(command);
       return run(token, signal, async ({ client, actor, check }) => {
@@ -565,7 +622,7 @@ function createProvisioningService({ createSession, findUserByEmail = null, crea
           check();
           await setCoachClient(client, { gymId: input.gymId, coachMembershipId, clientMembershipId: membership.membershipId }, check);
         } catch (e) {
-          if (e instanceof ProvisioningError && e.code === 'RELATED_RECORD_NOT_FOUND') {
+          if (e instanceof ProvisioningError && e.code === 'PROFILE_NOT_FOUND') {
             const autoResumable = await savePendingActivation(client, { gymId: input.gymId, userId, coachMembershipId, createdBy: actor }, check);
             return { status: 'PENDING_PROFILE', email: input.email, coachId: input.coachId, gymId: input.gymId, createdUser, invite: createdUser, autoResumable };
           }

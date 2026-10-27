@@ -22,6 +22,8 @@ declare
   coach1 uuid := '30000000-0000-0000-0000-000000000002';
   client_a uuid := '30000000-0000-0000-0000-000000000003';
   admin1 uuid := '30000000-0000-0000-0000-000000000004';
+  client_b uuid := '30000000-0000-0000-0000-000000000006'; -- perfil AUSENTE (escenario L)
+  client_c uuid := '30000000-0000-0000-0000-000000000007'; -- perfil presente, `clients` AUSENTE (escenario M)
   owner2 uuid := '30000000-0000-0000-0000-000000000008';
   coach2 uuid := '30000000-0000-0000-0000-000000000009';
 begin
@@ -30,10 +32,19 @@ begin
     (gym1, coach1, '{COACH}', true, 1),
     (gym1, client_a, '{CLIENT}', true, 1),
     (gym1, admin1, '{ADMIN}', true, 1),
+    (gym1, client_b, '{CLIENT}', true, 1),
+    (gym1, client_c, '{CLIENT}', true, 1),
     (gym2, owner2, '{OWNER}', true, 1),
     (gym2, coach2, '{COACH}', true, 1);
   insert into clients (gym_id, membership_id)
   select gym1, gm.id from gym_memberships gm where gm.gym_id = gym1 and gm.user_id = client_a;
+  -- Perfiles: todos excepto client_b (simula una invitación que nunca se
+  -- aceptó). client_c SÍ tiene perfil, pero deliberadamente NUNCA se le
+  -- crea la fila en `clients` — exactamente el estado de inconsistencia
+  -- administrativa que corrige este hallazgo (P2, auditoría sobre el
+  -- commit 206d95e, "cliente inexistente confundido con perfil
+  -- pendiente").
+  insert into public.profiles (id) values (owner1), (coach1), (client_a), (admin1), (client_c), (owner2), (coach2);
 end $$;
 
 \echo '=== A) Relación INEXISTENTE: cliente existe, coach válido, nunca asignado -> client_exists=true, coach_client_id=NULL ==='
@@ -227,5 +238,47 @@ select * from pilot_get_coach_client_state(
 );
 rollback;
 select 'PASS K2: un cliente de OTRO gimnasio se rechaza explícitamente' as resultado;
+
+\echo '=== L) Perfil AUSENTE (invitación nunca aceptada): out_profile_exists=false y out_client_exists=false, nunca confundido con "cliente ausente" ==='
+begin;
+set local role authenticated;
+set local "test.current_uid" = '30000000-0000-0000-0000-000000000001'; -- owner1
+select case when out_profile_exists = false and out_client_exists = false and out_coach_client_id is null and out_revision is null
+            then 'PASS L: perfil ausente reportado con honestidad, distinto de "cliente ausente"'
+            else 'FAIL L: ' || out_profile_exists::text || ' ' || out_client_exists::text end
+from pilot_get_coach_client_state(
+  '20000000-0000-0000-0000-000000000001',
+  (select id from gym_memberships where gym_id = '20000000-0000-0000-0000-000000000001' and user_id = '30000000-0000-0000-0000-000000000002'),
+  (select id from gym_memberships where gym_id = '20000000-0000-0000-0000-000000000001' and user_id = '30000000-0000-0000-0000-000000000006')
+);
+commit;
+
+\echo '=== M) Perfil Y membresía EXISTEN, pero `clients` nunca se creó: out_profile_exists=true y out_client_exists=false — inconsistencia ADMINISTRATIVA, nunca "perfil pendiente" ==='
+begin;
+set local role authenticated;
+set local "test.current_uid" = '30000000-0000-0000-0000-000000000001';
+select case when out_profile_exists = true and out_client_exists = false and out_coach_client_id is null and out_revision is null
+            then 'PASS M: clients ausente con perfil válido reportado como inconsistencia administrativa, nunca como pendiente'
+            else 'FAIL M: ' || out_profile_exists::text || ' ' || out_client_exists::text end
+from pilot_get_coach_client_state(
+  '20000000-0000-0000-0000-000000000001',
+  (select id from gym_memberships where gym_id = '20000000-0000-0000-0000-000000000001' and user_id = '30000000-0000-0000-0000-000000000002'),
+  (select id from gym_memberships where gym_id = '20000000-0000-0000-0000-000000000001' and user_id = '30000000-0000-0000-0000-000000000007')
+);
+commit;
+
+\echo '=== N) Cliente VÁLIDO (perfil, membresía y `clients` existen): out_profile_exists=true y out_client_exists=true — tercer estado, probado explícitamente ==='
+begin;
+set local role authenticated;
+set local "test.current_uid" = '30000000-0000-0000-0000-000000000001';
+select case when out_profile_exists = true and out_client_exists = true
+            then 'PASS N: cliente válido (perfil + clients) reportado correctamente'
+            else 'FAIL N: ' || out_profile_exists::text || ' ' || out_client_exists::text end
+from pilot_get_coach_client_state(
+  '20000000-0000-0000-0000-000000000001',
+  (select id from gym_memberships where gym_id = '20000000-0000-0000-0000-000000000001' and user_id = '30000000-0000-0000-0000-000000000002'),
+  (select id from gym_memberships where gym_id = '20000000-0000-0000-0000-000000000001' and user_id = '30000000-0000-0000-0000-000000000003')
+);
+commit;
 
 \echo '=== RESUMEN: cualquier línea que empiece con FAIL arriba es un fallo real ==='

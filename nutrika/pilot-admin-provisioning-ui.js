@@ -36,6 +36,17 @@
     USER_NOT_FOUND: 'Ese correo todavía no tiene cuenta en Twogramms y la creación automática no está disponible en este entorno. Contacta al administrador del proyecto.',
     REVISION_CONFLICT: 'Otra operación modificó este registro al mismo tiempo. Intenta de nuevo.',
     RELATED_RECORD_NOT_FOUND: 'Uno de los registros relacionados no se encontró. Verifica los datos e intenta de nuevo.',
+    // P2 (auditoría sobre el commit 206d95e, "error 23503 clasificado
+    // incorrectamente" / "cliente inexistente confundido con perfil
+    // pendiente"): addClient() ya nunca convierte esto en PENDING_PROFILE
+    // — es una inconsistencia real (membresía y perfil existen, pero la
+    // asignación coach-cliente no pudo completarse) que requiere revisión
+    // administrativa, no esperar a que se resuelva sola.
+    CLIENT_RECORD_MISSING: 'La cuenta ya existe pero su registro de cliente quedó inconsistente. No se guardó ninguna reanudación automática: contacta al administrador del proyecto antes de reintentar.',
+    // Caso defensivo: addClient() ya convierte esto en un resultado normal
+    // (PENDING_PROFILE), nunca en un error — este mensaje solo aparecería
+    // si otra ruta llegara a propagarlo sin pasar por esa conversión.
+    PROFILE_NOT_FOUND: 'Esa persona todavía no inició sesión por primera vez. Vuelve a intentarlo después de que lo haga.',
     ADMIN_INVITE_EMAIL_EXISTS: 'Ese correo ya tiene una cuenta activada en Twogramms.',
     ADMIN_INVITE_UNAVAILABLE: 'Reenviar invitaciones no está disponible en este entorno.',
     // P1 (auditoría sobre el commit 26fd7fc): resendInvite ahora exige una
