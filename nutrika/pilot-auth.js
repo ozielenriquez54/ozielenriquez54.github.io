@@ -102,7 +102,18 @@
     const url=new URL(redirectTo);
     const local=url.protocol==='http:'&&['127.0.0.1','localhost'].includes(url.hostname);
     const published=approvedOrigin&&url.protocol==='https:'&&url.origin===approvedOrigin;
-    if(!(local&&!approvedOrigin||published)||url.username||url.password||url.pathname!=='/auth/callback.html'||url.search||url.hash)fail();
+    // Caso adicional: entorno de pruebas aislado local (runner
+    // local-twogramms-test-server.cjs), donde SÍ se configura un
+    // approvedOrigin explícito pero sigue siendo http://127.0.0.1 (nunca
+    // 'localhost') — mismo criterio exacto que ya aplican
+    // pilot-config.cjs e inviteRedirectTo() en
+    // pilot-admin-provisioning-service.cjs para el proyecto
+    // twogramms-test: ese archivo de servidor es el único que puede
+    // producir un `config.publicOrigin` con esta forma, así que esta
+    // comprobación no necesita repetir el chequeo de proyecto. Nunca
+    // relaja nada para un approvedOrigin HTTPS real ni para 'localhost'.
+    const localApproved=approvedOrigin&&url.protocol==='http:'&&url.hostname==='127.0.0.1'&&url.origin===approvedOrigin;
+    if(!(local&&!approvedOrigin||published||localApproved)||url.username||url.password||url.pathname!=='/auth/callback.html'||url.search||url.hash)fail();
     let generation=0,pendingUser=null,passwordUser=null;
     const recovery=recoveryState??{get:()=>pendingUser,set:id=>{pendingUser=id;},clear:()=>{pendingUser=null;}};
     function clearRecovery(){passwordUser=null;recovery.clear();}
