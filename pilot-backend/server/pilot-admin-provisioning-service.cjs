@@ -831,7 +831,18 @@ function createProvisioningInfrastructure({ env = process.env, fetchImpl = globa
     // Defensa en profundidad: revalida el resultado final, sin asumir que
     // la validación de loadPilotConfig en otro archivo sigue vigente para
     // siempre ni que new URL(...) no pudo introducir nada inesperado.
-    if (url.protocol !== 'https:' || url.origin !== config.publicOrigin || url.pathname !== '/auth/callback.html' || url.search || url.hash) {
+    //
+    // Única excepción a "HTTPS obligatorio": HTTP hacia 127.0.0.1, y SOLO
+    // cuando el proyecto configurado es el de pruebas aislado
+    // twogramms-test (fadbkbdbpuoekolfcbjm) — exclusivamente para el
+    // runner local (pilot-backend/server/local-twogramms-test-server.cjs).
+    // Mismo criterio exacto que ya aplica pilot-config.cjs al validar
+    // PILOT_PUBLIC_ORIGIN; se repite aquí porque esta función revalida el
+    // resultado de forma independiente, sin asumir que esa otra
+    // validación es la única barrera. Para cualquier otro proyecto o
+    // dirección, HTTPS sigue siendo obligatorio exactamente como antes.
+    const isLocalTestException = url.protocol === 'http:' && url.hostname === '127.0.0.1' && config.projectRef === 'fadbkbdbpuoekolfcbjm';
+    if ((!isLocalTestException && url.protocol !== 'https:') || url.origin !== config.publicOrigin || url.pathname !== '/auth/callback.html' || url.search || url.hash) {
       fail('PILOT_PUBLIC_ORIGIN_REQUIRED', 503);
     }
     return url.toString();
