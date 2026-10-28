@@ -77,8 +77,15 @@ const serviceKey = requireEnv(
 );
 const publicOrigin = requireEnv(
   'PILOT_PUBLIC_ORIGIN',
-  /^https:\/\/[^/?#\s]+$/,
-  'Un origin https:// exacto, sin ruta/query/hash. Sin ella, invitar a un correo nuevo falla con PILOT_PUBLIC_ORIGIN_REQUIRED en el momento de enviar la invitación.',
+  // Acepta https:// (cualquier host) o, EXCLUSIVAMENTE,
+  // http://127.0.0.1[:puerto] — el mismo y único relajo que ya aplican
+  // pilot-config.cjs e inviteRedirectTo() en pilot-admin-provisioning-service.cjs
+  // para el proyecto de pruebas aislado. Este runner nunca apunta a otro
+  // proyecto (PINNED_PROJECT_REF, fijo arriba), así que no hace falta
+  // repetir aquí esa condición — pero sigue exigiendo HTTPS para
+  // cualquier host que no sea 127.0.0.1.
+  /^(https:\/\/[^/?#\s]+|http:\/\/127\.0\.0\.1(?::\d+)?)$/,
+  'Un origin https:// exacto (sin ruta/query/hash), o http://127.0.0.1[:puerto] — la única excepción, válida solo para este runner. Sin ella, invitar a un correo nuevo falla con PILOT_PUBLIC_ORIGIN_REQUIRED en el momento de enviar la invitación.',
 );
 
 if (problems.length > 0) {
