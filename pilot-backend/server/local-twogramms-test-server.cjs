@@ -94,6 +94,7 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
+const http = require('node:http');
 const { createPilotServer } = require('./pilot-http.cjs');
 const { createProvisioningInfrastructure } = require('./pilot-admin-provisioning-service.cjs');
 
@@ -131,23 +132,62 @@ if (app.config.projectRef !== PINNED_PROJECT_REF || app.config.supabaseUrl !== P
   process.exit(1);
 }
 
+// Proyecto Supabase compartido/producción — nunca debe aparecer en la CSP
+// que este runner entrega. Mismo valor que DEFAULT_PROJECT_REF en
+// pilot-config.cjs (no se importa de ahí porque ese módulo no lo exporta,
+// y duplicar esta única constante es más simple que cambiar su interfaz).
+const SHARED_PROJECT_REF = 'otswebncqidqthqplztj';
+
+// Auditoría: un runner anterior podía anunciar por consola el proyecto
+// correcto mientras un proceso DISTINTO (uno viejo que quedó escuchando en
+// el mismo puerto, un contenedor Docker con una imagen vieja publicando
+// ese puerto, etc.) era el que en realidad respondía a las peticiones HTTP
+// reales — createPilotServer()/loadPilotConfig() en sí son correctos y
+// deterministas (un único objeto de configuración, congelado, alimenta
+// tanto este log como cada respuesta), así que esa divergencia nunca
+// puede originarse en ESTE proceso; solo puede venir de que el tráfico real
+// esté llegando a otro. Por eso, en vez de confiar en lo que este proceso
+// CREE que está sirviendo, se lo verifica contra sí mismo con una petición
+// HTTP real de loopback inmediatamente después de arrancar, y se niega a
+// quedar "arriba" si lo que responde no coincide con lo que se anunció.
+function selfCheckCsp(port, host) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port, path: '/coach.html', method: 'GET', headers: { host } },
+      res => { let body = ''; res.on('data', c => body += c); res.on('end', () => resolve(res.headers['content-security-policy'] || '')); },
+    );
+    req.on('error', reject);
+    req.setTimeout(5000, () => req.destroy(new Error('SELF_CHECK_TIMEOUT')));
+    req.end();
+  });
+}
+
 app.server.on('error', e => { console.error('FAIL_PILOT_START', e.code || e.message); process.exitCode = 1; });
-app.server.once('listening', () => {
+app.server.once('listening', async () => {
   console.log('TWOGRAMMS — entorno de pruebas aislado (twogramms-test)');
   console.log(`Proyecto Supabase: ${app.config.projectRef} (fijo — nunca el compartido/producción)`);
-  // Confirma explícitamente, con el valor REAL que createPilotServer
-  // resolvió (no solo la constante fija de este archivo), el único
-  // origen que la CSP del navegador permitirá en connect-src para esta
-  // página — exactamente lo que hay que comparar contra cualquier
-  // mensaje de "violates Content Security Policy directive: connect-src"
-  // que Chrome muestre. Si alguna vez no coinciden, el proceso real que
-  // está respondiendo en ese puerto NO es este runner con su código
-  // actual (p. ej. quedó otro proceso viejo escuchando ahí, o se arrancó
-  // pilot-http.cjs/render-readonly.cjs directamente) — nunca un defecto
-  // de esta validación, que ya lo habría rechazado arriba antes de
-  // llegar a escuchar.
   console.log(`CSP connect-src (Supabase permitido): ${app.config.supabaseUrl}`);
   console.log(`Escuchando en http://127.0.0.1:${app.config.port}/`);
+
+  const hostHeader = app.config.publicOrigin ? new URL(app.config.publicOrigin).host : `127.0.0.1:${app.config.port}`;
+  let csp;
+  try {
+    csp = await selfCheckCsp(app.config.port, hostHeader);
+  } catch (e) {
+    console.error(`AUTOVERIFICACIÓN CSP FALLÓ: no se pudo completar una petición HTTP real contra este mismo proceso (${e.message}). No continúa escuchando con un estado sin verificar.`);
+    app.server.close(() => process.exit(1));
+    return;
+  }
+  const expected = `connect-src 'self' ${PINNED_SUPABASE_URL}`;
+  if (!csp.includes(expected) || csp.includes(SHARED_PROJECT_REF)) {
+    console.error('AUTOVERIFICACIÓN CSP FALLÓ: el encabezado Content-Security-Policy que respondió una petición HTTP real contra http://127.0.0.1:' + app.config.port + '/coach.html NO coincide con lo anunciado arriba.');
+    console.error(`  Esperado: ${expected}`);
+    console.error(`  Recibido: ${csp || '(sin encabezado)'}`);
+    console.error('  Esto significa que OTRO proceso —no este— está respondiendo en ese puerto: un runner viejo que quedó escuchando, un contenedor Docker con una imagen anterior publicando el mismo puerto, etc. Cierra ese otro proceso/contenedor y vuelve a ejecutar este runner. No es un defecto de pilot-http.cjs: este mismo proceso ya construyó la CSP correcta (ver el log de arriba); el problema es que otro proceso está sirviendo el tráfico real.');
+    app.server.close(() => process.exit(1));
+    return;
+  }
+  console.log('Autoverificación CSP: OK — el encabezado HTTP real confirmado contra este mismo proceso permite exclusivamente el proyecto de pruebas.');
   console.log('Alta de clientes (admin-provisioning): habilitada. Abre /coach.html para probar OWNER -> alta -> asignación de coach.');
 });
 app.start();
