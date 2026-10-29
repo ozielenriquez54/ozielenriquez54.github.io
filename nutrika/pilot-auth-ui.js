@@ -33,6 +33,12 @@
   }
   recoveryLayout();
   let busy=false,updating=false,macrosUI=null,authorized=false,authEpoch=0,diaryUI=null,diaryModel=null,trackingUI=null,trackingModel=null,coachHistoryUI=null,provisioningUI=null,refreshDiary=()=>{},refreshTracking=()=>{},refreshCoachHistory=()=>{},refreshProvisioning=()=>{};
+  // `render()` necesita `role` en su cierre (ver abajo, decide si muestra
+  // #create-gym-form) — declarada aquí, en el ámbito del IIFE, en vez de
+  // con `const` dentro del `try{}` de más abajo (bloque hermano, fuera del
+  // alcance de `render`). Se asigna una sola vez, antes de que `render` se
+  // llame por primera vez; nunca cambia de valor después.
+  let role;
   function clearDiary(){diaryModel?.invalidate();diaryUI?.clear();}
   function clearTracking(){trackingModel?.invalidate();trackingUI?.clear();coachHistoryUI?.clear();}
   function clearProvisioning(){provisioningUI?.clear();}
@@ -58,7 +64,7 @@
     if(!config.publicKey){status.textContent='Configura PILOT_SUPABASE_PUBLIC_KEY con la clave publicable del proyecto piloto y reinicia el servidor.';return;}
     const credential=callback?PilotAuth.parseCallback(callbackSearch,callbackHash):null;
     const invitation=credential?.kind==='invite'||credential?.kind==='implicit'&&credential.type==='invite';
-    const role=invitation?'CLIENT':callback?(sessionStorage.getItem('twogramms-pilot-view')??'CLIENT'):document.body.dataset.role;
+    role=invitation?'CLIENT':callback?(sessionStorage.getItem('twogramms-pilot-view')??'CLIENT'):document.body.dataset.role;
     sessionStorage.setItem('twogramms-pilot-view',role);
     const client=PilotAuth.createClient(config,supabase,fetch.bind(window));
     const recoveryState={get:()=>sessionStorage.getItem('twogramms-pilot-recovery'),set:id=>sessionStorage.setItem('twogramms-pilot-recovery',id),clear:()=>sessionStorage.removeItem('twogramms-pilot-recovery')};
