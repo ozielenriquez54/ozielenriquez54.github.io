@@ -58,9 +58,22 @@
         // permiten siempre, incluso en readOnly, que sigue cerrando toda
         // función clínica (diario/macros/tracking) pero no estas acciones
         // de identidad propia.
-        const allowed=['/rest/v1/profiles','/rest/v1/gym_memberships','/rest/v1/rpc/pilot_ensure_profile','/rest/v1/rpc/pilot_resume_pending_activation','/rest/v1/rpc/pilot_create_gym'];
+        //
+        // pilot_set_membership() es distinta: SÍ puede modificar la
+        // membresía de OTRO usuario (no solo auth.uid()) si quien llama ya
+        // es OWNER/ADMIN de ese gimnasio. Se permite aquí, siempre y sin
+        // depender de `admin`/readOnly, porque su propia definición SQL
+        // (`pilot_private.lock_admin(p_gym_id)`, confirmado) ya revalida
+        // esa condición del lado del servidor antes de tocar cualquier
+        // fila — el allowlist de transporte nunca es el límite de
+        // seguridad real para esta RPC, igual que no lo es para ninguna
+        // función SECURITY DEFINER con EXECUTE otorgado a `authenticated`.
+        // La UI solo la usa para que un OWNER se agregue a sí mismo el rol
+        // COACH (nunca para tocar otra cuenta), pero esa restricción vive
+        // en pilot-auth.js::addOwnCoachRole(), no aquí.
+        const allowed=['/rest/v1/profiles','/rest/v1/gym_memberships','/rest/v1/rpc/pilot_ensure_profile','/rest/v1/rpc/pilot_resume_pending_activation','/rest/v1/rpc/pilot_create_gym','/rest/v1/rpc/pilot_set_membership'];
         if(macros)allowed.push('/rest/v1/clients','/rest/v1/coach_clients','/rest/v1/manual_macro_targets','/rest/v1/manual_macro_target_versions');
-        if(admin&&!config.readOnly)allowed.push('/rest/v1/coach_clients','/rest/v1/rpc/pilot_set_membership','/rest/v1/rpc/pilot_set_coach_client');
+        if(admin&&!config.readOnly)allowed.push('/rest/v1/coach_clients','/rest/v1/rpc/pilot_set_coach_client');
         if(!url.pathname.startsWith('/auth/v1/')&&!allowed.includes(url.pathname))fail();
         const method=(init.method??(typeof input==='object'?input.method:undefined)??'GET').toUpperCase();
         if(config.readOnly&&url.pathname.startsWith('/auth/v1/')&&
@@ -231,7 +244,16 @@
         // exigiendo literalmente CLIENT, sin cambios.
         const acceptedRoles=role==='COACH'?['COACH','OWNER','ADMIN']:[role];
         const allowed=memberships.data.some(m=>m.user_id===id&&m.active===true&&Array.isArray(m.roles)&&m.roles.some(r=>acceptedRoles.includes(r)));
-        if(allowed)return {status:'AUTHORIZED'};
+        if(allowed){
+          // Señal para la UI (nunca una autorización en sí misma — eso lo
+          // sigue decidiendo exclusivamente pilot_set_membership del lado
+          // del servidor): exactamente una membresía activa OWNER/ADMIN sin
+          // COACH todavía. Ambigua (ninguna, o más de una) o fuera de la
+          // vista Coach: nunca se adivina, igual que el selector de
+          // gimnasio en el alta de clientes.
+          const eligibleForOwnCoachRole=memberships.data.filter(m=>m.active===true&&Array.isArray(m.roles)&&(m.roles.includes('OWNER')||m.roles.includes('ADMIN'))&&!m.roles.includes('COACH'));
+          return {status:'AUTHORIZED',canAddOwnCoachRole:role==='COACH'&&eligibleForOwnCoachRole.length===1};
+        }
         // Distinción mínima dentro del mismo caso "sin acceso a esta vista":
         // NO_MEMBERSHIP (cero membresías ACTIVAS, de cualquier rol, en
         // cualquier gimnasio) es la única situación en la que crear un
@@ -283,6 +305,31 @@
         const trimmed=name.trim();
         if(trimmed.length<1||trimmed.length>160)fail();
         const r=await client.rpc('pilot_create_gym',{p_name:trimmed});
+        if(r.error)fail();
+        return await verify();
+      }catch{return {status:'AUTH_FAILED'};}},
+      // Autoservicio acotado: un OWNER/ADMIN se agrega a sí mismo (nunca a
+      // otra cuenta — p_user_id es siempre auth.uid(), nunca un parámetro)
+      // el rol COACH sobre su propia membresía, conservando el resto de
+      // sus roles. gym_id/roles/revision se leen de una fila RECIÉN
+      // consultada (nunca de datos ya cacheados de verify() ni fijados en
+      // el código) para que p_expected_revision sea siempre el real.
+      // Ambigua (ninguna membresía elegible, o más de una): se niega sin
+      // adivinar — igual que el selector de gimnasio del alta de clientes.
+      // pilot_set_membership() revalida del lado del servidor
+      // (pilot_private.lock_admin) que quien llama ya sea OWNER/ADMIN de
+      // ese gimnasio; esta función nunca es, por sí sola, el límite de
+      // seguridad real.
+      async addOwnCoachRole(){try{
+        const user=await client.auth.getUser();
+        if(user.error||!user.data?.user?.id)fail();
+        const id=user.data.user.id;
+        const memberships=await client.from('gym_memberships').select('gym_id,roles,active,revision').eq('user_id',id).eq('active',true);
+        if(memberships.error||!Array.isArray(memberships.data))fail();
+        const eligible=memberships.data.filter(m=>m.active===true&&Array.isArray(m.roles)&&(m.roles.includes('OWNER')||m.roles.includes('ADMIN'))&&!m.roles.includes('COACH'));
+        if(eligible.length!==1)fail();
+        const target=eligible[0];
+        const r=await client.rpc('pilot_set_membership',{p_gym_id:target.gym_id,p_user_id:id,p_roles:[...target.roles,'COACH'],p_active:true,p_expected_revision:target.revision});
         if(r.error)fail();
         return await verify();
       }catch{return {status:'AUTH_FAILED'};}},

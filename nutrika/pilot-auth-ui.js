@@ -3,6 +3,7 @@
   const status=document.getElementById('auth-status'),access=document.getElementById('pilot-access');
   const recovery=document.getElementById('password-form');
   const createGym=document.getElementById('create-gym-form');
+  const addOwnCoachRole=document.getElementById('add-own-coach-role');
   const messages={SIGNED_OUT:'Inicia sesión con tu cuenta del piloto.',AUTHORIZED:'Sesión verificada y rol autorizado. Las funciones clínicas siguen deshabilitadas.',
     ROLE_REQUIRED:'Sesión verificada. Falta una membresía activa para esta vista; solicítala al administrador.',AUTH_FAILED:'No se pudo completar la operación. Revisa los datos o solicita un enlace nuevo.',
     NO_MEMBERSHIP:'Sesión verificada. Todavía no perteneces a ningún gimnasio: crea el primero para convertirte en su propietario.',
@@ -52,6 +53,7 @@
     access.hidden=result.status!=='AUTHORIZED';
     recovery.hidden=result.status!=='RECOVERY';
     if(createGym)createGym.hidden=!(result.status==='NO_MEMBERSHIP'&&role==='COACH');
+    if(addOwnCoachRole)addOwnCoachRole.hidden=!(result.status==='AUTHORIZED'&&result.canAddOwnCoachRole===true&&role==='COACH');
     authorized=result.status==='AUTHORIZED';
     if(authorized&&!document.hidden){macrosUI?.refresh();refreshDiary();refreshTracking();refreshCoachHistory();refreshProvisioning();}else {macrosUI?.clear();clearDiary();clearTracking();clearProvisioning();access.hidden=true;}
   }
@@ -105,6 +107,7 @@
       if(result.status==='AUTHORIZED')input.value='';
       return result;
     });});
+    addOwnCoachRole?.addEventListener('click',()=>run(()=>auth.addOwnCoachRole()));
     document.getElementById('magic-link').addEventListener('click',()=>run(()=>auth.email(email(),false)));
     document.getElementById('recover').addEventListener('click',()=>run(()=>auth.email(email(),true)));
     document.getElementById('logout').addEventListener('click',async()=>{

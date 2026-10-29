@@ -240,3 +240,103 @@ test('pilot_create_gym es alcanzable con la MISMA combinación que usa el runner
   await assert.rejects(options.global.fetch('https://skwjntfknzakhcjlxlnh.supabase.co/rest/v1/rpc/pilot_create_gym',{method:'POST'})); // otro origin
   assert.equal(calls,1);
 });
+// addOwnCoachRole(): un OWNER/ADMIN se agrega a sí mismo el rol COACH
+// (pilot_set_membership) para poder asignarse como coach de un cliente.
+// `memberships` es mutable para reflejar, tras la RPC, la fila real sin
+// pedir un nuevo login; `revisionSeenByRpc` registra con qué
+// p_expected_revision se llamó realmente, para probar que viene SIEMPRE
+// de una lectura fresca, nunca de un valor fijo en el código.
+function fixtureOwnCoachRole({memberships=[{gym_id:'g1',user_id:'synthetic-user',roles:['OWNER'],active:true,revision:1}],failWithCode=null}={}){
+  const calls=[];let revisionSeenByRpc=null;
+  const state={memberships:memberships.map(m=>({...m}))};
+  const client={auth:{getUser:async()=>({data:{user:{id:'synthetic-user'}}})},
+    rpc:async(name,args)=>{
+      calls.push(['rpc',name,args]);
+      if(name==='pilot_ensure_profile')return {data:{id:'synthetic-user'}};
+      if(name==='pilot_resume_pending_activation')return {data:null,error:null,status:200};
+      if(name==='pilot_set_membership'){
+        revisionSeenByRpc=args.p_expected_revision;
+        if(failWithCode)return {data:null,error:{code:failWithCode},status:409};
+        const row=state.memberships.find(m=>m.gym_id===args.p_gym_id&&m.user_id===args.p_user_id);
+        if(!row||row.revision!==args.p_expected_revision)return {data:null,error:{code:'40001'},status:409};
+        row.roles=args.p_roles;row.active=args.p_active;row.revision+=1;
+        return {data:{...row},error:null};
+      }
+      return {data:null,error:null};
+    },
+    from:name=>{calls.push(['table',name]);const q={select:()=>q,eq:key=>key==='active'?Promise.resolve({data:state.memberships.filter(m=>m.active)}):q};return q;}};
+  return {client,calls,state,get revisionSeenByRpc(){return revisionSeenByRpc;},auth:controller(client,'COACH','http://127.0.0.1:3000/auth/callback.html')};
+}
+test('verify(): canAddOwnCoachRole solo con exactamente una membresía activa OWNER/ADMIN sin COACH, y solo en la vista Coach — nunca se adivina',async()=>{
+  assert.equal((await fixtureOwnCoachRole().auth.verify()).canAddOwnCoachRole,true);
+  // ya tiene COACH: nada que ofrecer
+  assert.equal((await fixtureOwnCoachRole({memberships:[{gym_id:'g1',user_id:'synthetic-user',roles:['OWNER','COACH'],active:true,revision:1}]}).auth.verify()).canAddOwnCoachRole,false);
+  // ni OWNER ni ADMIN: nada que ofrecer (vista Coach accesible solo por COACH puro)
+  assert.equal((await fixtureOwnCoachRole({memberships:[{gym_id:'g1',user_id:'synthetic-user',roles:['COACH'],active:true,revision:1}]}).auth.verify()).canAddOwnCoachRole,false);
+  // dos gimnasios elegibles a la vez: ambiguo, nunca se adivina cuál
+  const two=await fixtureOwnCoachRole({memberships:[
+    {gym_id:'g1',user_id:'synthetic-user',roles:['OWNER'],active:true,revision:1},
+    {gym_id:'g2',user_id:'synthetic-user',roles:['ADMIN'],active:true,revision:1},
+  ]}).auth.verify();
+  assert.equal(two.canAddOwnCoachRole,false);
+  // la misma condición en la vista Cliente nunca ofrece el botón (es exclusivo de Coach)
+  const clientFixture=fixtureOwnCoachRole();
+  const clientAuth=controller(clientFixture.client,'CLIENT','http://127.0.0.1:3000/auth/callback.html');
+  const clientResult=await clientAuth.verify();
+  assert.equal(clientResult.status,'ROLE_REQUIRED'); // la vista Cliente exige CLIENT, no OWNER
+  assert.notEqual(clientResult.canAddOwnCoachRole,true);
+});
+test('addOwnCoachRole(): agrega COACH conservando OWNER, usa auth.uid() y la revisión REAL recién leída, y nunca actúa si es ambiguo o falla la RPC',async()=>{
+  const f=fixtureOwnCoachRole();
+  const result=await f.auth.addOwnCoachRole();
+  assert.equal(result.status,'AUTHORIZED');
+  assert.equal(result.canAddOwnCoachRole,false); // ya no es elegible: acaba de obtener COACH
+  assert.deepEqual(f.calls.find(c=>c[1]==='pilot_set_membership'),['rpc','pilot_set_membership',{p_gym_id:'g1',p_user_id:'synthetic-user',p_roles:['OWNER','COACH'],p_active:true,p_expected_revision:1}]);
+  assert.deepEqual(f.state.memberships[0].roles,['OWNER','COACH']); // conserva OWNER
+  assert.equal(f.revisionSeenByRpc,1); // la revisión real leída, nunca un valor fijo
+  // sin membresía elegible (ya tiene COACH): nunca llama a la RPC, nunca adivina
+  const already=fixtureOwnCoachRole({memberships:[{gym_id:'g1',user_id:'synthetic-user',roles:['OWNER','COACH'],active:true,revision:1}]});
+  assert.deepEqual(await already.auth.addOwnCoachRole(),{status:'AUTH_FAILED'});
+  assert.ok(!already.calls.some(c=>c[1]==='pilot_set_membership'));
+  // ambiguo (dos gimnasios elegibles): nunca llama a la RPC, nunca elige el primero en silencio
+  const ambiguous=fixtureOwnCoachRole({memberships:[
+    {gym_id:'g1',user_id:'synthetic-user',roles:['OWNER'],active:true,revision:1},
+    {gym_id:'g2',user_id:'synthetic-user',roles:['ADMIN'],active:true,revision:1},
+  ]});
+  assert.deepEqual(await ambiguous.auth.addOwnCoachRole(),{status:'AUTH_FAILED'});
+  assert.ok(!ambiguous.calls.some(c=>c[1]==='pilot_set_membership'));
+  assert.deepEqual(ambiguous.state.memberships.map(m=>m.roles),[['OWNER'],['ADMIN']]); // ninguna fila se tocó
+  // conflicto de revisión real (40001): otra escritura cambió la fila
+  // justo ENTRE el select propio y la RPC (la revisión que ve el select
+  // ya está vieja frente a lo que la base realmente tiene) — AUTH_FAILED,
+  // y la fila nunca se toca por esta llamada.
+  const serverRoles=['OWNER'];
+  const conflictCalls=[];
+  const conflictClient={auth:{getUser:async()=>({data:{user:{id:'synthetic-user'}}})},
+    rpc:async(name,args)=>{conflictCalls.push(['rpc',name,args]);
+      if(name==='pilot_ensure_profile')return {data:{id:'synthetic-user'}};
+      if(name==='pilot_resume_pending_activation')return {data:null,error:null,status:200};
+      if(name==='pilot_set_membership'){
+        if(args.p_expected_revision!==2)return {data:null,error:{code:'40001'},status:409}; // la base real ya está en revision=2
+        serverRoles.length=0;serverRoles.push(...args.p_roles);return {data:{},error:null};
+      }
+      return {data:null,error:null};},
+    from:()=>{const q={select:()=>q,eq:key=>key==='active'?Promise.resolve({data:[{gym_id:'g1',user_id:'synthetic-user',roles:[...serverRoles],active:true,revision:1}]}):q};return q;}}; // el select SIGUE devolviendo revision=1 (desactualizado)
+  const conflictAuth=controller(conflictClient,'COACH','http://127.0.0.1:3000/auth/callback.html');
+  assert.deepEqual(await conflictAuth.addOwnCoachRole(),{status:'AUTH_FAILED'});
+  assert.deepEqual(conflictCalls.find(c=>c[1]==='pilot_set_membership'),['rpc','pilot_set_membership',{p_gym_id:'g1',p_user_id:'synthetic-user',p_roles:['OWNER','COACH'],p_active:true,p_expected_revision:1}]);
+  assert.deepEqual(serverRoles,['OWNER']); // nunca se aplicó
+  // cualquier otro error de la RPC (p.ej. permiso denegado del lado del
+  // servidor): AUTH_FAILED también, nunca se asume éxito.
+  const denied=fixtureOwnCoachRole({failWithCode:'42501'});
+  assert.deepEqual(await denied.auth.addOwnCoachRole(),{status:'AUTH_FAILED'});
+});
+test('pilot_set_membership es alcanzable con la MISMA combinación que usa el runner real (readOnly:true, sin admin) — nunca por otro método ni otro origin',async()=>{
+  let options,calls=0;
+  createClient({...config,readOnly:true},{createClient:(_u,_k,o)=>{options=o;}},async()=>{calls++;return new Response(JSON.stringify({id:'synthetic-membership'}));});
+  await options.global.fetch(config.supabaseUrl+'/rest/v1/rpc/pilot_set_membership',{method:'POST'});
+  assert.equal(calls,1);
+  await assert.rejects(options.global.fetch(config.supabaseUrl+'/rest/v1/rpc/pilot_set_membership')); // sin method -> GET, rechazado
+  await assert.rejects(options.global.fetch('https://skwjntfknzakhcjlxlnh.supabase.co/rest/v1/rpc/pilot_set_membership',{method:'POST'})); // otro origin
+  assert.equal(calls,1);
+});

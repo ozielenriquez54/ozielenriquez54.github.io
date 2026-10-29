@@ -55,3 +55,28 @@ test('NO_MEMBERSHIP (al verificar sesión y al iniciar sesión) muestra el formu
   assert.match(els['auth-status'].textContent,/Todavía no perteneces a ningún gimnasio/);
   assert.ok(!els['auth-status'].textContent.includes('No se pudo verificar la recuperación'));
 });
+// Regresión (desbloqueo del alta del primer cliente): AUTHORIZED con
+// canAddOwnCoachRole=true debe mostrar el botón de autoservicio en la
+// vista Coach, y un click debe llamar a auth.addOwnCoachRole() y
+// reflejar el resultado (incluyendo que el botón se oculte en cuanto deja
+// de ser elegible, sin recargar la página).
+test('AUTHORIZED con canAddOwnCoachRole muestra el botón de autoservicio en Coach; un click lo invoca y refleja el resultado',async()=>{
+  const els={};
+  const element=id=>els[id]??={hidden:false,value:'',textContent:'',addEventListener(k,f){this[k]=f;}};
+  const document={hidden:false,body:{dataset:{role:'COACH'}},getElementById:element,querySelectorAll:()=>[],addEventListener(){}};
+  const client={auth:{onAuthStateChange(){}}};
+  let addCalls=0;
+  const context={document,window:{addEventListener(){}},location:{pathname:'/coach.html',origin:'http://127.0.0.1:3000',search:'',hash:''},
+    history:{replaceState(){}},sessionStorage:{getItem(){},setItem(){},removeItem(){}},URLSearchParams,
+    fetch:async()=>({json:async()=>({publicKey:'sb_publishable_synthetic',publicOrigin:'http://127.0.0.1:3000',readOnly:true})}),
+    supabase:{},PilotAuth:{createClient:()=>client,controller:()=>({verify:async()=>({status:'AUTHORIZED',canAddOwnCoachRole:true}),invalidate(){},logout:async()=>({status:'SIGNED_OUT'}),
+      addOwnCoachRole:async()=>{addCalls++;return {status:'AUTHORIZED',canAddOwnCoachRole:false};}})},
+    PilotMacrosService:{createModel:()=>({list:async()=>[]}),createWriter:()=>({})},PilotMacrosUI:{mount:()=>({refresh(){},clear(){},revalidate(){}})},
+    PilotDiaryService:{createModel:()=>({invalidate(){}})},PilotDiaryUI:{mount:()=>({show:async()=>{},clear(){}})},
+    setInterval(){},setTimeout(fn){fn();}};
+  await vm.runInNewContext(fs.readFileSync(require.resolve('../../nutrika/pilot-auth-ui.js'),'utf8'),context);
+  assert.equal(els['add-own-coach-role'].hidden,false);
+  await els['add-own-coach-role'].click();
+  assert.equal(addCalls,1);
+  assert.equal(els['add-own-coach-role'].hidden,true); // ya no elegible: el botón se oculta sin recargar
+});

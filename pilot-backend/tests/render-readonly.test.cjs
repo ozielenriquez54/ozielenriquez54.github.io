@@ -72,10 +72,26 @@ test('read-only auth still ensures the caller\'s own profile (identity exception
   createClient({projectRef:'otswebncqidqthqplztj',supabaseUrl:base,publicKey:'sb_publishable_test',readOnly:true},{createClient:(_u,_k,o)=>{transport=o.global.fetch;}},()=>{allowedCalls++;return new Response('{}',{status:200});},{admin:true});
   await assert.doesNotReject(transport(base+'/rest/v1/rpc/pilot_ensure_profile',{method:'POST'}));
   await assert.doesNotReject(transport(base+'/rest/v1/rpc/pilot_resume_pending_activation',{method:'POST'}));
-  assert.equal(allowedCalls,2);
-  let rejectedTransport;
-  createClient({projectRef:'otswebncqidqthqplztj',supabaseUrl:base,publicKey:'sb_publishable_test',readOnly:true},{createClient:(_u,_k,o)=>{rejectedTransport=o.global.fetch;}},()=>assert.fail('network must remain unused'),{admin:true});
-  for(const name of ['pilot_set_membership','pilot_set_coach_client','pilot_assign_manual_macros'])await assert.rejects(rejectedTransport(base+'/rest/v1/rpc/'+name,{method:'POST'}));
+  // pilot_create_gym (bootstrap del primer gimnasio) y pilot_set_membership
+  // (su propia definición SQL — pilot_private.lock_admin — ya revalida que
+  // quien llama sea OWNER/ADMIN del gimnasio objetivo; el allowlist de
+  // transporte nunca es el límite de seguridad real para esta RPC) son
+  // también excepciones de autoservicio/identidad: permitidas siempre,
+  // incluso en readOnly.
+  await assert.doesNotReject(transport(base+'/rest/v1/rpc/pilot_create_gym',{method:'POST'}));
+  await assert.doesNotReject(transport(base+'/rest/v1/rpc/pilot_set_membership',{method:'POST'}));
+  assert.equal(allowedCalls,4);
+  let rejectedTransport,rejectedCalls=0;
+  createClient({projectRef:'otswebncqidqthqplztj',supabaseUrl:base,publicKey:'sb_publishable_test',readOnly:true},{createClient:(_u,_k,o)=>{rejectedTransport=o.global.fetch;}},()=>{rejectedCalls++;return new Response('{}',{status:200});},{admin:true});
+  // pilot_set_coach_client y pilot_assign_manual_macros SÍ siguen
+  // dependiendo de `admin&&!readOnly` (acciones administrativas sobre
+  // OTRA cuenta, nunca de autoservicio) — deben seguir bloqueadas en
+  // readOnly sin que la red llegue a tocarse, nunca solo "rechazadas por
+  // cualquier motivo" (de ahí el contador, no un `assert.fail` dentro del
+  // propio fetchImpl, que un rechazo por cualquier otra causa podría
+  // enmascarar).
+  for(const name of ['pilot_set_coach_client','pilot_assign_manual_macros'])await assert.rejects(rejectedTransport(base+'/rest/v1/rpc/'+name,{method:'POST'}));
+  assert.equal(rejectedCalls,0);
   await assert.rejects(rejectedTransport(base+'/auth/v1/signup',{method:'POST'}));
 });
 

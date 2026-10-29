@@ -34,6 +34,12 @@ function page(kind,config){
   // activa todavía. pilot-auth-ui.js decide cuándo mostrarla (solo con
   // NO_MEMBERSHIP); nunca existe en la vista Cliente.
   const createGymSection=kind==='Coach'?'<form id="create-gym-form" hidden><label>Nombre del gimnasio <input id="create-gym-name" type="text" minlength="1" maxlength="160" required></label><button type="submit">Crear gimnasio</button></form>':'';
+  // Autoservicio exclusivo de la vista Coach: un OWNER/ADMIN sin el rol
+  // COACH todavía se lo agrega a sí mismo (pilot_set_membership), para
+  // poder asignarse como coach de un cliente desde el alta. Nunca toca
+  // otra cuenta ni existe en la vista Cliente; pilot-auth-ui.js decide
+  // cuándo mostrarlo (solo con AUTHORIZED+canAddOwnCoachRole).
+  const addOwnCoachRoleButton=kind==='Coach'?'<button id="add-own-coach-role" type="button" hidden>Asignarme también el rol COACH</button>':'';
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Twogramms — Piloto ${kind}</title><style>${css}
   .pilot-shell{max-width:800px;margin:40px auto;padding:24px;background:white;color:#222;border:2px solid #c9a13b} .pilot-shell nav a{display:inline-block;margin:12px} .pilot-shell img{width:72px} .pilot-shell p{margin:16px 0} .pilot-shell label{display:block;margin:12px 0} .pilot-shell input,.pilot-shell select,.pilot-shell button{padding:8px;margin:5px;max-width:100%} .pilot-shell button:disabled{opacity:.55} .pilot-shell section{margin:20px 0}
   </style></head><body data-role="${kind==='Coach'?'COACH':'CLIENT'}"><main class="pilot-shell"><img src="/assets/logo.jpg" alt="Twogramms"><h1>TWOGRAMMS — MODO PILOTO</h1><h2>Vista ${kind}</h2><p>Objetivos manuales de macros: consulta y vista previa. Guardado no disponible.</p><p>Proyecto permitido: <strong>${config.projectRef}</strong></p>
@@ -41,6 +47,7 @@ function page(kind,config){
   <form id="login-form"><label>Correo <input id="auth-email" type="email" autocomplete="username" required></label><label>Contraseña <input id="auth-password" type="password" autocomplete="current-password"></label><button type="submit">Iniciar sesión</button></form>
   <button id="magic-link" type="button">Enviar Magic Link</button><button id="recover" type="button">Recuperar contraseña</button><button id="logout" type="button">Cerrar sesión</button>
   ${createGymSection}
+  ${addOwnCoachRoleButton}
   <h2 id="recovery-title" hidden>Recuperación de contraseña</h2>
   <button id="recovery-retry" type="button" hidden>Reintentar verificación de sesión</button>
   <a id="recovery-login" href="/index.html" hidden>Ir al inicio de sesión</a>
