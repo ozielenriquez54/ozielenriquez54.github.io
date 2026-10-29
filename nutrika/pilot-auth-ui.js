@@ -2,8 +2,10 @@
 (async()=>{
   const status=document.getElementById('auth-status'),access=document.getElementById('pilot-access');
   const recovery=document.getElementById('password-form');
+  const createGym=document.getElementById('create-gym-form');
   const messages={SIGNED_OUT:'Inicia sesión con tu cuenta del piloto.',AUTHORIZED:'Sesión verificada y rol autorizado. Las funciones clínicas siguen deshabilitadas.',
     ROLE_REQUIRED:'Sesión verificada. Falta una membresía activa para esta vista; solicítala al administrador.',AUTH_FAILED:'No se pudo completar la operación. Revisa los datos o solicita un enlace nuevo.',
+    NO_MEMBERSHIP:'Sesión verificada. Todavía no perteneces a ningún gimnasio: crea el primero para convertirte en su propietario.',
     EMAIL_SENT:'Si la cuenta está habilitada, recibirás un enlace. Ábrelo en este mismo perfil de navegador.',RECOVERY:'Define tu nueva contraseña.',PASSWORD_UPDATED:'Contraseña actualizada. Ya puedes iniciar sesión.',LOGOUT_FAILED:'No se pudo confirmar el cierre de sesión. Vuelve a intentarlo.'};
   Object.assign(messages,{
     LINK_INVALID:'El enlace está incompleto o no es válido. Usa el enlace completo del correo.',
@@ -43,6 +45,7 @@
     status.textContent=messages[result.status]??messages.AUTH_FAILED;
     access.hidden=result.status!=='AUTHORIZED';
     recovery.hidden=result.status!=='RECOVERY';
+    if(createGym)createGym.hidden=!(result.status==='NO_MEMBERSHIP'&&role==='COACH');
     authorized=result.status==='AUTHORIZED';
     if(authorized&&!document.hidden){macrosUI?.refresh();refreshDiary();refreshTracking();refreshCoachHistory();refreshProvisioning();}else {macrosUI?.clear();clearDiary();clearTracking();clearProvisioning();access.hidden=true;}
   }
@@ -91,6 +94,11 @@
     document.getElementById('recovery-retry')?.addEventListener('click',()=>run(()=>auth.resumeRecovery()));
     const email=()=>document.getElementById('auth-email').value.trim();
     document.getElementById('login-form').addEventListener('submit',event=>{event.preventDefault();run(()=>auth.login(email(),document.getElementById('auth-password').value));});
+    createGym?.addEventListener('submit',event=>{event.preventDefault();run(async()=>{
+      const input=document.getElementById('create-gym-name'),result=await auth.createGym(input.value);
+      if(result.status==='AUTHORIZED')input.value='';
+      return result;
+    });});
     document.getElementById('magic-link').addEventListener('click',()=>run(()=>auth.email(email(),false)));
     document.getElementById('recover').addEventListener('click',()=>run(()=>auth.email(email(),true)));
     document.getElementById('logout').addEventListener('click',async()=>{

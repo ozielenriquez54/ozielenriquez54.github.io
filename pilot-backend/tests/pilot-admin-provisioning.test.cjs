@@ -999,7 +999,10 @@ test('solicitud manipulada: created_by ya NO es OWNER/ADMIN activo en el gimnasi
   owner.active = false;
   const clientAuth = controller(fakeAuthClient(db, OZIEL_ID), 'CLIENT', 'http://127.0.0.1:3000/auth/callback.html', { readOnly: true });
   const result = await clientAuth.verify();
-  assert.equal(result.status, 'ROLE_REQUIRED'); // nunca se aplica una autorización que ya no es válida
+  // Cero membresías otorgadas (la cancelación es real, no una fila a medias):
+  // NO_MEMBERSHIP, no el ROLE_REQUIRED genérico — ver la distinción en
+  // pilot-auth.js::verify() (P1, bootstrap de pilot_create_gym).
+  assert.equal(result.status, 'NO_MEMBERSHIP'); // nunca se aplica una autorización que ya no es válida
   assert.equal(db.pendingActivations[0].status, 'cancelled');
   assert.equal(db.memberships.some(m => m.user_id === OZIEL_ID), false); // sin membresía otorgada
   assert.equal(db.coachClients.length, 0);
@@ -1015,7 +1018,7 @@ test('solicitud manipulada: el coach destino ya no es válido en ese gimnasio �
   db.memberships.find(m => m.user_id === COACH).active = false;
   const clientAuth = controller(fakeAuthClient(db, OZIEL_ID), 'CLIENT', 'http://127.0.0.1:3000/auth/callback.html', { readOnly: true });
   const result = await clientAuth.verify();
-  assert.equal(result.status, 'ROLE_REQUIRED');
+  assert.equal(result.status, 'NO_MEMBERSHIP'); // cancelada: cero membresías otorgadas, nunca el ROLE_REQUIRED genérico
   assert.equal(db.pendingActivations[0].status, 'cancelled');
   assert.equal(db.coachClients.length, 0);
 });
@@ -1031,7 +1034,7 @@ test('solicitud manipulada: una fila apuntando a otro gimnasio nunca se aplica p
   db.pendingActivations[0].gym_id = OTHER_GYM;
   const clientAuth = controller(fakeAuthClient(db, OZIEL_ID), 'CLIENT', 'http://127.0.0.1:3000/auth/callback.html', { readOnly: true });
   const result = await clientAuth.verify();
-  assert.equal(result.status, 'ROLE_REQUIRED');
+  assert.equal(result.status, 'NO_MEMBERSHIP'); // cancelada: cero membresías otorgadas, nunca el ROLE_REQUIRED genérico
   assert.equal(db.pendingActivations[0].status, 'cancelled');
   assert.equal(db.memberships.some(m => m.user_id === OZIEL_ID && m.gym_id === OTHER_GYM), false);
 });

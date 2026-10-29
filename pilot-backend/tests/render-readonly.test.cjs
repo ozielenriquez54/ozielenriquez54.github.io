@@ -56,7 +56,10 @@ test('read-only auth still ensures the caller\'s own profile (identity exception
   let rpc=0;const rpcNames=[];
   const q={select:()=>q,eq:()=>q,then:resolve=>resolve({data:[]})};
   const client={auth:{getUser:async()=>({data:{user:{id:'client'}}})},from:()=>q,rpc:name=>{rpc++;rpcNames.push(name);return {data:{id:'client'},error:null};}};
-  assert.equal((await controller(client,'CLIENT',origin+'/auth/callback.html',{approvedOrigin:origin,readOnly:true}).verify()).status,'ROLE_REQUIRED');
+  // Cero membresías activas (el mock `q` siempre resuelve `{data:[]}`):
+  // NO_MEMBERSHIP, no el ROLE_REQUIRED genérico — ver la distinción en
+  // pilot-auth.js::verify() (P1, bootstrap de pilot_create_gym).
+  assert.equal((await controller(client,'CLIENT',origin+'/auth/callback.html',{approvedOrigin:origin,readOnly:true}).verify()).status,'NO_MEMBERSHIP');
   // pilot_ensure_profile (crea/confirma el propio perfil) y luego
   // pilot_resume_pending_activation (autoservicio, tolerante) — ambas
   // excepciones de identidad permitidas incluso en readOnly.

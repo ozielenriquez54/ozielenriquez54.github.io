@@ -48,14 +48,17 @@
       global:{fetch:async(input,init={})=>{
         const url=new URL(typeof input==='string'?input:input.url??input.href);
         if(url.origin!==URL_ROOT||url.username||url.password)fail();
-        // pilot_ensure_profile() y pilot_resume_pending_activation() son
-        // excepciones de identidad/autoservicio — la segunda, de
-        // autoservicio también, completa (si existía) la ÚNICA solicitud
-        // de activación ya autorizada por un OWNER/ADMIN para auth.uid();
-        // nunca actúa sobre otro usuario ni otorga privilegios
-        // administrativos. Ambas se permiten siempre, incluso en readOnly,
-        // que sigue cerrando toda función clínica (diario/macros/tracking).
-        const allowed=['/rest/v1/profiles','/rest/v1/gym_memberships','/rest/v1/rpc/pilot_ensure_profile','/rest/v1/rpc/pilot_resume_pending_activation'];
+        // pilot_ensure_profile(), pilot_resume_pending_activation() y
+        // pilot_create_gym() son excepciones de identidad/autoservicio —
+        // las tres actúan exclusivamente sobre auth.uid() (nunca sobre otro
+        // usuario) y ninguna otorga privilegios administrativos sobre datos
+        // ajenos: pilot_create_gym() crea un gimnasio NUEVO y asigna OWNER
+        // únicamente de quien la invoca, la única vía para que una cuenta
+        // sin ninguna membresía todavía pueda arrancar algo. Las tres se
+        // permiten siempre, incluso en readOnly, que sigue cerrando toda
+        // función clínica (diario/macros/tracking) pero no estas acciones
+        // de identidad propia.
+        const allowed=['/rest/v1/profiles','/rest/v1/gym_memberships','/rest/v1/rpc/pilot_ensure_profile','/rest/v1/rpc/pilot_resume_pending_activation','/rest/v1/rpc/pilot_create_gym'];
         if(macros)allowed.push('/rest/v1/clients','/rest/v1/coach_clients','/rest/v1/manual_macro_targets','/rest/v1/manual_macro_target_versions');
         if(admin&&!config.readOnly)allowed.push('/rest/v1/coach_clients','/rest/v1/rpc/pilot_set_membership','/rest/v1/rpc/pilot_set_coach_client');
         if(!url.pathname.startsWith('/auth/v1/')&&!allowed.includes(url.pathname))fail();
@@ -228,7 +231,14 @@
         // exigiendo literalmente CLIENT, sin cambios.
         const acceptedRoles=role==='COACH'?['COACH','OWNER','ADMIN']:[role];
         const allowed=memberships.data.some(m=>m.user_id===id&&m.active===true&&Array.isArray(m.roles)&&m.roles.some(r=>acceptedRoles.includes(r)));
-        return {status:allowed?'AUTHORIZED':'ROLE_REQUIRED'};
+        if(allowed)return {status:'AUTHORIZED'};
+        // Distinción mínima dentro del mismo caso "sin acceso a esta vista":
+        // NO_MEMBERSHIP (cero membresías ACTIVAS, de cualquier rol, en
+        // cualquier gimnasio) es la única situación en la que crear un
+        // gimnasio propio (pilot_create_gym) tiene sentido — una cuenta que
+        // YA pertenece a algún gimnasio (p. ej. CLIENT viendo /coach.html)
+        // sigue viendo ROLE_REQUIRED, nunca la opción de crear otro.
+        return {status:memberships.data.length===0?'NO_MEMBERSHIP':'ROLE_REQUIRED'};
       }catch{return {status:'AUTH_FAILED'};}
     }
     async function passwordLink(tokenHash,type){try{
@@ -261,6 +271,21 @@
       },
       invalidate(){generation++;clearRecovery();},
       async login(email,password){try{clearRecovery();const r=await client.auth.signInWithPassword({email,password});if(r.error)fail();return await verify();}catch{return {status:'AUTH_FAILED'};}},
+      // Autoservicio: crea un gimnasio nuevo y asigna OWNER únicamente de
+      // auth.uid() (pilot_create_gym, ver pilot-backend). Solo tiene
+      // sentido cuando verify() ya devolvió NO_MEMBERSHIP; llamarla con una
+      // sesión ya vinculada a algún gimnasio no está prohibido por la RPC
+      // en sí, pero la UI solo la ofrece en ese caso (ver pilot-auth-ui.js).
+      // Reutiliza verify() al final para reflejar la nueva membresía OWNER
+      // sin pedir un nuevo inicio de sesión.
+      async createGym(name){try{
+        if(typeof name!=='string')fail();
+        const trimmed=name.trim();
+        if(trimmed.length<1||trimmed.length>160)fail();
+        const r=await client.rpc('pilot_create_gym',{p_name:trimmed});
+        if(r.error)fail();
+        return await verify();
+      }catch{return {status:'AUTH_FAILED'};}},
       async logout(){generation++;clearRecovery();try{const r=await client.auth.signOut({scope:'local'});return {status:r.error?'LOGOUT_FAILED':'SIGNED_OUT'};}catch{return {status:'LOGOUT_FAILED'};}},
       async email(email,recovery){try{
         const r=recovery?await client.auth.resetPasswordForEmail(email,{redirectTo}):await client.auth.signInWithOtp({email,options:{emailRedirectTo:redirectTo,shouldCreateUser:false}});

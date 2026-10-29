@@ -165,7 +165,11 @@ test('administrative transport allows only explicit RPCs and read-only roster; p
   await options.global.fetch(config.supabaseUrl+'/rest/v1/rpc/pilot_set_coach_client',{method:'POST'});
   await options.global.fetch(config.supabaseUrl+'/rest/v1/coach_clients');
   assert.equal(calls,3);
-  for(const [path,method] of [['/rest/v1/gym_memberships','POST'],['/rest/v1/coach_clients','DELETE'],['/rest/v1/rpc/pilot_create_gym','POST'],['/rest/v1/rpc/pilot_set_membership','GET']])await assert.rejects(options.global.fetch(config.supabaseUrl+path,{method}));
+  // pilot_create_gym ya NO está en esta lista: es una excepción de
+  // autoservicio (como pilot_ensure_profile/pilot_resume_pending_activation),
+  // permitida siempre — con o sin `admin` — así que una llamada POST
+  // correcta sí debe llegar a fetchImpl; se cubre aparte más abajo.
+  for(const [path,method] of [['/rest/v1/gym_memberships','POST'],['/rest/v1/coach_clients','DELETE'],['/rest/v1/rpc/pilot_set_membership','GET']])await assert.rejects(options.global.fetch(config.supabaseUrl+path,{method}));
   assert.equal(calls,3);
 });
 test('fetch real: conserva 23505 (unique_violation) sin exponer el mensaje crudo, y nunca sustituye el código HTTP real',async()=>{
@@ -179,4 +183,60 @@ test('fetch real: conserva 23505 (unique_violation) sin exponer el mensaje crudo
   assert.equal(response.status,409); // el código HTTP real nunca se sustituye
   const body=await response.json();
   assert.equal(body.code,'23505');assert.ok(!JSON.stringify(body).includes('secreto'));
+});
+// pilot_create_gym(p_name text): bootstrap de autoservicio (igual categoría
+// que pilot_ensure_profile/pilot_resume_pending_activation) para una cuenta
+// SIN ninguna membresía activa todavía — la única vía para crear el primer
+// gimnasio+OWNER (ver pilot_create_gym en BASE-LAYER-INSTALL-CLIENT-COACH.sql,
+// sección 14). `membership` es mutable para simular que, tras llamar a la
+// RPC, la MISMA sesión ya refleja la nueva fila sin pedir un nuevo login.
+function fixtureCreateGym({initialRoles=[],failCreateGym=false}={}){
+  const calls=[];
+  let membership=initialRoles.length?{user_id:'synthetic-user',roles:initialRoles,active:true}:null;
+  const client={auth:{getUser:async()=>({data:{user:{id:'synthetic-user'}}})},
+    rpc:async(name,args)=>{
+      calls.push(['rpc',name,args]);
+      if(name==='pilot_ensure_profile')return {data:{id:'synthetic-user'}};
+      if(name==='pilot_resume_pending_activation')return {data:null,error:null,status:200};
+      if(name==='pilot_create_gym'){
+        if(failCreateGym)return {data:null,error:{code:'42501'},status:403};
+        membership={user_id:'synthetic-user',roles:['OWNER'],active:true};
+        return {data:{id:'synthetic-gym',name:args?.p_name},error:null};
+      }
+      return {data:null,error:null};
+    },
+    from:name=>{calls.push(['table',name]);const q={select:()=>q,eq:key=>key==='active'?Promise.resolve({data:membership?[membership]:[]}):q};return q;}};
+  return {client,calls,auth:controller(client,'COACH','http://127.0.0.1:3000/auth/callback.html')};
+}
+test('verify(): NO_MEMBERSHIP (cero membresías activas) es distinto de ROLE_REQUIRED (ya pertenece a un gimnasio, solo con otro rol) — solo el primero habilita crear un gimnasio propio',async()=>{
+  assert.equal((await fixtureCreateGym().auth.verify()).status,'NO_MEMBERSHIP');
+  assert.equal((await fixtureCreateGym({initialRoles:['CLIENT']}).auth.verify()).status,'ROLE_REQUIRED');
+  assert.equal((await fixtureCreateGym({initialRoles:['OWNER']}).auth.verify()).status,'AUTHORIZED');
+});
+test('createGym(): crea el gimnasio sobre auth.uid(), refleja OWNER sin nuevo login, valida el nombre como gyms_name_check (1 a 160) y nunca refleja un gimnasio que la RPC rechazó',async()=>{
+  const f=fixtureCreateGym();
+  assert.equal((await f.auth.verify()).status,'NO_MEMBERSHIP');
+  const result=await f.auth.createGym('  Complex Training  ');
+  assert.equal(result.status,'AUTHORIZED');
+  assert.deepEqual(f.calls.find(c=>c[1]==='pilot_create_gym'),['rpc','pilot_create_gym',{p_name:'Complex Training'}]);
+  assert.equal((await f.auth.verify()).status,'AUTHORIZED'); // misma sesión, sin nuevo login
+  for(const bad of ['','   ','x'.repeat(161)]){
+    const g=fixtureCreateGym();
+    assert.equal((await g.auth.createGym(bad)).status,'AUTH_FAILED');
+    assert.ok(!g.calls.some(c=>c[1]==='pilot_create_gym')); // rechazado antes de llamar a la RPC
+  }
+  const h=fixtureCreateGym();
+  assert.equal((await h.auth.createGym('x'.repeat(160))).status,'AUTHORIZED'); // límite exacto permitido
+  const failing=fixtureCreateGym({failCreateGym:true});
+  assert.deepEqual(await failing.auth.createGym('Complex Training'),{status:'AUTH_FAILED'});
+  assert.equal((await failing.auth.verify()).status,'NO_MEMBERSHIP'); // nunca se refleja parcialmente
+});
+test('pilot_create_gym es alcanzable con la MISMA combinación que usa el runner real (readOnly:true, sin admin ni macros) — nunca por otro método ni otro origin',async()=>{
+  let options,calls=0;
+  createClient({...config,readOnly:true},{createClient:(_u,_k,o)=>{options=o;}},async()=>{calls++;return new Response(JSON.stringify({id:'synthetic-gym'}));});
+  await options.global.fetch(config.supabaseUrl+'/rest/v1/rpc/pilot_create_gym',{method:'POST'});
+  assert.equal(calls,1);
+  await assert.rejects(options.global.fetch(config.supabaseUrl+'/rest/v1/rpc/pilot_create_gym')); // sin method -> GET por defecto, rechazado
+  await assert.rejects(options.global.fetch('https://skwjntfknzakhcjlxlnh.supabase.co/rest/v1/rpc/pilot_create_gym',{method:'POST'})); // otro origin
+  assert.equal(calls,1);
 });
