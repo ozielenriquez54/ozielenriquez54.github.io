@@ -20,11 +20,17 @@ function createScopedMacros({env,fetchImpl=globalThis.fetch,createClient=require
     return {auth:{getUser:()=>client.auth.getUser(token)},from:t=>client.from(t),rpc:(n,args)=>client.rpc(n,args)};
   }});
 }
-function prepareComplexServer({activate=false,env=process.env,approvals=null}={}){
+function prepareComplexServer({activate=false,env=process.env,approvals=null,adminProvisioningService=null}={}){
   if(!activate)return createPilotServer({env,readOnly:true});
   const config=loadPilotConfig(env);if(!config.publicOrigin)throw new Error('HTTPS_ORIGIN_REQUIRED');
   const macros=createScopedMacros({env});const diary=createDiaryInfrastructure({activate:true,env,approvals});
-  const app=createPilotServer({env,manualMacrosService:macros,diaryService:diary,trackingService:diary.trackingService,manualMacrosWriteEnabled:true});
+  let app;
+  try {
+    app=createPilotServer({env,manualMacrosService:macros,diaryService:diary,trackingService:diary.trackingService,manualMacrosWriteEnabled:true,adminProvisioningService});
+  } catch (error) {
+    void diary.close().catch(()=>{});
+    throw error;
+  }
   return {...app,closeDatabase:()=>diary.close()};
 }
 module.exports={createScopedMacros,prepareComplexServer};

@@ -6,6 +6,7 @@
 !pilot-backend/deployment/Dockerfile
 !pilot-backend/server/
 !pilot-backend/server/render-readonly.cjs
+!pilot-backend/server/isolated-pilot.cjs
 !pilot-backend/server/pilot-http.cjs
 !pilot-backend/server/pilot-config.cjs
 !pilot-backend/server/manual-macros-assets.cjs
@@ -69,3 +70,6 @@
 !nutrika/domain/catalog/portions.cjs
 !nutrika/domain/catalog/usage.cjs
 !nutrika/domain/weight.cjs
+!nutrika/pilot-client-home-ui.js
+!nutrika/pilot-client-i18n.js
+!nutrika/pilot-client-shell.js

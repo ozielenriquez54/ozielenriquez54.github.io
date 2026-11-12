@@ -1,0 +1,43 @@
+{
+    "source":  "C:/Users/jessl/ozielenriquez54.github.io/pilot-backend",
+    "sourceCommit":  null,
+    "provenance":  "Original local untracked files, not committed migrations",
+    "targetProject":  "fadbkbdbpuoekolfcbjm",
+    "files":  [
+                  {
+                      "path":  "migrations/202609290001_identity.sql",
+                      "sha256":  "0c41544e85f5665c9a8bdf36ea4b596e6e8e04377743bc909e2d14a4016dbae3",
+                      "originalUnchanged":  true
+                  },
+                  {
+                      "path":  "migrations/202609290002_authorization.sql",
+                      "sha256":  "16541cb65793f4434265683547e7c5531ed040ac95a9b562e0fd6334a12db464",
+                      "originalUnchanged":  true
+                  },
+                  {
+                      "path":  "migrations/202610170005_manual_macros.sql",
+                      "sha256":  "63d5cc8eb973ce91760b2f409e1a82c0da120d387554ff4c8287831918509f81",
+                      "originalUnchanged":  true
+                  },
+                  {
+                      "path":  "activation-drafts/complex-macros.sql",
+                      "sha256":  "9a39713300b7b53d4de0357f008acbdc7710d5fcac3cb3920ed33448848b7298",
+                      "originalUnchanged":  true
+                  },
+                  {
+                      "path":  "activation-drafts/complex-diary.sql",
+                      "sha256":  "08d45cd9d14de0ffae4bf285a9f52a2f641e7c56972ed74cc3602db132db122d",
+                      "originalUnchanged":  true
+                  },
+                  {
+                      "path":  "activation-drafts/complex-tracking.sql",
+                      "sha256":  "277089718a5fea2056b4bda5c3e4b887548e57b7b64e33f62454f4b2f22c1d28",
+                      "originalUnchanged":  true
+                  },
+                  {
+                      "path":  "activation-drafts/complex-personal-foods.sql",
+                      "sha256":  "93002f7761e1ec20985ce7ce72fbea9467b40c7510fb33c219f5a4d464960644",
+                      "originalUnchanged":  true
+                  }
+              ]
+}

@@ -1,6 +1,6 @@
 (function(root){
   'use strict';
-  function mount(container,{model,document:doc=root.document,newId=()=>root.crypto.randomUUID(),role='CLIENT'}){
+  function mount(container,{model,document:doc=root.document,newId=()=>root.crypto.randomUUID(),role='CLIENT',onSaved=null}){
     let epoch=0;
     const node=(tag,text)=>{const n=doc.createElement(tag);if(text!==undefined)n.textContent=String(text);return n;};
     function clear(){epoch++;container.replaceChildren();}
@@ -30,7 +30,9 @@
                 const current=await model.history(target,date,date),rev=current.days[0].habits;
                 await model.save({...target,nutritionDate:date,kind:'HABITS_DAY',operationId:newId(),baseRevision:rev?.revision??0,values:patch,completion:Object.fromEntries(Object.entries(checks).map(([k,v])=>[k,v.indeterminate?null:v.checked]))});
               }
-              if(ticket===epoch)await show(target,date);
+              // Conserva el objetivo vigente al volver a mostrar el día y avisa
+              // (opcional) a la pantalla de inicio del cliente para que se actualice.
+              if(ticket===epoch){await show(target,date,macroModel);if(typeof onSaved==='function')onSaved(target,date);}
             }catch{if(ticket===epoch)message.textContent='No se confirmó el registro; vuelve a consultar la fecha antes de reintentar.';}
             finally{busy=false;}
           });

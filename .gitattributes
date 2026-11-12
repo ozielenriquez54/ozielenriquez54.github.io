@@ -1,0 +1,4 @@
+# SQL de activación del piloto: se guardan byte a byte (CRLF incluido) para que
+# su SHA-256 coincida con pilot-backend/deployment/isolated-sql-manifest.json.
+pilot-backend/migrations/*.sql -text
+pilot-backend/activation-drafts/*.sql -text

@@ -41,7 +41,8 @@
   // llame por primera vez; nunca cambia de valor después.
   let role;
   function clearDiary(){diaryModel?.invalidate();diaryUI?.clear();}
-  function clearTracking(){trackingModel?.invalidate();trackingUI?.clear();coachHistoryUI?.clear();}
+  let homeUI=null,refreshHome=()=>{};
+  function clearTracking(){trackingModel?.invalidate();trackingUI?.clear();homeUI?.clear();coachHistoryUI?.clear();}
   function clearProvisioning(){provisioningUI?.clear();}
   function render(result){
     if(result.status==='RECOVERY')recoveryMode=true;
@@ -55,7 +56,7 @@
     if(createGym)createGym.hidden=!(result.status==='NO_MEMBERSHIP'&&role==='COACH');
     if(addOwnCoachRole)addOwnCoachRole.hidden=!(result.status==='AUTHORIZED'&&result.canAddOwnCoachRole===true&&role==='COACH');
     authorized=result.status==='AUTHORIZED';
-    if(authorized&&!document.hidden){macrosUI?.refresh();refreshDiary();refreshTracking();refreshCoachHistory();refreshProvisioning();}else {macrosUI?.clear();clearDiary();clearTracking();clearProvisioning();access.hidden=true;}
+    if(authorized&&!document.hidden){macrosUI?.refresh();refreshDiary();refreshTracking();refreshHome();refreshCoachHistory();refreshProvisioning();}else {macrosUI?.clear();clearDiary();clearTracking();clearProvisioning();access.hidden=true;}
   }
   // Capture credentials in memory and immediately clean the address; never log them.
   const callback=location.pathname==='/auth/callback.html';
@@ -76,8 +77,13 @@
       writer:config.macrosWritable===true&&role==='COACH'?PilotMacrosService.createWriter(client):null});
     if(role==='CLIENT'&&config.diaryAvailable){
       diaryModel=PilotDiaryService.createModel(client);
-      diaryUI=PilotDiaryUI.mount(document.getElementById('diary-root'),{model:diaryModel});
       const own=PilotMacrosService.createModel(client,'CLIENT');
+      // Alimentación: tarjetas por comida; el panel de búsqueda vive en el shell y el
+      // resumen lee la prescripción vigente del coach (solo lectura).
+      const shellUI=typeof PilotClientShell!=='undefined'?PilotClientShell:null;
+      diaryUI=PilotDiaryUI.mount(document.getElementById('diary-root'),{model:diaryModel,macros:own,panel:shellUI?.foodPanel()??null,
+        onChanged:()=>{if(authorized&&!document.hidden)homeUI?.refresh();}});
+      shellUI?.onLanguageChange(()=>{if(authorized&&!document.hidden)diaryUI.refresh?.();});
       refreshDiary=async()=>{const ticket=authEpoch;clearDiary();try{
         const targets=await own.list();if(ticket!==authEpoch||!authorized||document.hidden||targets.length!==1)return;
         const d=new Date(),date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
@@ -85,9 +91,19 @@
       }catch{clearDiary();}};
     }
     if(config.trackingAvailable===true){
-      trackingModel=PilotTrackingService.createModel(client);trackingUI=PilotTrackingUI.mount(document.getElementById('tracking-root'),{model:trackingModel,role});
+      trackingModel=PilotTrackingService.createModel(client);trackingUI=PilotTrackingUI.mount(document.getElementById('tracking-root'),{model:trackingModel,role,onSaved:()=>{if(authorized&&!document.hidden)homeUI?.refresh();}});
       if(role==='CLIENT')refreshTracking=async()=>{const ticket=authEpoch;trackingUI.clear();try{const targets=await macrosModel.list();if(ticket!==authEpoch||!authorized||document.hidden||targets.length!==1)return;const d=new Date(),date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');await trackingUI.show(targets[0],date,macrosModel);}catch{trackingUI.clear();}};
       else{coachHistoryUI=PilotCoachHistoryUI.mount(document.getElementById('coach-history-root'),{model:macrosModel,macros:macrosModel,tracking:trackingUI});refreshCoachHistory=async()=>{if(!authorized||document.hidden)return;await coachHistoryUI.refresh();};}
+    }
+    // Experiencia del cliente (Hoy · Alimentación · Progreso · Mi plan): solo para
+    // CLIENT y solo si el módulo está cargado. Sin seguimiento conectado muestra
+    // estados pendientes; nunca datos ficticios. Lee con los mismos modelos autorizados.
+    if(role==='CLIENT'&&typeof PilotClientHomeUI!=='undefined'){
+      const shell=typeof PilotClientShell!=='undefined'?PilotClientShell:null;
+      homeUI=PilotClientHomeUI.mount({today:document.getElementById('home-today-root'),food:document.getElementById('home-food-root'),progress:document.getElementById('home-progress-root'),plan:document.getElementById('home-plan-root')},
+        {model:trackingModel,macros:macrosModel,log:trackingUI,diaryAvailable:config.diaryAvailable===true,navigate:opts=>shell?.navigate(opts)});
+      shell?.onLanguageChange(()=>{if(authorized&&!document.hidden)homeUI.refresh();});
+      refreshHome=async()=>{const ticket=authEpoch;homeUI.clear();try{const targets=await macrosModel.list();if(ticket!==authEpoch||!authorized||document.hidden||targets.length!==1)return;const d=new Date(),date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');await homeUI.show(targets[0],date);}catch{homeUI.clear();}};
     }
     if(config.adminProvisioningAvailable===true&&role==='COACH'){
       provisioningUI=PilotAdminProvisioningUI.mount(document.getElementById('admin-provisioning-root'),{client});
