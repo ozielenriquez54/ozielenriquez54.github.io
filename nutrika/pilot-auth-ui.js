@@ -15,6 +15,9 @@
     RECOVERY_NETWORK:'No se pudo verificar la sesión por un problema de conexión. Reintenta la verificación sin volver a abrir el enlace.',
     RECOVERY_SESSION_MISSING:'No hay una sesión de recuperación válida en este navegador.',
     RECOVERY_SESSION_MISMATCH:'La sesión corresponde a otra cuenta. No se permite cambiar la contraseña.',
+    RATE_LIMITED:'Se alcanzó el límite temporal de solicitudes. Espera unos minutos antes de volver a intentarlo y usa solo el último correo recibido.',
+    LINK_OTHER_BROWSER:'Este enlace debe abrirse en el mismo navegador donde solicitaste la recuperación. Ábrelo ahí o solicita un enlace nuevo.',
+    LINK_SUPERSEDED:'Este enlace ya no es válido: pertenece a una solicitud anterior o ya se usó. Abre el último correo recibido o solicita un enlace nuevo.',
     AUTH_FAILED:'No se pudo verificar la recuperación o completar la operación. Solicita asistencia sin compartir el enlace.',
     // P2 (auditoría sobre el commit 26fd7fc, "errores ocultos"): estos
     // cuatro estados de la reanudación automática de activación ya existían

@@ -21,6 +21,10 @@
     if(['bad_jwt','session_not_found','refresh_token_not_found','refresh_token_already_used'].includes(error?.code))return {status:'RECOVERY_SESSION_MISSING'};
     if(error?.code==='otp_expired')return {status:'LINK_EXPIRED_OR_USED'};
     if(error?.code==='flow_state_expired')return {status:'LINK_EXPIRED'};
+    // PKCE: el verificador solo existe en el navegador que pidió el enlace.
+    if(error?.code==='pkce_code_verifier_not_found')return {status:'LINK_OTHER_BROWSER'};
+    if(['bad_code_verifier','flow_state_not_found'].includes(error?.code))return {status:'LINK_SUPERSEDED'};
+    if(error?.status===429)return {status:'RATE_LIMITED'};
     if(error?.code==='PILOT_NETWORK_ERROR'||error?.name==='AuthRetryableFetchError'||error?.name==='TypeError'||error?.status>=500)return {status:'RECOVERY_NETWORK'};
     return {status:'AUTH_FAILED'};
   }
@@ -105,7 +109,7 @@
             // más adelante, en verify(), a partir de ESE estado, nunca de
             // `code` (ver la nota de ahí sobre por qué un `code` vacío NO
             // implica por sí mismo un error de red).
-            try{const body=await response.json();const candidate=body.code??body.error_code;if(['42501','40001','23503','23505','23514'].includes(candidate)||(url.pathname.startsWith('/auth/v1/')&&['otp_expired','flow_state_expired','session_not_found','refresh_token_not_found','refresh_token_already_used','bad_jwt'].includes(candidate)))code=candidate;}catch{}
+            try{const body=await response.json();const candidate=body.code??body.error_code;if(['42501','40001','23503','23505','23514'].includes(candidate)||(url.pathname.startsWith('/auth/v1/')&&['otp_expired','flow_state_expired','flow_state_not_found','bad_code_verifier','session_not_found','refresh_token_not_found','refresh_token_already_used','bad_jwt'].includes(candidate)))code=candidate;}catch{}
             return new Response(JSON.stringify({message:'PILOT_REQUEST_FAILED',error:'PILOT_REQUEST_FAILED',code,error_code:code}),{status:response.status,headers:{'Content-Type':'application/json'}});
           }
           return response;
@@ -336,6 +340,8 @@
       async logout(){generation++;clearRecovery();try{const r=await client.auth.signOut({scope:'local'});return {status:r.error?'LOGOUT_FAILED':'SIGNED_OUT'};}catch{return {status:'LOGOUT_FAILED'};}},
       async email(email,recovery){try{
         const r=recovery?await client.auth.resetPasswordForEmail(email,{redirectTo}):await client.auth.signInWithOtp({email,options:{emailRedirectTo:redirectTo,shouldCreateUser:false}});
+        // 429 = límite de Supabase Auth; el transporte conserva el estado HTTP real.
+        if(r.error?.status===429)return {status:'RATE_LIMITED'};
         if(r.error)fail();return {status:'EMAIL_SENT'};
       }catch{return {status:'AUTH_FAILED'};}},
       async callback(code){try{
