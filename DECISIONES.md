@@ -1,5 +1,7 @@
 # Decisiones — Twogramms
 
+- Revalidación visual (cambio local pendiente): conservar la última vista autorizada sin interacción mientras se comprueba la sesión; ocultar y limpiar ante rechazo, error o logout. Mantener las verificaciones de sesión y autorización existentes. No cambiar Supabase ni Render. [U: alcance autorizado; C: implementación local]
+
 Registro de decisiones vigentes y de por qué se tomaron. Solo se incluyen las que
 constan en código, commits, documentos del repositorio o en instrucciones
 explícitas del usuario. Las marcas de evidencia se explican en `ESTADO_ACTUAL.md`.

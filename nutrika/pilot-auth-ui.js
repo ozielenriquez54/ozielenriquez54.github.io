@@ -47,6 +47,13 @@
   let homeUI=null,refreshHome=()=>{};
   function clearTracking(){trackingModel?.invalidate();trackingUI?.clear();homeUI?.clear();coachHistoryUI?.clear();}
   function clearProvisioning(){provisioningUI?.clear();}
+  // Keep the last verified view visible, but non-interactive until revalidation ends.
+  // Dialogs live outside pilot-access and must be blocked as well.
+  function blockAccess(blocked){
+    for(const id of ['pilot-access','food-dialog','log-dialog']){
+      const element=document.getElementById(id);if(element)element.inert=blocked;
+    }
+  }
   function render(result){
     if(result.status==='RECOVERY')recoveryMode=true;
     if(['PASSWORD_UPDATED','AUTHORIZED'].includes(result.status))recoveryMode=false;
@@ -59,7 +66,10 @@
     if(createGym)createGym.hidden=!(result.status==='NO_MEMBERSHIP'&&role==='COACH');
     if(addOwnCoachRole)addOwnCoachRole.hidden=!(result.status==='AUTHORIZED'&&result.canAddOwnCoachRole===true&&role==='COACH');
     authorized=result.status==='AUTHORIZED';
-    if(authorized&&!document.hidden){macrosUI?.refresh();refreshDiary();refreshTracking();refreshHome();refreshCoachHistory();refreshProvisioning();}else {macrosUI?.clear();clearDiary();clearTracking();clearProvisioning();access.hidden=true;}
+    blockAccess(authorized&&document.hidden);
+    if(authorized){
+      if(!document.hidden){macrosUI?.refresh();refreshDiary();refreshTracking();refreshHome();refreshCoachHistory();refreshProvisioning();}
+    }else {macrosUI?.clear();clearDiary();clearTracking();clearProvisioning();access.hidden=true;}
   }
   // Capture credentials in memory and immediately clean the address; never log them.
   const callback=location.pathname==='/auth/callback.html';
@@ -112,11 +122,13 @@
       provisioningUI=PilotAdminProvisioningUI.mount(document.getElementById('admin-provisioning-root'),{client});
       refreshProvisioning=async()=>{if(!authorized||document.hidden)return;await provisioningUI.refresh();};
     }
-    async function run(fn){
-      if(busy)return;busy=true;access.hidden=true;macrosUI.clear();clearDiary();clearTracking();
+    async function run(fn,{revalidate=false}={}){
+      if(busy)return;busy=true;
+      if(revalidate&&authorized)blockAccess(true);
+      else {access.hidden=true;macrosUI.clear();clearDiary();clearTracking();}
       const ticket=++authEpoch;
       try{const result=await fn();if(ticket===authEpoch)render(result);}catch{if(ticket===authEpoch)render({status:'AUTH_FAILED'});}
-      finally{busy=false;document.querySelectorAll('input[type=password]').forEach(el=>{el.value='';});}
+      finally{busy=false;blockAccess(authorized&&document.hidden);document.querySelectorAll('input[type=password]').forEach(el=>{el.value='';});}
     }
     document.getElementById('recovery-retry')?.addEventListener('click',()=>run(()=>auth.resumeRecovery()));
     const email=()=>document.getElementById('auth-email').value.trim();
@@ -142,12 +154,12 @@
     client.auth.onAuthStateChange(event=>{
       if(event==='SIGNED_OUT'){authEpoch++;auth.invalidate();updating=false;recoveryState.clear();render({status:'SIGNED_OUT'});}
       // Do not await Auth methods inside its event callback (SDK lock).
-      if(event==='TOKEN_REFRESHED'&&!busy&&!updating&&!recoveryMode)setTimeout(()=>run(()=>auth.verify()),0);
+      if(event==='TOKEN_REFRESHED'&&!busy&&!updating&&!recoveryMode)setTimeout(()=>run(()=>auth.verify(),{revalidate:true}),0);
     });
-    window.addEventListener('focus',()=>{if(!busy&&!updating&&!recoveryMode)run(()=>auth.verify());});
+    window.addEventListener('focus',()=>{if(!busy&&!updating&&!recoveryMode)run(()=>auth.verify(),{revalidate:true});});
     document.addEventListener('visibilitychange',()=>{
-      if(document.hidden){macrosUI.clear();clearDiary();clearTracking();access.hidden=true;}
-      else if(!busy&&!updating&&!recoveryMode)run(()=>auth.verify());
+      if(document.hidden){if(authorized)blockAccess(true);}
+      else if(!busy&&!updating&&!recoveryMode)run(()=>auth.verify(),{revalidate:true});
     });
     // Revalidate active roles/relationships while the page is visible; no writes to macros.
     let checkingMacros=false;

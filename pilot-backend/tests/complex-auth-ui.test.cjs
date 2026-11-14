@@ -2,6 +2,55 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const vm=require('node:vm'),fs=require('node:fs');
+async function revalidationPage(){
+  const els={},handlers={};let next=()=>Promise.resolve({status:'AUTHORIZED'}),checks=0,clears=0;
+  const element=id=>els[id]??={hidden:false,inert:false,value:'',textContent:'',addEventListener(k,f){this[k]=f;}};
+  const document={hidden:false,body:{dataset:{role:'CLIENT'}},getElementById:element,querySelectorAll:()=>[],addEventListener(k,f){handlers[k]=f;}};
+  const context={document,window:{addEventListener(k,f){handlers[k]=f;}},location:{pathname:'/index.html',origin:'https://pilot.example.com',search:'',hash:''},
+    history:{replaceState(){}},sessionStorage:{getItem(){},setItem(){},removeItem(){}},URLSearchParams,
+    fetch:async()=>({json:async()=>({publicKey:'synthetic',publicOrigin:'https://pilot.example.com'})}),supabase:{},
+    PilotAuth:{createClient:()=>({auth:{onAuthStateChange(f){handlers.auth=f;}}}),controller:()=>({verify(){checks++;return next();},invalidate(){},logout:async()=>({status:'SIGNED_OUT'})})},
+    PilotMacrosService:{createModel:()=>({})},PilotMacrosUI:{mount:()=>({refresh(){},clear(){clears++;},revalidate(){}})},setInterval(){},setTimeout(fn){fn();}};
+  await vm.runInNewContext(fs.readFileSync(require.resolve('../../nutrika/pilot-auth-ui.js'),'utf8'),context);
+  return {els,handlers,document,get checks(){return checks;},get clears(){return clears;},pending(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});next=()=>promise;return {resolve,reject};}};
+}
+const settle=()=>new Promise(resolve=>setImmediate(resolve));
+for(const trigger of ['focus','visibilitychange','TOKEN_REFRESHED'])test(`revalidation ${trigger} keeps the authorized view visible and blocks interaction`,async()=>{
+  const p=await revalidationPage(),pending=p.pending(),clears=p.clears;
+  if(trigger==='visibilitychange'){
+    p.document.hidden=true;p.handlers.visibilitychange();
+    assert.equal(p.els['pilot-access'].hidden,false);
+    assert.equal(p.els['pilot-access'].inert,true);
+    p.document.hidden=false;p.handlers.visibilitychange();
+  }else if(trigger==='TOKEN_REFRESHED')p.handlers.auth(trigger);
+  else p.handlers.focus();
+  assert.equal(p.els['pilot-access'].hidden,false);
+  for(const id of ['pilot-access','food-dialog','log-dialog'])assert.equal(p.els[id].inert,true);
+  assert.equal(p.clears,clears);
+  p.handlers.focus();assert.equal(p.checks,2,'duplicate focus does not start a concurrent verification');
+  pending.resolve({status:'AUTHORIZED'});await settle();
+  assert.equal(p.els['pilot-access'].hidden,false);
+  for(const id of ['pilot-access','food-dialog','log-dialog'])assert.equal(p.els[id].inert,false);
+});
+for(const result of ['SIGNED_OUT','ROLE_REQUIRED','AUTH_FAILED','throw'])test(`revalidation fails closed on ${result}`,async()=>{
+  const p=await revalidationPage(),pending=p.pending(),clears=p.clears;p.handlers.focus();
+  if(result==='throw')pending.reject(new Error('network'));else pending.resolve({status:result});
+  await settle();assert.equal(p.els['pilot-access'].hidden,true);assert.ok(p.clears>clears);
+});
+for(const logout of ['event','button'])test(`late verification cannot restore access after logout ${logout}`,async()=>{
+  const p=await revalidationPage(),pending=p.pending();p.handlers.focus();
+  if(logout==='event')p.handlers.auth('SIGNED_OUT');else await p.els.logout.click();
+  assert.equal(p.els['pilot-access'].hidden,true);
+  pending.resolve({status:'AUTHORIZED'});await settle();assert.equal(p.els['pilot-access'].hidden,true);
+});
+test('verification finishing in a hidden tab keeps interactions blocked until visible revalidation',async()=>{
+  const p=await revalidationPage(),pending=p.pending();p.handlers.focus();p.document.hidden=true;p.handlers.visibilitychange();
+  pending.resolve({status:'AUTHORIZED'});await settle();
+  assert.equal(p.els['pilot-access'].hidden,false);assert.equal(p.els['pilot-access'].inert,true);
+  const resumed=p.pending();p.document.hidden=false;p.handlers.visibilitychange();
+  assert.equal(p.els['pilot-access'].inert,true);resumed.resolve({status:'SIGNED_OUT'});await settle();
+  assert.equal(p.els['pilot-access'].hidden,true);
+});
 test('Auth UI connects diary only for authorized client and clears pending access on logout',async()=>{
   let finish,shown=0,clears=0;const els={},handlers={};
   const element=id=>els[id]??={hidden:false,value:'',textContent:'',addEventListener(k,f){this[k]=f;}};

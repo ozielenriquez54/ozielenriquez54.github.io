@@ -1,5 +1,10 @@
 # Estado actual — Twogramms (piloto)
 
+## Corrección local pendiente de revisión — parpadeo de autenticación
+- [U] Al recuperar foco reaparece el login brevemente y vuelve Alimentación sin introducir credenciales.
+- [C] `pilot-auth-ui.js` conserva la vista autorizada durante revalidaciones de foco, visibilidad y renovación de token; bloquea interacción con `inert`, incluidos los diálogos. Un rechazo o cierre de sesión oculta y limpia la vista.
+- [C] 83 pruebas específicas pasan, incluidas 10 regresiones nuevas de revalidación, rechazo y respuestas tardías tras logout. Sin commit ni despliegue; pendiente comprobación visual en navegador. La carga inicial con F5 no se ha modificado.
+
 Última actualización: 2026-11-14. Leer este archivo, `DECISIONES.md` e
 `HISTORIAL_TECNICO.md` antes de proponer acciones; actualizarlos al cerrar cada
 sesión solo con resultados comprobados.

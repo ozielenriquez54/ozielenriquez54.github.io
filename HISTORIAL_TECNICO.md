@@ -1,5 +1,11 @@
 # Historial técnico — Twogramms
 
+## Corrección local del parpadeo al recuperar foco (sin desplegar)
+- [U] La vista vuelve automáticamente sin credenciales tras el parpadeo.
+- [C] Causa en código: revalidar ocultaba `pilot-access`, haciendo visible el login mediante CSS; ocultar la pestaña también limpiaba la vista.
+- [C] Se conserva la vista con interacción bloqueada durante la revalidación; rechazo y logout siguen ocultando/limpiando, y las respuestas obsoletas no restauran acceso.
+- [C] 83/83 pruebas en `complex-auth-ui`, `pilot-auth`, `password-links`, `recovery-resume`, `recovery-errors`, `render-readonly` y `client-home-ui`; 10 regresiones nuevas. Sin cambios remotos ni commit. Pendiente validación visual; no se cambió la carga inicial con F5.
+
 Reconstruido el 2026-11-14 a partir de `git log` (73 commits), del código y de
 los documentos del repositorio. Los hechos de sesiones anteriores al resumen
 disponible no tienen otra fuente que los commits. Las marcas de evidencia se
