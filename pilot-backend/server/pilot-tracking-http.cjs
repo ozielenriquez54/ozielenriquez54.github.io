@@ -18,7 +18,14 @@ async function handleTracking(req,res,service,origin){
       data=await service.history(token,{gymId:url.searchParams.get('gymId'),clientId:url.searchParams.get('clientId')},url.searchParams.get('from'),url.searchParams.get('to'));
     }
     send(200,{data});
-  }catch{send(400,{error:'TRACKING_REQUEST_REJECTED_OR_RESULT_UNKNOWN'});}
+  }catch(e){
+    // Diagnóstico del servidor: solo identificadores en mayúsculas (p. ej. 28P01, AUTH_REQUIRED);
+    // nunca mensajes, tokens, URL ni identificadores. La respuesta al navegador no cambia.
+    const safe=v=>typeof v==='string'&&/^[A-Z0-9_]{2,60}$/.test(v)?v:null;
+    const codes=[...new Set([e?.message,e?.cause?.code,e?.cause?.reason].map(safe).filter(Boolean))];
+    console.error('TRACKING_REQUEST_FAILED',codes.length?codes.join(' '):'UNCLASSIFIED');
+    send(400,{error:'TRACKING_REQUEST_REJECTED_OR_RESULT_UNKNOWN'});
+  }
   return true;
 }
 module.exports={handleTracking};

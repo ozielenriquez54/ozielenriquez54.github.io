@@ -24,7 +24,8 @@ function supabaseDiaryStore({transaction,verifySession}){
   };
 }
 function pgDiaryTransaction(pool){return async fn=>{
-  let client;try{client=await pool.connect();}catch{throw new Error('DIARY_DATABASE_UNAVAILABLE');}
+  // `cause` conserva solo el código original para el registro del servidor; nunca llega al navegador.
+  let client;try{client=await pool.connect();}catch(e){throw Object.assign(new Error('DIARY_DATABASE_UNAVAILABLE'),{cause:{code:e?.code}});}
   let begun=false,broken=false;
   const failed=()=>{broken=true;};client.on?.('error',failed);
   try{
@@ -33,8 +34,8 @@ function pgDiaryTransaction(pool){return async fn=>{
     await client.query('begin');begun=true;
     await client.query("set local statement_timeout='15s'; set local lock_timeout='3s'; set local idle_in_transaction_session_timeout='10s'");
     const value=await fn(client);if(broken)throw new Error('CONNECTION_LOST');await client.query('commit');begun=false;return value;
-  }catch(e){if(begun)try{await client.query('rollback');}catch{broken=true;}throw new Error(
-    ['42501','40001','23514','22023'].includes(e.code)?e.code:'DIARY_RESULT_UNKNOWN');
+  }catch(e){if(begun)try{await client.query('rollback');}catch{broken=true;}throw Object.assign(new Error(
+    ['42501','40001','23514','22023'].includes(e.code)?e.code:'DIARY_RESULT_UNKNOWN'),{cause:{code:e?.code,reason:e?.message}});
   }finally{client.removeListener?.('error',failed);client.release(broken);}
 };}
 module.exports={supabaseDiaryStore,pgDiaryTransaction};
