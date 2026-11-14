@@ -18,7 +18,9 @@ personas reales.
 |---|---|
 | Rama de trabajo | `pilot/isolated-activation` [C] |
 | Remoto | `origin` → `github.com/ozielenriquez54/ozielenriquez54.github.io` [C] |
-| Último commit | `e0a9aba` (2026-11-13) — mensajes de error de recuperación [C] |
+| Último commit enviado | `b707b58` (2026-11-14) — archivos de continuidad; presente en `origin/pilot/isolated-activation` [C] |
+| Commit local sin enviar | `CLAUDE.md` con las reglas de continuidad (2026-11-14) [C] |
+| Último cambio funcional | `e0a9aba` (2026-11-13) — mensajes de error de recuperación [C] |
 | Commit anterior | `d157bdd` (2026-11-12) — activación aislada y experiencia del cliente [C] |
 | Base de la rama | `7e46479`, igual que `origin/preprod-docker-test` [C] |
 | `main` remoto | `2912afa` [C] |

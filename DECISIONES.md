@@ -62,3 +62,7 @@ explícitas del usuario. Las marcas de evidencia se explican en `ESTADO_ACTUAL.m
 - No continuar con otras funcionalidades sin aprobación.
 - Distinguir hechos comprobados de hipótesis y no inventar antecedentes.
 - No usar comandos de eliminación (`rm`) en diagnósticos (2026-11-13).
+- Instrucciones al usuario breves, una acción a la vez (2026-11-14).
+- Continuidad: las reglas de sesión están en `CLAUDE.md`. Se leen los tres
+  archivos de continuidad antes de actuar y se actualizan al cerrar, solo con
+  resultados verificados (2026-11-14).

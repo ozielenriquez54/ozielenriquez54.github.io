@@ -59,6 +59,9 @@ Ninguna de estas páginas se sirve en el piloto Twogramms [C: `pilot-http.cjs`].
   i18n parcial.
 - `e0a9aba` (2026-11-13): clasificación de HTTP 429 y de los errores PKCE en
   la recuperación.
+- `b707b58` (2026-11-14): archivos de continuidad `ESTADO_ACTUAL.md`,
+  `DECISIONES.md` e `HISTORIAL_TECNICO.md`; enviado a `origin`.
+- 2026-11-14: `CLAUDE.md` con las reglas de continuidad; commit local.
 
 ## 3. Estado de las funciones de Nutrika en Twogramms [C: código]
 - **Reutilizado:** macros manuales del coach, solo lectura para el cliente;
