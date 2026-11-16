@@ -47,6 +47,71 @@ async function mounted({model,macros={read:async()=>goal},lang=es,onChanged}={})
 const mealCards=c=>byClass(c,'tg-meal');
 const cardOf=(c,re)=>mealCards(c).find(card=>re.test(find(card,x=>x.tagName==='h2')[0].textContent));
 
+function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
+async function authDiaryPage(){
+  const vm=require('node:vm'),fs=require('node:fs'),doc=fakeDocument(),els={},handlers={};
+  const element=id=>els[id]??=doc.createElement('div');
+  Object.assign(doc,{hidden:false,body:{dataset:{role:'CLIENT'}},getElementById:element,querySelectorAll:()=>[],addEventListener(k,f){handlers[k]=f;}});
+  let user='user-a',targets=[target],verify=async()=>({status:'AUTHORIZED'}),list=async()=>targets;
+  const day=kcal=>({status:'OPEN',entries:[],totals:{kcal,proteinG:0,carbsG:0,fatG:0}});
+  let read=async()=>day(100);
+  const client={auth:{getSession:async()=>({data:{session:{user:{id:user}}}}),onAuthStateChange(f){handlers.auth=f;}}};
+  const context={document:doc,window:{addEventListener(k,f){handlers[k]=f;}},location:{pathname:'/index.html',origin:'https://pilot.example.com',search:'',hash:''},
+    history:{replaceState(){}},sessionStorage:{getItem(){},setItem(){},removeItem(){}},URLSearchParams,
+    fetch:async()=>({json:async()=>({publicKey:'synthetic',diaryAvailable:true})}),supabase:{},
+    PilotAuth:{createClient:()=>client,controller:()=>({verify:()=>verify(),invalidate(){},logout:async()=>({status:'SIGNED_OUT'})})},
+    PilotMacrosService:{createModel:()=>({list:()=>list(),read:async()=>goal})},PilotMacrosUI:{mount:()=>({refresh(){},clear(){},revalidate(){}})},
+    PilotDiaryService:{createModel:()=>({invalidate(){},read:()=>read(),foods:async()=>[]})},
+    PilotDiaryUI:{mount:(container,options)=>Diary.mount(container,{...options,document:doc,i18n:es})},setInterval(){},setTimeout(fn){fn();}};
+  await vm.runInNewContext(fs.readFileSync(require.resolve('../../nutrika/pilot-auth-ui.js'),'utf8'),context);await tick();
+  return {els,handlers,doc,day,setUser:v=>{user=v;},setTargets:v=>{targets=v;},setVerify:v=>{verify=v;},setList:v=>{list=v;},setRead:v=>{read=v;}};
+}
+for(const trigger of ['focus','visibilitychange','TOKEN_REFRESHED'])test(`diary stays visible and blocked through permission and data refresh: ${trigger}`,async()=>{
+  const p=await authDiaryPage(),root=p.els['diary-root'],old=[...root.children],auth=deferred(),clients=deferred(),data=deferred();
+  p.setVerify(()=>auth.promise);p.setList(()=>clients.promise);p.setRead(()=>data.promise);
+  if(trigger==='TOKEN_REFRESHED')p.handlers.auth(trigger);else p.handlers[trigger]();
+  assert.deepEqual(root.children,old);assert.equal(p.els['pilot-access'].inert,true);
+  auth.resolve({status:'AUTHORIZED'});await tick();
+  assert.deepEqual(root.children,old);assert.equal(p.els['pilot-access'].hidden,false);assert.equal(p.els['pilot-access'].inert,true);
+  clients.resolve([target]);await tick();assert.deepEqual(root.children,old);assert.equal(root.inert,true);
+  data.resolve(p.day(250));await tick();
+  assert.notEqual(root.children[0],old[0]);assert.match(root.textContent,/250/);assert.equal(root.inert,false);assert.equal(p.els['pilot-access'].inert,false);
+});
+for(const failure of ['logout','other-user','other-client','no-client','denied','data-error'])test(`diary clears and rejects stale data on ${failure}`,async()=>{
+  const p=await authDiaryPage(),root=p.els['diary-root'],data=deferred();p.setRead(()=>data.promise);
+  if(failure==='other-client')p.setTargets([{gymId:'g',clientId:'other'}]);
+  if(failure==='no-client')p.setTargets([]);
+  if(failure==='denied')p.setVerify(async()=>({status:'ROLE_REQUIRED'}));
+  p.handlers.focus();await tick();
+  if(failure==='logout')p.handlers.auth('SIGNED_OUT');
+  if(failure==='other-user'){p.setUser('user-b');p.handlers.auth('SIGNED_IN',{user:{id:'user-b'}});}
+  if(failure==='data-error')data.reject(new Error('denied'));else data.resolve(p.day(999));
+  await tick();assert.equal(root.children.length,0);assert.equal(root.inert,true);assert.equal(p.els['pilot-access'].hidden,true);assert.equal(p.els['pilot-access'].inert,true);
+});
+test('older diary refresh cannot overwrite a newer refresh',async()=>{
+  const p=await authDiaryPage(),first=deferred();p.setRead(()=>first.promise);p.handlers.focus();await tick();
+  p.setRead(async()=>p.day(300));p.handlers.focus();await tick();
+  first.resolve(p.day(999));await tick();assert.match(p.els['diary-root'].textContent,/300/);assert.doesNotMatch(p.els['diary-root'].textContent,/999/);
+});
+test('session change without an auth event is rejected before displaying downloaded data',async()=>{
+  const p=await authDiaryPage(),data=deferred();p.setRead(()=>data.promise);p.handlers.focus();await tick();
+  p.setUser('user-b');data.resolve(p.day(999));await tick();
+  assert.equal(p.els['diary-root'].children.length,0);assert.equal(p.els['pilot-access'].hidden,true);
+});
+test('data finishing in a hidden tab keeps access blocked until the next verification',async()=>{
+  const p=await authDiaryPage(),data=deferred();p.setRead(()=>data.promise);p.handlers.focus();await tick();
+  p.doc.hidden=true;p.handlers.visibilitychange();data.resolve(p.day(200));await tick();
+  assert.match(p.els['diary-root'].textContent,/200/);assert.equal(p.els['pilot-access'].inert,true);
+  p.doc.hidden=false;p.setRead(async()=>p.day(300));p.handlers.visibilitychange();await tick();
+  assert.match(p.els['diary-root'].textContent,/300/);assert.equal(p.els['pilot-access'].inert,false);
+});
+test('preserved refresh keeps selected date and clears on identity validation failure',async()=>{
+  const dates=[],model={read:async(_t,d)=>{dates.push(d);return {status:'OPEN',entries:[],totals:{}};},foods:async()=>[]};
+  const p=await mounted({model});await p.ui.show(target,'2026-11-01');
+  await p.ui.show(target,date,{preserve:true,validate:async()=>true});assert.equal(dates.at(-1),'2026-11-01');
+  await assert.rejects(p.ui.show(target,date,{preserve:true,validate:async()=>false}));assert.equal(mealCards(p.container).length,0);assert.equal(p.container.inert,true);
+});
+
 test('el backend ya guarda el tipo de comida: ADD con mealType se conserva y vuelve en la lectura',async()=>{
   const {model,records,catalog}=realService();
   const food=catalog.list().find(f=>f.weighingBasis!=='UNWEIGHED');

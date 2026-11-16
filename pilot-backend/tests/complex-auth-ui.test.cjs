@@ -55,7 +55,7 @@ test('Auth UI connects diary only for authorized client and clears pending acces
   let finish,shown=0,clears=0;const els={},handlers={};
   const element=id=>els[id]??={hidden:false,value:'',textContent:'',addEventListener(k,f){this[k]=f;}};
   const document={hidden:false,body:{dataset:{role:'CLIENT'}},getElementById:element,querySelectorAll:()=>[],addEventListener(k,f){handlers[k]=f;}};
-  const client={auth:{onAuthStateChange(f){handlers.auth=f;}}};
+  const client={auth:{getSession:async()=>({data:{session:{user:{id:'synthetic-user'}}}}),onAuthStateChange(f){handlers.auth=f;}}};
   const context={document,window:{addEventListener(){}},location:{pathname:'/index.html',origin:'https://pilot.example.com',search:'',hash:''},
     history:{replaceState(){}},sessionStorage:{getItem(){},setItem(){},removeItem(){}},URLSearchParams,
     fetch:async()=>({json:async()=>({publicKey:'sb_publishable_synthetic',publicOrigin:'https://pilot.example.com',diaryAvailable:true,macrosWritable:false})}),

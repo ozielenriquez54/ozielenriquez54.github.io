@@ -1,5 +1,17 @@
 # Estado actual — Twogramms (piloto)
 
+## Preparación para validación en Render — 2026-11-16
+- [U] Autorizados commit de los siete archivos de esta corrección y push exclusivamente a `pilot/isolated-activation`; despliegue todavía no autorizado.
+- [C] Revisión del diff: únicamente dos archivos de UI, dos archivos de pruebas y los tres documentos de continuidad. Los archivos sin seguimiento quedan excluidos. Antes del commit, la rama remota apunta a `50f25726e0269b5f6f2448eec962154fb4344a86`, base local de la corrección.
+- [C] Se conservan los resultados 34/34 de la sesión de implementación; no se modificó código ni se repitieron pruebas durante la preparación. Sigue pendiente la validación visual tras un despliegue autorizado por separado.
+- [C] Las menciones «sin commit/push» del apartado siguiente describen la sesión de implementación previa a esta autorización.
+
+## 2026-11-16 — Alimentación durante la revalidación
+- [C] Corrección local sin commit: el diario conserva contenido y fecha seleccionada, con interacción bloqueada, durante la verificación de sesión y la descarga. Sustituye el DOM tras comprobar usuario, cliente y gimnasio; rechazo, error o logout limpian la vista. Las respuestas obsoletas no restauran contenido.
+- [C] 34/34 pruebas específicas de `complex-auth-ui.test.cjs` y `client-food-ui.test.cjs`, incluidas 13 regresiones nuevas. No se ejecutaron pruebas remotas ni se modificaron Supabase o Render; sin commit, push ni despliegue.
+- [C] Pendiente validación visual en navegador real. La carga inicial con F5 no conserva contenido previo. El resumen de inicio conserva su última lectura durante una revalidación; el diario sí actualiza sus datos y resumen nutricional.
+- [C] La corrección anterior del login ya está en el commit local `50f2572`; las referencias inferiores a aquella corrección como «sin commit» son históricas.
+
 ## Corrección local pendiente de revisión — parpadeo de autenticación
 - [U] Al recuperar foco reaparece el login brevemente y vuelve Alimentación sin introducir credenciales.
 - [C] `pilot-auth-ui.js` conserva la vista autorizada durante revalidaciones de foco, visibilidad y renovación de token; bloquea interacción con `inert`, incluidos los diálogos. Un rechazo o cierre de sesión oculta y limpia la vista.

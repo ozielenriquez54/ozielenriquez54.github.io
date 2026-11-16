@@ -1,5 +1,20 @@
 # Historial técnico — Twogramms
 
+## 2026-11-16 — Preparación de commit y push
+- [U] Autorizados commit de los siete archivos de la corrección y push exclusivamente a `pilot/isolated-activation`, sin despliegue.
+- [C] Diff revisado: solo continuidad visual, protección de identidad/respuestas tardías, pruebas y documentación. Índice inicialmente vacío; archivos sin seguimiento excluidos.
+- [C] La consulta inicial `git ls-remote` falló por conexión bloqueada en el entorno restringido. Repetida con permiso de red, confirmó la rama remota en `50f25726e0269b5f6f2448eec962154fb4344a86` antes del nuevo commit.
+- [C] No se cambió código durante esta preparación ni se repitieron las 34 pruebas ya aprobadas.
+- [C] El primer `git add` fue bloqueado por permisos sobre `.git/index.lock`; la repetición con permiso ampliado preparó exclusivamente los siete archivos autorizados.
+
+## 2026-11-16 — Corrección del vaciado de Alimentación
+- [C] Revisión inicial: Git no tenía modificaciones versionadas pendientes. `50f2572` ya conservaba el contenedor autorizado, pero `refreshDiary()` y `show()` borraban el diario antes de descargar los datos.
+- [C] Modificados `nutrika/pilot-auth-ui.js` y `nutrika/pilot-diary-ui.js`: suspensión sin borrar DOM, recarga bloqueada, sustitución tras validar usuario y destino, conservación de fecha y descarte de respuestas tardías. Se conserva el resumen de inicio durante revalidaciones para evitar su limpieza.
+- [C] Pruebas modificadas: `pilot-backend/tests/client-food-ui.test.cjs` (13 regresiones nuevas con UI real y DOM/servicios simulados) y `pilot-backend/tests/complex-auth-ui.test.cjs` (sesión sintética en fixture del diario).
+- [C] Primer intento: 27/32 pruebas pasaron; 5 fallaron porque el chequeo de identidad también se aplicaba a vistas sin diario. Corregido limitándolo a vistas con diario; siguiente ejecución 32/32. Añadidas dos regresiones de cambio de sesión sin evento y carga en pestaña oculta; resultado final 34/34.
+- [C] Comando ejecutado: `node --test pilot-backend/tests/complex-auth-ui.test.cjs pilot-backend/tests/client-food-ui.test.cjs`. `git diff --check` sin errores (avisos de conversión LF/CRLF de Git).
+- [C] Sin cambios remotos, commit, push ni despliegue. Pendiente comprobación visual en navegador real; no se evaluó el servicio desplegado.
+
 ## Corrección local del parpadeo al recuperar foco (sin desplegar)
 - [U] La vista vuelve automáticamente sin credenciales tras el parpadeo.
 - [C] Causa en código: revalidar ocultaba `pilot-access`, haciendo visible el login mediante CSS; ocultar la pestaña también limpiaba la vista.

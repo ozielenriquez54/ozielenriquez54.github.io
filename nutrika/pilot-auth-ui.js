@@ -42,7 +42,7 @@
   // con `const` dentro del `try{}` de más abajo (bloque hermano, fuera del
   // alcance de `render`). Se asigna una sola vez, antes de que `render` se
   // llame por primera vez; nunca cambia de valor después.
-  let role;
+  let role,diaryUser=null,diaryTarget=null,diaryLoading=false;
   function clearDiary(){diaryModel?.invalidate();diaryUI?.clear();}
   let homeUI=null,refreshHome=()=>{};
   function clearTracking(){trackingModel?.invalidate();trackingUI?.clear();homeUI?.clear();coachHistoryUI?.clear();}
@@ -54,7 +54,7 @@
       const element=document.getElementById(id);if(element)element.inert=blocked;
     }
   }
-  function render(result){
+  function render(result,{userId=null,preserve=false}={}){
     if(result.status==='RECOVERY')recoveryMode=true;
     if(['PASSWORD_UPDATED','AUTHORIZED'].includes(result.status))recoveryMode=false;
     updating=result.status==='RECOVERY';
@@ -66,10 +66,10 @@
     if(createGym)createGym.hidden=!(result.status==='NO_MEMBERSHIP'&&role==='COACH');
     if(addOwnCoachRole)addOwnCoachRole.hidden=!(result.status==='AUTHORIZED'&&result.canAddOwnCoachRole===true&&role==='COACH');
     authorized=result.status==='AUTHORIZED';
-    blockAccess(authorized&&document.hidden);
+    blockAccess(!authorized||busy||diaryLoading||document.hidden);
     if(authorized){
-      if(!document.hidden){macrosUI?.refresh();refreshDiary();refreshTracking();refreshHome();refreshCoachHistory();refreshProvisioning();}
-    }else {macrosUI?.clear();clearDiary();clearTracking();clearProvisioning();access.hidden=true;}
+      if(!document.hidden){macrosUI?.refresh();refreshDiary(userId,preserve);refreshTracking();if(!preserve)refreshHome();refreshCoachHistory();refreshProvisioning();}
+    }else {diaryUser=null;diaryTarget=null;diaryLoading=false;macrosUI?.clear();clearDiary();clearTracking();clearProvisioning();access.hidden=true;}
   }
   // Capture credentials in memory and immediately clean the address; never log them.
   const callback=location.pathname==='/auth/callback.html';
@@ -97,11 +97,21 @@
       diaryUI=PilotDiaryUI.mount(document.getElementById('diary-root'),{model:diaryModel,macros:own,panel:shellUI?.foodPanel()??null,
         onChanged:()=>{if(authorized&&!document.hidden)homeUI?.refresh();}});
       shellUI?.onLanguageChange(()=>{if(authorized&&!document.hidden)diaryUI.refresh?.();});
-      refreshDiary=async()=>{const ticket=authEpoch;clearDiary();try{
-        const targets=await own.list();if(ticket!==authEpoch||!authorized||document.hidden||targets.length!==1)return;
+      refreshDiary=async(userId,preserve=false)=>{const ticket=authEpoch;diaryLoading=true;blockAccess(true);try{
+        if(!userId)throw new Error('DIARY_UNAVAILABLE');
+        if(diaryUser&&diaryUser!==userId)throw new Error('DIARY_UNAVAILABLE');
+        const targets=await own.list();if(ticket!==authEpoch||!authorized)return;
+        if(targets.length!==1)throw new Error('DIARY_UNAVAILABLE');
+        const target=targets[0];
+        if(diaryTarget&&(diaryTarget.gymId!==target.gymId||diaryTarget.clientId!==target.clientId))throw new Error('DIARY_UNAVAILABLE');
         const d=new Date(),date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
-        await diaryUI.show(targets[0],date);
-      }catch{clearDiary();}};
+        await diaryUI.show(target,date,{preserve,validate:async()=>{
+          const session=await client.auth.getSession();
+          return ticket===authEpoch&&authorized&&!session.error&&session.data?.session?.user?.id===userId;
+        }});
+        if(ticket===authEpoch&&authorized){diaryUser=userId;diaryTarget={gymId:target.gymId,clientId:target.clientId};}
+      }catch{if(ticket===authEpoch)render({status:'AUTH_FAILED'});}
+      finally{if(ticket===authEpoch){diaryLoading=false;blockAccess(!authorized||busy||document.hidden);}}};
     }
     if(config.trackingAvailable===true){
       trackingModel=PilotTrackingService.createModel(client);trackingUI=PilotTrackingUI.mount(document.getElementById('tracking-root'),{model:trackingModel,role,onSaved:()=>{if(authorized&&!document.hidden)homeUI?.refresh();}});
@@ -124,11 +134,21 @@
     }
     async function run(fn,{revalidate=false}={}){
       if(busy)return;busy=true;
-      if(revalidate&&authorized)blockAccess(true);
+      const preserve=revalidate&&authorized;
+      if(preserve){blockAccess(true);diaryModel?.invalidate();diaryUI?.suspend?.();}
       else {access.hidden=true;macrosUI.clear();clearDiary();clearTracking();}
       const ticket=++authEpoch;
-      try{const result=await fn();if(ticket===authEpoch)render(result);}catch{if(ticket===authEpoch)render({status:'AUTH_FAILED'});}
-      finally{busy=false;blockAccess(authorized&&document.hidden);document.querySelectorAll('input[type=password]').forEach(el=>{el.value='';});}
+      try{
+        const before=diaryUI?await client.auth.getSession():null;
+        const userId=before?.data?.session?.user?.id;
+        if(diaryUI&&preserve&&(before?.error||!userId||diaryUser&&diaryUser!==userId))throw new Error('DIARY_UNAVAILABLE');
+        const result=await fn();
+        const after=diaryUI&&result.status==='AUTHORIZED'?await client.auth.getSession():null;
+        const currentUser=after?.data?.session?.user?.id;
+        if(diaryUI&&result.status==='AUTHORIZED'&&(after?.error||!currentUser||userId&&currentUser!==userId))throw new Error('DIARY_UNAVAILABLE');
+        if(ticket===authEpoch)render(result,{userId:currentUser,preserve});
+      }catch{if(ticket===authEpoch)render({status:'AUTH_FAILED'});}
+      finally{busy=false;blockAccess(!authorized||diaryLoading||document.hidden);document.querySelectorAll('input[type=password]').forEach(el=>{el.value='';});}
     }
     document.getElementById('recovery-retry')?.addEventListener('click',()=>run(()=>auth.resumeRecovery()));
     const email=()=>document.getElementById('auth-email').value.trim();
@@ -151,7 +171,8 @@
       if(result.status==='PASSWORD_UPDATED'){updating=false;recoveryState.clear();}
       return result;
     });});
-    client.auth.onAuthStateChange(event=>{
+    client.auth.onAuthStateChange((event,session)=>{
+      if(diaryUI&&session?.user?.id&&diaryUser&&session.user.id!==diaryUser){authEpoch++;auth.invalidate();render({status:'SIGNED_OUT'});return;}
       if(event==='SIGNED_OUT'){authEpoch++;auth.invalidate();updating=false;recoveryState.clear();render({status:'SIGNED_OUT'});}
       // Do not await Auth methods inside its event callback (SDK lock).
       if(event==='TOKEN_REFRESHED'&&!busy&&!updating&&!recoveryMode)setTimeout(()=>run(()=>auth.verify(),{revalidate:true}),0);

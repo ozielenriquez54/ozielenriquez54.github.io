@@ -46,11 +46,12 @@
     const node=(tag,text,cls)=>{const el=doc.createElement(tag);if(text!==undefined&&text!==null)el.textContent=String(text);if(cls)el.className=cls;return el;};
     const button=(text,cls,onClick)=>{const b=node('button',text,cls);b.type='button';if(onClick)b.addEventListener('click',onClick);return b;};
     // Panel independiente (hoja inferior en celular). Sin panel, se dibuja debajo del diario.
-    let inline=null,epoch=0,state=null;
+    let inline=null,epoch=0,state=null,displayed=null;
     const panelRoot=()=>{if(panel)return panel.root;if(!inline){inline=node('section',undefined,'tg-card tg-food-panel');container.append(inline);}return inline;};
     const openPanel=()=>{if(panel)panel.open();};
     function closePanel(){(panel?panel.root:inline)?.replaceChildren();if(panel)panel.close();}
-    function clear(){epoch++;state=null;closePanel();inline=null;container.replaceChildren();}
+    function suspend(){epoch++;state=null;container.inert=true;}
+    function clear(){suspend();displayed=null;closePanel();inline=null;container.replaceChildren();}
 
     // ---------- piezas ----------
     function amountText(entry){return entry.foodSnapshot?.amountKind==='UNWEIGHED'||entry.quantity===null||entry.quantity===undefined?t('diary.unweighed'):fmt(entry.quantity,2)+' '+unitLabel(entry.unit);}
@@ -109,10 +110,15 @@
     }
 
     // ---------- pantalla ----------
-    async function show(target,date){
-      clear();const ticket=epoch;
+    async function show(target,date,{preserve=false,validate=null}={}){
+      if(preserve&&displayed&&displayed.target.gymId===target.gymId&&displayed.target.clientId===target.clientId){
+        date=displayed.date;suspend();
+      }else clear();
+      const ticket=epoch;
       try{
-        const [day,foods,goalRead]=await Promise.all([model.read(target,date),model.foods(target),macros?macros.read(target).catch(()=>null):Promise.resolve(null)]);
+        const [day,foods,goalRead]=await Promise.all([model.read(target,date),model.foods(target),macros?(validate?macros.read(target):macros.read(target).catch(()=>null)):Promise.resolve(null)]);
+        if(ticket!==epoch)return;
+        if(validate&&!await validate())throw new Error('DIARY_UNAVAILABLE');
         if(ticket!==epoch)return;
         state={target,date,day,foods,goal:goalRead?.macros??null,ticket};
         const editable=day.status!=='COMPLETE';
@@ -122,13 +128,16 @@
         prev.setAttribute('aria-label',t('diary.prevDay'));next.setAttribute('aria-label',t('diary.nextDay'));
         nav.append(prev,picker,next);
         top.append(node('h1',t('food.heading')),nav,node('span',editable?t('diary.open'):t('diary.closed'),'tg-chip '+(editable?'is-muted':'is-info')));
-        container.append(top,summary(day.totals,state.goal));
+        const summaryEl=summary(day.totals,state.goal);
         const {groups,other}=groupByMeal(day.entries);
         const meals=node('div',undefined,'tg-meals');
         for(const meal of MEALS)meals.append(mealCard(meal,groups.get(meal.type),editable));
         if(other.length)meals.append(mealCard(null,other,editable));
-        container.append(meals,closeCard(day));
-      }catch{if(ticket===epoch){clear();container.append(node('p',t('diary.accessError'),'tg-error'));}}
+        const closing=closeCard(day);
+        closePanel();inline=null;
+        container.replaceChildren(top,summaryEl,meals,closing);
+        displayed={target:{gymId:target.gymId,clientId:target.clientId},date};container.inert=false;
+      }catch{if(ticket===epoch){clear();container.append(node('p',t('diary.accessError'),'tg-error'));if(validate)throw new Error('DIARY_UNAVAILABLE');}}
     }
     function closeCard(day){
       const c=node('section',undefined,'tg-card tg-day-close'),message=node('p',undefined,'tg-muted');message.setAttribute('role','status');
@@ -286,7 +295,7 @@
     }
 
     async function refresh(){if(state)await show(state.target,state.date);}
-    return {show,clear,refresh};
+    return {show,clear,refresh,suspend};
   }
   const api={mount,MEALS,groupByMeal,subtotal};if(typeof module==='object'&&module.exports)module.exports=api;else root.PilotDiaryUI=api;
 })(typeof globalThis==='object'?globalThis:this);

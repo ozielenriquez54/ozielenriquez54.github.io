@@ -1,5 +1,11 @@
 # Decisiones — Twogramms
 
+- [U, 2026-11-16, preparación] Autorizados un commit local con los siete archivos de la corrección y push únicamente a `pilot/isolated-activation`. Esta autorización sustituye la prohibición anterior de commit/push para esta corrección. Se mantienen las prohibiciones de desplegar, incluir archivos sin seguimiento, modificar Supabase, producción u otras ramas.
+
+- [U, 2026-11-16] Corregir únicamente la continuidad visual de Alimentación, con pruebas específicas y sin commit, push, despliegue ni cambios en Supabase o Render.
+- [C] La recarga del diario conserva el DOM bloqueado y la fecha elegida hasta completar las lecturas. Se comprueba la sesión antes/después de verificar permisos y antes de sustituir el contenido; usuario, cliente o gimnasio distintos invalidan la vista. Se descartan cargas anteriores mediante generaciones.
+- [C] Ante fallos de carga durante esta revalidación se limpia y bloquea el contenido. No se modificaron reglas nutricionales, comandos de registro ni cálculos de macros. El resumen de inicio no se recarga por foco para evitar su vaciado; conserva las actualizaciones existentes tras guardados y cambios de idioma.
+
 - Revalidación visual (cambio local pendiente): conservar la última vista autorizada sin interacción mientras se comprueba la sesión; ocultar y limpiar ante rechazo, error o logout. Mantener las verificaciones de sesión y autorización existentes. No cambiar Supabase ni Render. [U: alcance autorizado; C: implementación local]
 
 Registro de decisiones vigentes y de por qué se tomaron. Solo se incluyen las que
