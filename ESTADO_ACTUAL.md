@@ -1,5 +1,18 @@
 # Estado actual — Twogramms (piloto)
 
+## Preparación de entrenamiento y Peso y hábitos para preproducción — 2026-11-16
+- [U] Autorizados commit y push exclusivamente a `origin/pilot/isolated-activation`, incluidos los nuevos archivos de esta tarea. Sin despliegue.
+- [C] Rama verificada y base local/remota coincidente en `c72ab1fffcc7cf0c7e2f55e126d113beb04134dd`. Revisados diez archivos: cuatro de aplicación, `.dockerignore` para incluir el nuevo módulo, dos pruebas y tres documentos de continuidad. Excluidos AGENTS.md, CSV y SQL.
+- [C] Sin cambios funcionales en esta preparación; se conservan las 9/9 pruebas específicas aprobadas en la reanudación. Las restricciones anteriores de commit/push describen sesiones previas. Validación visual remota pendiente; no se requiere migración según las pruebas locales.
+
+## Entrenamiento múltiple y apertura de Peso y hábitos — 2026-11-16
+- [C] Reanudación tras interrupción: inspección confirmó ambas mejoras completas localmente en `pilot/isolated-activation`. No fue necesario modificar código. Ejecutadas únicamente `training-ui.test.cjs` y `training-persistence.test.cjs`: 9/9 aprobadas; continúa pendiente la validación visual remota.
+- [U] Autorizadas ambas mejoras puntuales, sin duración, cambios nutricionales, commit, push ni despliegue.
+- [C] Selección múltiple: Fuerza, Cardio, HIIT/funcional, Deportes, Movilidad/recuperación, Otro y No entrené (excluyente). Las actividades se guardan en `values.trainingActivities`; el campo histórico `training` conserva la clasificación fuerza/sin fuerza compatible con el SQL actual. No se reescriben registros anteriores ni se interpreta «sin fuerza» como «no entrené».
+- [C] Peso y hábitos muestra carga inmediatamente y dibuja el formulario al recibir el historial; ya no espera también los macros. La comparación nutricional se añade después, con descarte de respuestas obsoletas. La apertura del diálogo ya era inmediata; el temporizador de 350 ms del shell solo enfoca un campo.
+- [C] 33 pruebas distintas aprobadas: 32 en la primera ejecución conjunta y una regresión adicional del resumen semanal (8/8 en la segunda ejecución específica de UI). Persistencia y aislamiento comprobados con SQL existente en PGlite local; sin modificar SQL ni servicios remotos.
+- [C] Pendiente validación visual y medición de latencia en navegador/preproducción. El historial autorizado sigue siendo necesario antes de editar; no se usa caché de datos para saltar esa verificación.
+
 ## Preparación de Progreso para validación — 2026-11-16
 - [U] Autorizados commit y push de esta corrección exclusivamente a `origin/pilot/isolated-activation`; sin despliegue.
 - [C] Rama comprobada; base local y remota coinciden en `c7e22e5ed4fc0dbf743f40c16c94e2a7373693ce`. Alcance revisado: cuatro archivos de aplicación, tres de pruebas (incluido el nuevo transporte) y tres documentos de continuidad. AGENTS.md, CSV y SQL quedan excluidos.

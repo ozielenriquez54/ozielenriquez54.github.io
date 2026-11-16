@@ -2,11 +2,12 @@
 const {number, requireValue, immutable} = require('../values.cjs');
 const {revise} = require('./history.cjs');
 const {WEIGHT_PROTOCOL} = require('../weight.cjs');
+const {validateActivities,legacyTraining,validateTraining}=require('./training.cjs');
 const HABITS = ['steps', 'sleepHours', 'sleepQuality', 'waterLiters', 'stress'];
 const GUIDANCE = immutable({steps: {from: 10000, to: 12000}, waterLiters: {from: 2, to: 3},
   sleepQuality: ['muy mala', 'mala', 'regular', 'buena', 'excelente'], stress: ['muy bajo', 'bajo', 'moderado', 'alto', 'muy alto'], weightProtocol: WEIGHT_PROTOCOL});
 function recordHabits(previous, meta, patch) {
-  requireValue(Object.keys(patch).every(k => [...HABITS, 'training'].includes(k)), 'INVALID_HABIT_FIELD');
+  requireValue(Object.keys(patch).every(k => [...HABITS, 'training','trainingActivities'].includes(k)), 'INVALID_HABIT_FIELD');
   const values = {...Object.fromEntries(HABITS.map(k => [k, null])), training: null, ...previous?.values, ...patch};
   for (const k of HABITS) {
     if (values[k] === null) continue;
@@ -14,7 +15,13 @@ function recordHabits(previous, meta, patch) {
     if (k === 'steps') requireValue(Number.isSafeInteger(values[k]), 'INVALID_STEPS');
     if (['sleepQuality', 'stress'].includes(k)) requireValue(Number.isInteger(values[k]) && values[k] >= 1 && values[k] <= 5, 'INVALID_SCALE');
   }
-  requireValue([null, 'STRENGTH', 'NO_STRENGTH'].includes(values.training), 'INVALID_TRAINING');
+  if(Object.hasOwn(patch,'trainingActivities')){
+    validateActivities(patch.trainingActivities);
+    values.trainingActivities=[...patch.trainingActivities];values.training=legacyTraining(values.trainingActivities);
+  }else if(Object.hasOwn(patch,'training')&&patch.training!==previous?.values?.training){
+    delete values.trainingActivities; // An older client explicitly changed the legacy answer.
+  }
+  validateTraining(values);
   return revise(previous, meta, 'HABITS_DAY', {values});
 }
 function recordOfficialWeight(previous, meta, weightKg) {

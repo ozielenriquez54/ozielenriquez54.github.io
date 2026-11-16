@@ -1,5 +1,24 @@
 # Historial técnico — Twogramms
 
+## 2026-11-16 — Preparación de commit de entrenamiento y Peso y hábitos
+- [C] Revisados diff y tres archivos nuevos: alcance limitado a ambas mejoras, dos pruebas y continuidad; diez archivos en total, incluida la entrada de `.dockerignore` requerida por el módulo nuevo. Índice inicialmente vacío.
+- [C] Rama `pilot/isolated-activation`; consulta remota confirmó la misma base que HEAD: `c72ab1fffcc7cf0c7e2f55e126d113beb04134dd`. Sin modificaciones funcionales ni repetición de las pruebas ya aprobadas.
+- [U] Autorizados commit y push exclusivamente a esa rama; excluidos AGENTS.md, CSV y SQL. Despliegue y validación remota quedan fuera de esta sesión.
+
+## Reanudación de entrenamiento múltiple y Peso y hábitos
+- [U] Sesión interrumpida por límite de uso; solicitado inspeccionar y continuar sin repetir implementación ni sobrescribir cambios.
+- [C] Diff y archivos nuevos confirman ambas mejoras completas, incluido módulo de validación, exclusividad, historia, resumen, carga inmediata y persistencia compatible. Sin modificaciones adicionales al código.
+- [C] Ejecutado por la solicitud de reanudación: `node --test pilot-backend/tests/training-ui.test.cjs pilot-backend/tests/training-persistence.test.cjs`, 9/9 aprobadas. Sin fallos. `git diff --check` sin errores (avisos LF/CRLF). No se repitieron las suites adicionales ya aprobadas.
+- [C] No se requiere cambio de esquema/funciones SQL ni migración histórica según prueba local con SQL existente. No se modificaron Supabase, Render o producción; sin commit, push ni despliegue. Validación visual y latencia reales siguen pendientes.
+
+## 2026-11-16 — Entrenamiento múltiple y carga de Peso y hábitos
+- [C] Rama `pilot/isolated-activation`, sin cambios versionados al comenzar. Causa de la espera visible: `show()` borraba el contenido y esperaba `Promise.all(historial, macros)` antes de dibujar; el shell abre sin esperar y su temporizador de 350 ms únicamente enfoca.
+- [C] Modificados `nutrika/pilot-tracking-ui.js`, `nutrika/domain/tracking/observations.cjs`, `record-validation.cjs`; añadido `training.cjs`. Persistencia en `values.trainingActivities`, validación de opciones y exclusividad; campo legacy compatible. `.dockerignore` incluye el nuevo módulo necesario en la imagen futura, sin construir ni desplegar.
+- [C] Formulario con carga inmediata y lectura de macros no bloqueante; errores de historial impiden edición, respuestas tardías no restauran información y el guardado interrumpe pasos posteriores si se limpió la vista.
+- [C] Nuevas pruebas `pilot-backend/tests/training-ui.test.cjs` y `training-persistence.test.cjs`: combinaciones, NONE excluyente, guardado solo de entrenamiento, compatibilidad legacy, revisión append-only, resumen, carga lenta, rechazo/logout, lectura SQL, replay y aislamiento de dos gimnasios.
+- [C] `node --test pilot-backend/tests/training-ui.test.cjs pilot-backend/tests/training-persistence.test.cjs pilot-backend/tests/progress-transport.test.cjs pilot-backend/tests/client-home-ui.test.cjs`: 32/32. Tras añadir una prueba del resumen y ampliar compatibilidad con clientes anteriores, `node --test pilot-backend/tests/training-ui.test.cjs`: 8/8. Total de 33 pruebas distintas aprobadas. Sin intentos fallidos. `git diff --check` sin errores, solo avisos LF/CRLF.
+- [C] PGlite ejecutó las migraciones existentes y el servicio real de seguimiento en una base local desechable con datos sintéticos; el JSON de actividades sobrevivió a guardar/leer sin cambios SQL. No se probó reinicio de servidor ni persistencia remota. Sin cambios en Supabase, Render o producción; sin commit, push ni despliegue.
+
 ## 2026-11-16 — Preparación de commit de Progreso
 - [C] Revisados diff y nueva prueba de transporte: únicamente corrección de Progreso, tres archivos de pruebas y tres documentos de continuidad (diez archivos en total). Índice inicialmente vacío; rama `pilot/isolated-activation`.
 - [C] Consulta remota confirmó `c7e22e5ed4fc0dbf743f40c16c94e2a7373693ce`, igual que HEAD, antes de crear el commit. Sin cambios funcionales ni repetición de las 59 pruebas aprobadas; `git diff --check` sin errores.

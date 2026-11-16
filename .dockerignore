@@ -63,6 +63,7 @@
 !nutrika/domain/dates.cjs
 !nutrika/application/personal-foods.cjs
 !nutrika/domain/tracking/observations.cjs
+!nutrika/domain/tracking/training.cjs
 !nutrika/domain/tracking/history.cjs
 !nutrika/domain/catalog/nutrition.cjs
 !nutrika/domain/tracking/entry-validation.cjs

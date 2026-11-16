@@ -1,5 +1,14 @@
 # Decisiones — Twogramms
 
+- [U, 2026-11-16, preparación de entrenamiento] Autorizados commit de los diez archivos revisados y push exclusivamente a `origin/pilot/isolated-activation`, incluyendo los tres archivos nuevos de esta tarea. Sustituye la prohibición anterior de commit/push para estas mejoras. Excluir AGENTS.md, CSV, SQL y archivos ajenos; sin despliegue ni cambios en Supabase, producción u otras ramas.
+
+- [U/C, reanudación de entrenamiento] Conservar los cambios locales existentes y completar solo lo pendiente. La inspección confirmó implementación completa; se mantuvo el código y se verificaron únicamente las dos suites específicas solicitadas. No requiere migración de base de datos: utiliza el JSON y las funciones SQL existentes, comprobado localmente.
+
+- [U, 2026-11-16, entrenamiento] Implementar selección múltiple sin duración y mejorar la espera de Peso y hábitos; conservar historia, aislamiento y reglas nutricionales. Sin commit, push ni despliegue.
+- [C] Persistencia aditiva en el JSON existente: `trainingActivities` es opcional, validado y excluye combinar NONE con actividades. `training` mantiene el significado histórico STRENGTH/NO_STRENGTH/null, derivado para registros nuevos. Un registro antiguo NO_STRENGTH no implica ausencia de toda actividad.
+- [C] Guardar otros hábitos sin cambiar la selección conserva el dato histórico. El cumplimiento declarado de entrenamiento sigue independiente de las actividades; no se recalculan estadísticas históricas. El resumen semanal muestra los tipos registrados.
+- [C] El historial autoriza y habilita el formulario; los macros enriquecen después su comparación nutricional. Se mantienen las comprobaciones de sesión, generaciones y aislamiento, sin modificar SQL.
+
 - [U, 2026-11-16, preparación de Progreso] Autorizados commit de los diez archivos de corrección/pruebas/continuidad y push exclusivamente a `origin/pilot/isolated-activation`. Sustituye la restricción previa de commit/push para Progreso. No autoriza despliegue ni cambios en Supabase, producción u otras ramas; excluye AGENTS.md, CSV, SQL y archivos ajenos.
 
 - [U, 2026-11-16, Progreso] Autorizada corrección mínima de campos, consultas concurrentes y estados de error/reintento, con pruebas específicas. Sin commit, push, despliegue, cambios de infraestructura ni reglas nutricionales.

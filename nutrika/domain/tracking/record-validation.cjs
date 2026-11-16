@@ -3,11 +3,12 @@ const {requireValue, number} = require('../values.cjs');
 const {KEYS} = require('../energy.cjs');
 const {sumNutrition} = require('../catalog/nutrition.cjs');
 const {validateEntry} = require('./entry-validation.cjs');
+const {validateTraining}=require('./training.cjs');
 // Validate projections loaded from a repository, not just newly constructed commands.
 function validateRecordData(r) {
   if (r.kind === 'WEIGHT_DAY') number(r.weightKg, 'WEIGHT', {positive: true});
   else if (r.kind === 'HABITS_DAY') {
-    requireValue(r.values && [null,'STRENGTH','NO_STRENGTH'].includes(r.values.training), 'INVALID_TRAINING');
+    validateTraining(r.values);
     for (const k of ['steps','sleepHours','sleepQuality','waterLiters','stress']) {
       const v=r.values[k]; if(v===null) continue; number(v,k);
       if(k==='steps') requireValue(Number.isSafeInteger(v),'INVALID_STEPS');
