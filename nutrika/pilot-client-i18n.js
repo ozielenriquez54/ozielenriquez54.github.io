@@ -68,7 +68,7 @@
       'plan.gym':'Gimnasio','plan.detail':'Detalle y vigencia','plan.pendingTitle':'Próximamente en tu plan','plan.pending':'Pendiente de conexión',
       'plan.goal':'Objetivo físico','plan.goalNote':'Peso meta, fecha objetivo y plan de fases.','plan.photos':'Fotos de progreso','plan.photosNote':'Frente, lado y espalda para comparar tu avance.',
       'plan.menus':'Menús y recetas','plan.menusNote':'Comidas sugeridas que cumplen tus macros.',
-      'state.loading':'Cargando…','state.error':'No se pudo cargar esta información. Vuelve a intentarlo en unos momentos.'
+      'state.retry':'Reintentar','state.loading':'Cargando…','state.error':'No se pudo cargar esta información. Vuelve a intentarlo en unos momentos.'
     },
     en:{
       'nav.today':'Today','nav.food':'Food','nav.progress':'Progress','nav.plan':'My plan',
@@ -134,7 +134,7 @@
       'plan.gym':'Gym','plan.detail':'Details and validity','plan.pendingTitle':'Coming to your plan','plan.pending':'Pending connection',
       'plan.goal':'Physical goal','plan.goalNote':'Goal weight, target date and phase plan.','plan.photos':'Progress photos','plan.photosNote':'Front, side and back to compare your progress.',
       'plan.menus':'Menus and recipes','plan.menusNote':'Suggested meals that fit your macros.',
-      'state.loading':'Loading…','state.error':'This information could not be loaded. Please try again shortly.'
+      'state.retry':'Retry','state.loading':'Loading…','state.error':'This information could not be loaded. Please try again shortly.'
     }
   };
   const KEY='twogramms-lang';

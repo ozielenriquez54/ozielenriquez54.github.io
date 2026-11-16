@@ -86,6 +86,9 @@
     const recoveryState={get:()=>sessionStorage.getItem('twogramms-pilot-recovery'),set:id=>sessionStorage.setItem('twogramms-pilot-recovery',id),clear:()=>sessionStorage.removeItem('twogramms-pilot-recovery')};
     const auth=PilotAuth.controller(client,role,location.origin+'/auth/callback.html',{approvedOrigin:config.publicOrigin??null,readOnly:config.readOnly===true,recoveryState});
     const macrosModel=PilotMacrosService.createModel(client,role);
+    // Each independent view owns its cancellable macro requests.
+    const trackingMacros=PilotMacrosService.createModel(client,role);
+    const weeklyMacros=PilotMacrosService.createModel(client,role);
     macrosUI=PilotMacrosUI.mount(document.getElementById('macros-root'),{model:PilotMacrosService.createModel(client,role),role,
       writer:config.macrosWritable===true&&role==='COACH'?PilotMacrosService.createWriter(client):null});
     if(role==='CLIENT'&&config.diaryAvailable){
@@ -115,7 +118,7 @@
     }
     if(config.trackingAvailable===true){
       trackingModel=PilotTrackingService.createModel(client);trackingUI=PilotTrackingUI.mount(document.getElementById('tracking-root'),{model:trackingModel,role,onSaved:()=>{if(authorized&&!document.hidden)homeUI?.refresh();}});
-      if(role==='CLIENT')refreshTracking=async()=>{const ticket=authEpoch;trackingUI.clear();try{const targets=await macrosModel.list();if(ticket!==authEpoch||!authorized||document.hidden||targets.length!==1)return;const d=new Date(),date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');await trackingUI.show(targets[0],date,macrosModel);}catch{trackingUI.clear();}};
+      if(role==='CLIENT')refreshTracking=async()=>{const ticket=authEpoch;trackingUI.clear();try{const targets=await trackingMacros.list();if(ticket!==authEpoch||!authorized||document.hidden||targets.length!==1)return;const d=new Date(),date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');await trackingUI.show(targets[0],date,trackingMacros);}catch{if(ticket===authEpoch)trackingUI.clear();}};
       else{coachHistoryUI=PilotCoachHistoryUI.mount(document.getElementById('coach-history-root'),{model:macrosModel,macros:macrosModel,tracking:trackingUI});refreshCoachHistory=async()=>{if(!authorized||document.hidden)return;await coachHistoryUI.refresh();};}
     }
     // Experiencia del cliente (Hoy · Alimentación · Progreso · Mi plan): solo para
@@ -124,9 +127,19 @@
     if(role==='CLIENT'&&typeof PilotClientHomeUI!=='undefined'){
       const shell=typeof PilotClientShell!=='undefined'?PilotClientShell:null;
       homeUI=PilotClientHomeUI.mount({today:document.getElementById('home-today-root'),food:document.getElementById('home-food-root'),progress:document.getElementById('home-progress-root'),plan:document.getElementById('home-plan-root')},
-        {model:trackingModel,macros:macrosModel,log:trackingUI,diaryAvailable:config.diaryAvailable===true,navigate:opts=>shell?.navigate(opts)});
+        {model:trackingModel,macros:macrosModel,log:trackingUI,logMacros:trackingMacros,weeklyMacros,onRetry:()=>refreshHome(),diaryAvailable:config.diaryAvailable===true,navigate:opts=>shell?.navigate(opts)});
       shell?.onLanguageChange(()=>{if(authorized&&!document.hidden)homeUI.refresh();});
-      refreshHome=async()=>{const ticket=authEpoch;homeUI.clear();try{const targets=await macrosModel.list();if(ticket!==authEpoch||!authorized||document.hidden||targets.length!==1)return;const d=new Date(),date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');await homeUI.show(targets[0],date);}catch{homeUI.clear();}};
+      let homeRequest=0;
+      refreshHome=async()=>{
+        if(!authorized||document.hidden)return;
+        const ticket=authEpoch,request=++homeRequest;homeUI.loading();
+        try{
+          const targets=await macrosModel.list();if(ticket!==authEpoch||request!==homeRequest||!authorized)return;
+          if(targets.length!==1)throw new Error('TARGET_UNAVAILABLE');
+          const d=new Date(),date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
+          await homeUI.show(targets[0],date);
+        }catch{if(ticket===authEpoch&&request===homeRequest&&authorized)homeUI.error();}
+      };
     }
     if(config.adminProvisioningAvailable===true&&role==='COACH'){
       provisioningUI=PilotAdminProvisioningUI.mount(document.getElementById('admin-provisioning-root'),{client});

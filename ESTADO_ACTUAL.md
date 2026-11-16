@@ -1,5 +1,17 @@
 # Estado actual — Twogramms (piloto)
 
+## Preparación de Progreso para validación — 2026-11-16
+- [U] Autorizados commit y push de esta corrección exclusivamente a `origin/pilot/isolated-activation`; sin despliegue.
+- [C] Rama comprobada; base local y remota coinciden en `c7e22e5ed4fc0dbf743f40c16c94e2a7373693ce`. Alcance revisado: cuatro archivos de aplicación, tres de pruebas (incluido el nuevo transporte) y tres documentos de continuidad. AGENTS.md, CSV y SQL quedan excluidos.
+- [C] Sin cambios funcionales durante la preparación; se conservan las 59/59 pruebas aprobadas. Las menciones «sin commit/push» siguientes corresponden a la implementación previa a esta autorización. Sigue pendiente validación real en preproducción.
+
+## Progreso — corrección local 2026-11-16
+- [U] Progreso vacío en preproducción con sesión autorizada y Alimentación operativa; autorizada corrección mínima local, sin commit, push ni despliegue.
+- [C] Historial envía únicamente gimnasio, cliente y fechas; guardados filtran campos por tipo (peso/hábitos), excluyendo `label`. Se mantiene la comprobación de sesión y se comprueba también después de leer el JSON.
+- [C] Instancias independientes de macros para resumen de inicio/Progreso, formulario y detalle semanal. Progreso muestra carga, error y reintento, incluida la resolución inicial del cliente; logout y respuestas obsoletas no restauran vistas.
+- [C] 59/59 pruebas específicas aprobadas (18 regresiones nuevas). Formulario, gráfica y reglas nutricionales conservados. Sin cambios en Supabase, Render ni producción.
+- [C] Pendiente validación visual y de persistencia con sesión real en preproducción; las pruebas usaron datos sintéticos y transportes simulados/locales. No se implementaron mediciones corporales.
+
 ## Preparación para validación en Render — 2026-11-16
 - [U] Autorizados commit de los siete archivos de esta corrección y push exclusivamente a `pilot/isolated-activation`; despliegue todavía no autorizado.
 - [C] Revisión del diff: únicamente dos archivos de UI, dos archivos de pruebas y los tres documentos de continuidad. Los archivos sin seguimiento quedan excluidos. Antes del commit, la rama remota apunta a `50f25726e0269b5f6f2448eec962154fb4344a86`, base local de la corrección.

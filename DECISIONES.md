@@ -1,5 +1,11 @@
 # Decisiones — Twogramms
 
+- [U, 2026-11-16, preparación de Progreso] Autorizados commit de los diez archivos de corrección/pruebas/continuidad y push exclusivamente a `origin/pilot/isolated-activation`. Sustituye la restricción previa de commit/push para Progreso. No autoriza despliegue ni cambios en Supabase, producción u otras ramas; excluye AGENTS.md, CSV, SQL y archivos ajenos.
+
+- [U, 2026-11-16, Progreso] Autorizada corrección mínima de campos, consultas concurrentes y estados de error/reintento, con pruebas específicas. Sin commit, push, despliegue, cambios de infraestructura ni reglas nutricionales.
+- [C] El transporte de seguimiento usa listas explícitas de campos por endpoint y tipo de registro; el servidor mantiene sus validaciones. Se separan modelos cancelables del resumen, formulario y detalle semanal, reutilizando el formulario y la gráfica actuales.
+- [C] Reintentar desde Progreso vuelve a consultar el cliente autorizado. La UI invalida botones y respuestas anteriores al limpiar la sesión; no muestra datos anteriores en estados de error.
+
 - [U, 2026-11-16, preparación] Autorizados un commit local con los siete archivos de la corrección y push únicamente a `pilot/isolated-activation`. Esta autorización sustituye la prohibición anterior de commit/push para esta corrección. Se mantienen las prohibiciones de desplegar, incluir archivos sin seguimiento, modificar Supabase, producción u otras ramas.
 
 - [U, 2026-11-16] Corregir únicamente la continuidad visual de Alimentación, con pruebas específicas y sin commit, push, despliegue ni cambios en Supabase o Render.

@@ -1,5 +1,17 @@
 # Historial técnico — Twogramms
 
+## 2026-11-16 — Preparación de commit de Progreso
+- [C] Revisados diff y nueva prueba de transporte: únicamente corrección de Progreso, tres archivos de pruebas y tres documentos de continuidad (diez archivos en total). Índice inicialmente vacío; rama `pilot/isolated-activation`.
+- [C] Consulta remota confirmó `c7e22e5ed4fc0dbf743f40c16c94e2a7373693ce`, igual que HEAD, antes de crear el commit. Sin cambios funcionales ni repetición de las 59 pruebas aprobadas; `git diff --check` sin errores.
+- [U] Autorizados commit y push únicamente a esa rama; validación en Render pendiente de un despliegue autorizado por separado.
+
+## 2026-11-16 — Corrección mínima de Progreso
+- [C] Rama `pilot/isolated-activation`, sin modificaciones versionadas al inicio. Confirmado por lectura: `label` se propagaba al historial y guardado; el contrato del backend lo rechaza. Los errores solo aparecían en Hoy; las consultas de macros de formulario y resumen compartían cancelación.
+- [C] Modificados `nutrika/pilot-tracking-service.js`, `pilot-auth-ui.js`, `pilot-client-home-ui.js` y `pilot-client-i18n.js`: campos permitidos, modelos separados, estados de carga/error/reintento y comprobación de sesión tras leer el JSON. Sin cambios en formulario, gráfica, backend, SQL ni reglas nutricionales.
+- [C] Pruebas ampliadas en `pilot-backend/tests/client-home-ui.test.cjs` y `complex-auth-ui.test.cjs`; añadido `progress-transport.test.cjs`. 18 regresiones nuevas: contratos de historial/peso/hábitos, sesión ausente o cambiada, rechazo, invalidación tardía, destinos separados, carga/error/reintento y concurrencia de macros.
+- [C] Primera ejecución: 59/59 aprobadas con `node --test pilot-backend/tests/progress-transport.test.cjs pilot-backend/tests/client-home-ui.test.cjs pilot-backend/tests/complex-auth-ui.test.cjs pilot-backend/tests/client-food-ui.test.cjs`. Sin intentos de prueba fallidos en esta implementación. `git diff --check` sin errores; avisos habituales LF/CRLF.
+- [C] Sin commit, push, despliegue ni modificaciones remotas. Pendiente validación visual y persistencia real; no se verificaron permisos de base de datos desplegada. Las pruebas de aislamiento comprueban destinos, sesión y descarte de respuestas en transporte/UI; no sustituyen la validación de RLS en preproducción.
+
 ## 2026-11-16 — Preparación de commit y push
 - [U] Autorizados commit de los siete archivos de la corrección y push exclusivamente a `pilot/isolated-activation`, sin despliegue.
 - [C] Diff revisado: solo continuidad visual, protección de identidad/respuestas tardías, pruebas y documentación. Índice inicialmente vacío; archivos sin seguimiento excluidos.

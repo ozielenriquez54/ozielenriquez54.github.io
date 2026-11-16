@@ -52,7 +52,7 @@
   }
 
   function mount(slots,{model=null,macros=null,log=null,TrackingUI=root.PilotTrackingUI,domain=root.PilotTrackingDomain,i18n=root.PilotClientI18n??fallbackI18n,
-    document:doc=root.document,diaryAvailable=false,navigate=null,now=()=>new Date()}){
+    document:doc=root.document,diaryAvailable=false,navigate=null,logMacros=macros,weeklyMacros=macros,onRetry=null,now=()=>new Date()}){
     let epoch=0,current=null,weeklyUI=null;
     const t=(k,v)=>i18n.t(k,v);
     const fmt=(n,d=1)=>Number(n).toLocaleString(i18n.locale(),{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -63,8 +63,18 @@
     const svg=(tag,attrs)=>{const n=doc.createElementNS(SVG_NS,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,String(v));return n;};
     const card=(title,cls)=>{const c=node('section',undefined,'tg-card'+(cls?' '+cls:''));if(title)c.append(node('h2',title,'tg-card-title'));return c;};
     // Abrir el registro siempre muestra el día pedido (o hoy) en la interfaz de seguimiento existente.
-    const go=opts=>{if(opts.log&&log&&current)log.show(current.target,opts.date??current.today,macros);if(typeof navigate==='function')navigate(opts);};
+    const go=opts=>{if(opts.log&&log&&current)log.show(current.target,opts.date??current.today,logMacros);if(typeof navigate==='function')navigate(opts);};
     function clear(){epoch++;current=null;weeklyUI?.clear();weeklyUI=null;for(const s of Object.values(slots))s?.replaceChildren();}
+    function loading(){
+      clear();for(const s of [slots.today,slots.progress]){const p=node('p',t('state.loading'),'tg-loading');p.setAttribute('role','status');s?.append(p);}
+    }
+    function error(retry=onRetry){
+      clear();const ticket=epoch;
+      for(const s of [slots.today,slots.progress]){
+        const p=node('p',t('state.error'),'tg-error');p.setAttribute('role','alert');s?.append(p);
+        if(retry){const b=node('button',t('state.retry'),'tg-btn-ghost');b.type='button';b.addEventListener('click',()=>{if(ticket===epoch){b.disabled=true;retry();}});s?.append(b);}
+      }
+    }
     function pending(text){const p=node('p',text,'tg-pending');return p;}
     function chip(text,tone){return node('span',text,'tg-chip'+(tone?' is-'+tone:''));}
 
@@ -259,7 +269,7 @@
       details.append(summary,detailRoot);
       if(TrackingUI){
         weeklyUI=TrackingUI.mount(detailRoot,{model,document:doc,role:'CLIENT'});
-        details.addEventListener('toggle',()=>{if(details.open)weeklyUI.weekly(target,addDays(today,-6),macros);else weeklyUI.clear();});
+        details.addEventListener('toggle',()=>{if(details.open)weeklyUI.weekly(target,addDays(today,-6),weeklyMacros);else weeklyUI.clear();});
       }
       week.append(details);
       const trend=card(t('progress.title'));trend.append(node('p',t('progress.sub'),'tg-sub'),trendChart(days));
@@ -294,8 +304,7 @@
     }
 
     async function show(target,today){
-      clear();const ticket=epoch;
-      slots.today?.append(node('p',t('state.loading'),'tg-loading'));
+      loading();const ticket=epoch;
       try{
         const [history,goalRead]=await Promise.all([model?model.history(target,addDays(today,-(HISTORY_DAYS-1)),today):Promise.resolve(null),macros?macros.read(target):Promise.resolve(null)]);
         if(ticket!==epoch)return;
@@ -303,10 +312,10 @@
         current={target,today};
         const days=history?.days??[],goal=goalRead?.macros??null,day=days.at(-1)??{date:today};
         renderToday(today,day,goal,days);renderFood(day,goal);renderProgress(today,days,goal,target);renderPlan(target,goalRead);
-      }catch{if(ticket===epoch){clear();slots.today?.append(node('p',t('state.error'),'tg-error'));}}
+      }catch{if(ticket===epoch)error(onRetry??(()=>show(target,today)));}
     }
     async function refresh(){if(current)await show(current.target,current.today);}
-    return {show,refresh,clear};
+    return {show,refresh,clear,loading,error};
   }
   const api={mount,summarize,habitRates,rollingAverage,macroProgress};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.PilotClientHomeUI=api;

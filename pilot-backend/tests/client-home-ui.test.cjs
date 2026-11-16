@@ -89,7 +89,30 @@ test('un error de acceso no deja datos visibles',async()=>{
   const doc=fakeDocument(),slots=slotsFor(doc);
   const ui=Home.mount(slots,{model:{history:async()=>{throw new Error('TRACKING_UNAVAILABLE');}},macros:null,TrackingUI:null,domain,i18n:es,document:doc});
   await ui.show({gymId:'g',clientId:'c'},'2026-11-12');
-  assert.match(slots.today.textContent,/No se pudo cargar/);for(const k of ['food','progress','plan'])assert.equal(slots[k].children.length,0);
+  assert.match(slots.today.textContent,/No se pudo cargar/);assert.match(slots.progress.textContent,/No se pudo cargar/);
+  assert.equal(find(slots.progress,n=>n.tagName==='button')[0].textContent,'Reintentar');
+  for(const k of ['food','plan'])assert.equal(slots[k].children.length,0);
+});
+
+test('Progreso muestra carga, recupera un error y anula el reintento tras limpiar la sesión',async()=>{
+  const doc=fakeDocument(),slots=slotsFor(doc);let reject,reads=0;
+  const model={history:()=>{reads++;return reads===1?new Promise((_,r)=>{reject=r;}):Promise.resolve({days:[]});}};
+  const ui=Home.mount(slots,{model,TrackingUI:null,domain,i18n:es,document:doc});
+  const first=ui.show({gymId:'g',clientId:'c'},'2026-11-12');assert.match(slots.progress.textContent,/Cargando/);
+  reject(new Error('denied'));await first;
+  const retry=find(slots.progress,n=>n.tagName==='button')[0];retry.click();await new Promise(r=>setImmediate(r));
+  assert.match(slots.progress.textContent,/Tendencia de peso/);assert.equal(reads,2);
+  ui.clear();retry.click();assert.equal(reads,2);assert.equal(slots.progress.children.length,0);
+});
+
+test('Progreso descarta respuestas de otro cliente o gimnasio y respuestas posteriores al logout',async()=>{
+  const doc=fakeDocument(),slots=slotsFor(doc);let finish;
+  const ui=Home.mount(slots,{model:{history:()=>new Promise(r=>{finish=r;})},TrackingUI:null,domain,i18n:es,document:doc});
+  const old=ui.show({gymId:'g1',clientId:'c1'},'2026-11-12'),oldFinish=finish;
+  const next=ui.show({gymId:'g2',clientId:'c2'},'2026-11-12');
+  oldFinish({days:[{date:'2026-11-12',weight:{weightKg:999}}]});await old;
+  assert.match(slots.progress.textContent,/Cargando/);assert.doesNotMatch(slots.progress.textContent,/999/);
+  ui.clear();finish({days:[]});await next;assert.equal(slots.progress.children.length,0);
 });
 
 test('textos: inglés disponible para el shell y las pantallas, con aviso de traducción parcial',()=>{

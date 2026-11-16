@@ -15,6 +15,31 @@ async function revalidationPage(){
   return {els,handlers,document,get checks(){return checks;},get clears(){return clears;},pending(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});next=()=>promise;return {resolve,reject};}};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
+test('home, tracking form and weekly detail use independent cancellable macro models; retry rechecks target',async()=>{
+  const els={},handlers={};let homeOptions,homeReads=0,trackingReads=0,errors=0,failList=false,loading=0;
+  const element=id=>els[id]??={hidden:false,value:'',addEventListener(k,f){this[k]=f;}};
+  const client={auth:{getSession:async()=>({data:{session:{user:{id:'synthetic-user'},access_token:'synthetic'}}}),onAuthStateChange(f){handlers.auth=f;}}};
+  const transport=async(url,{signal})=>{await settle();if(signal.aborted)throw new Error('aborted');
+    if(url.includes('/clients')&&failList)throw new Error('denied');
+    return {ok:true,json:async()=>({data:url.includes('/clients')?[{gymId:'g',clientId:'c',label:'synthetic'}]:{macros:{}}})};};
+  const home={loading(){loading++;},error(){errors++;},clear(){},refresh(){},async show(t){await homeOptions.macros.read(t);homeReads++;}};
+  const context={document:{hidden:false,body:{dataset:{role:'CLIENT'}},getElementById:element,querySelectorAll:()=>[],addEventListener(){}},
+    window:{addEventListener(){}},location:{pathname:'/index.html',origin:'https://pilot.example.com',search:'',hash:''},history:{replaceState(){}},sessionStorage:{getItem(){},setItem(){},removeItem(){}},
+    fetch:async()=>({json:async()=>({publicKey:'synthetic',trackingAvailable:true})}),supabase:{},
+    PilotAuth:{createClient:()=>client,controller:()=>({verify:async()=>({status:'AUTHORIZED'}),invalidate(){}})},
+    PilotMacrosService:{createModel:()=>require('../../nutrika/pilot-macros-service.js').createModel(client,'CLIENT',transport)},
+    PilotMacrosUI:{mount:()=>({refresh(){},clear(){}})},PilotTrackingService:{createModel:()=>({invalidate(){}})},
+    PilotTrackingUI:{mount:()=>({clear(){},async show(t,d,m){await m.read(t);trackingReads++;}})},
+    PilotClientHomeUI:{mount:(slots,options)=>{homeOptions=options;return home;}},setInterval(){},setTimeout(){}};
+  await vm.runInNewContext(fs.readFileSync(require.resolve('../../nutrika/pilot-auth-ui.js'),'utf8'),context);
+  for(let i=0;i<6;i++)await settle();
+  assert.equal(homeReads,1);assert.equal(trackingReads,1);assert.equal(errors,0);
+  assert.notEqual(homeOptions.macros,homeOptions.logMacros);assert.notEqual(homeOptions.macros,homeOptions.weeklyMacros);
+  await Promise.all([homeOptions.macros.read({gymId:'g',clientId:'c'}),homeOptions.logMacros.read({gymId:'g',clientId:'c'}),homeOptions.weeklyMacros.read({gymId:'g',clientId:'c'})]);
+  failList=true;await homeOptions.onRetry();assert.equal(errors,1);
+  failList=false;await homeOptions.onRetry();assert.equal(homeReads,2);
+  handlers.auth('SIGNED_OUT');const before=loading;await homeOptions.onRetry();assert.equal(loading,before);
+});
 for(const trigger of ['focus','visibilitychange','TOKEN_REFRESHED'])test(`revalidation ${trigger} keeps the authorized view visible and blocks interaction`,async()=>{
   const p=await revalidationPage(),pending=p.pending(),clears=p.clears;
   if(trigger==='visibilitychange'){
